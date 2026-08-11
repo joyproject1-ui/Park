@@ -1,0 +1,11 @@
+# Downloaded regulation PDFs and their manifest — rights belong to EC/EMA/FDA
+downloads/
+*.pdf.part
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/

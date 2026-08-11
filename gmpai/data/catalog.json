@@ -1,0 +1,328 @@
+{
+  "schema_version": 1,
+  "last_reviewed": "2026-08-11",
+  "note": "URLs are official regulator sources (EC / EMA / EUR-Lex / FDA). Each entry may carry a direct_url and/or a discover rule that finds the current PDF link on the document's landing page. If a direct_url goes stale, the downloader falls back to discovery automatically.",
+  "documents": [
+    {
+      "id": "eu-gmp-annex22-ai",
+      "title": "EudraLex Volume 4, Annex 22: Artificial Intelligence (draft for consultation)",
+      "title_ko": "EU GMP 부속서 22: 인공지능 (의견수렴용 초안)",
+      "authority": "EU",
+      "issuer": "European Commission / EMA GMDP Inspectors Working Group (with PIC/S)",
+      "category": "gmp-ai",
+      "status": "draft",
+      "document_date": "2025-07-07",
+      "reference": "EudraLex Vol. 4, Annex 22",
+      "landing_page": "https://health.ec.europa.eu/medicinal-products/eudralex/eudralex-volume-4_en",
+      "direct_url": "https://health.ec.europa.eu/document/download/5f38a92d-bb8e-4264-8898-ea076e926db6_en?filename=mp_vol4_chap4_annex22_consultation_guideline_en.pdf",
+      "discover": {
+        "pattern": "(?i)annex[_-]?22[^\"']*\\.pdf|document/download/[^\"']*annex22[^\"']*"
+      },
+      "filename": "EU_GMP_Annex22_AI_draft_2025-07-07.pdf",
+      "notes": "First EU GMP text written specifically for AI in medicinal product manufacture. Consultation closed 2025-10-07; still in development as of 2026-08 (EMA multistakeholder workshop 2026-06-30/07-01). Confirm the current version on the landing page before relying on it.",
+      "language": "en"
+    },
+    {
+      "id": "eu-gmp-annex11-draft",
+      "title": "EudraLex Volume 4, Annex 11: Computerised Systems (draft revision for consultation)",
+      "title_ko": "EU GMP 부속서 11: 전산화 시스템 (개정 초안)",
+      "authority": "EU",
+      "issuer": "European Commission / EMA GMDP Inspectors Working Group",
+      "category": "computerised-systems",
+      "status": "draft",
+      "document_date": "2025-07-07",
+      "reference": "EudraLex Vol. 4, Annex 11 (rev.)",
+      "landing_page": "https://health.ec.europa.eu/medicinal-products/eudralex/eudralex-volume-4_en",
+      "direct_url": "https://health.ec.europa.eu/document/download/40231f18-e564-4043-94de-c031f813d38b_en?filename=mp_vol4_chap4_annex11_consultation_guideline_en.pdf",
+      "discover": {
+        "pattern": "(?i)annex[_-]?11[^\"']*consultation[^\"']*|document/download/[^\"']*annex11[^\"']*"
+      },
+      "filename": "EU_GMP_Annex11_ComputerisedSystems_draft_2025-07-07.pdf",
+      "notes": "Companion to Annex 22 — Annex 22 sits on top of Annex 11 controls (validation, audit trail, supplier oversight, cybersecurity).",
+      "language": "en"
+    },
+    {
+      "id": "eu-gmp-chapter4-draft",
+      "title": "EudraLex Volume 4, Chapter 4: Documentation (draft revision for consultation)",
+      "title_ko": "EU GMP 4장: 문서화 (개정 초안)",
+      "authority": "EU",
+      "issuer": "European Commission",
+      "category": "computerised-systems",
+      "status": "draft",
+      "document_date": "2025-07-07",
+      "reference": "EudraLex Vol. 4, Chapter 4 (rev.)",
+      "landing_page": "https://health.ec.europa.eu/medicinal-products/eudralex/eudralex-volume-4_en",
+      "direct_url": null,
+      "discover": {
+        "pattern": "(?i)mp_vol4_chap4_consultation[^\"']*|chapter[_ -]?4[^\"']*consultation[^\"']*"
+      },
+      "filename": "EU_GMP_Chapter4_Documentation_draft_2025-07-07.pdf",
+      "notes": "Published in the same 2025-07-07 consultation package as Annex 11 and Annex 22. No stable direct URL recorded — resolved from the EudraLex Volume 4 page.",
+      "language": "en"
+    },
+    {
+      "id": "eu-gmp-annex11-inforce",
+      "title": "EudraLex Volume 4, Annex 11: Computerised Systems (version currently in force)",
+      "title_ko": "EU GMP 부속서 11: 전산화 시스템 (현행 발효본)",
+      "authority": "EU",
+      "issuer": "European Commission",
+      "category": "computerised-systems",
+      "status": "in-force",
+      "document_date": "2011-01-01",
+      "reference": "EudraLex Vol. 4, Annex 11 (2011)",
+      "landing_page": "https://health.ec.europa.eu/medicinal-products/eudralex/eudralex-volume-4_en",
+      "direct_url": null,
+      "discover": {
+        "pattern": "(?i)[^\"']*annex[_ -]?11[^\"']*(2011|01-2011)[^\"']*"
+      },
+      "filename": "EU_GMP_Annex11_ComputerisedSystems_in-force_2011.pdf",
+      "notes": "The legally applicable Annex 11 until the revision is adopted. Resolved from the EudraLex Volume 4 page because the historical direct URL has moved between ec.europa.eu and health.ec.europa.eu.",
+      "language": "en"
+    },
+    {
+      "id": "ema-reflection-paper-ai",
+      "title": "Reflection paper on the use of Artificial Intelligence (AI) in the medicinal product lifecycle",
+      "title_ko": "의약품 전주기에서의 인공지능 활용에 관한 리플렉션 페이퍼",
+      "authority": "EU",
+      "issuer": "EMA (CHMP/CVMP)",
+      "category": "gmp-ai",
+      "status": "final",
+      "document_date": "2024-09-09",
+      "reference": "EMA/CHMP/CVMP/83833/2023",
+      "landing_page": "https://www.ema.europa.eu/en/use-artificial-intelligence-ai-medicinal-product-lifecycle-scientific-guideline",
+      "direct_url": "https://www.ema.europa.eu/en/documents/scientific-guideline/reflection-paper-use-artificial-intelligence-ai-medicinal-product-lifecycle_en.pdf",
+      "discover": {
+        "pattern": "(?i)[^\"']*reflection-paper-use-artificial-intelligence[^\"']*\\.pdf"
+      },
+      "filename": "EMA_ReflectionPaper_AI_MedicinalProductLifecycle_2024-09.pdf",
+      "notes": "EMA's cross-lifecycle position, including the manufacturing phase. Read together with Annex 22.",
+      "language": "en"
+    },
+    {
+      "id": "ema-concept-paper-annex11",
+      "title": "Concept paper on the revision of Annex 11 (Computerised Systems) of the GMP guidelines",
+      "title_ko": "GMP 부속서 11 개정에 관한 콘셉트 페이퍼",
+      "authority": "EU",
+      "issuer": "EMA",
+      "category": "computerised-systems",
+      "status": "final",
+      "document_date": "2022-11-16",
+      "reference": "EMA/INS/GMP/622941/2021",
+      "landing_page": "https://www.ema.europa.eu/en/human-regulatory-overview/research-development/compliance-research-development/good-manufacturing-practice",
+      "direct_url": "https://www.ema.europa.eu/en/documents/regulatory-procedural-guideline/concept-paper-revision-annex-11-guidelines-good-manufacturing-practice-medicinal-products-computerised-systems_en.pdf",
+      "discover": {
+        "pattern": "(?i)[^\"']*concept-paper-revision-annex-11[^\"']*\\.pdf"
+      },
+      "filename": "EMA_ConceptPaper_Annex11_Revision_2022-11.pdf",
+      "notes": "Explains the drivers behind the Annex 11 revision, including AI/ML and cloud.",
+      "language": "en"
+    },
+    {
+      "id": "ema-fda-good-ai-practice",
+      "title": "Guiding Principles of Good AI Practice in Drug Development (EMA copy)",
+      "title_ko": "의약품 개발에서의 우수 AI 실무 지침 원칙 (EMA 배포본)",
+      "authority": "EU",
+      "issuer": "EMA and FDA (joint)",
+      "category": "gmp-ai",
+      "status": "final",
+      "document_date": "2026-01-01",
+      "reference": "EMA/FDA joint guiding principles",
+      "landing_page": "https://www.ema.europa.eu/en/about-us/how-we-work/big-data/artificial-intelligence",
+      "direct_url": "https://www.ema.europa.eu/en/documents/other/guiding-principles-good-ai-practice-drug-development_en.pdf",
+      "discover": {
+        "pattern": "(?i)[^\"']*guiding-principles-good-ai-practice[^\"']*\\.pdf"
+      },
+      "filename": "EMA-FDA_GuidingPrinciples_GoodAIPractice_2026-01.pdf",
+      "notes": "Ten joint EMA/FDA principles issued January 2026. The FDA copy is catalogued separately as fda-good-ai-practice.",
+      "language": "en"
+    },
+    {
+      "id": "ema-ai-workplan",
+      "title": "Artificial intelligence workplan to guide use of AI in medicines regulation (EMA/HMA)",
+      "title_ko": "의약품 규제에서의 AI 활용 워크플랜 (EMA/HMA)",
+      "authority": "EU",
+      "issuer": "EMA / Heads of Medicines Agencies",
+      "category": "gmp-ai",
+      "status": "final",
+      "document_date": "2023-12-19",
+      "reference": "EMA/HMA AI workplan to 2028",
+      "landing_page": "https://www.ema.europa.eu/en/about-us/how-we-work/big-data/artificial-intelligence",
+      "direct_url": null,
+      "discover": {
+        "pattern": "(?i)[^\"']*artificial-intelligence-workplan[^\"']*\\.pdf"
+      },
+      "filename": "EMA-HMA_AI_Workplan_to_2028.pdf",
+      "notes": "Regulatory roadmap rather than a binding requirement. Resolved from the EMA AI landing page.",
+      "language": "en"
+    },
+    {
+      "id": "eu-ai-act",
+      "title": "Regulation (EU) 2024/1689 laying down harmonised rules on artificial intelligence (AI Act)",
+      "title_ko": "EU 인공지능법 (Regulation (EU) 2024/1689)",
+      "authority": "EU",
+      "issuer": "European Parliament and Council",
+      "category": "horizontal-law",
+      "status": "in-force",
+      "document_date": "2024-06-13",
+      "reference": "Regulation (EU) 2024/1689",
+      "landing_page": "https://eur-lex.europa.eu/legal-content/EN/TXT/?uri=OJ:L_202401689",
+      "direct_url": "https://eur-lex.europa.eu/legal-content/EN/TXT/PDF/?uri=OJ:L_202401689",
+      "discover": null,
+      "filename": "EU_AI_Act_Regulation_2024-1689_EN.pdf",
+      "notes": "Horizontal AI law that applies alongside GMP. For another language, swap /EN/ in the URL for the target locale (e.g. /DE/); EUR-Lex has no Korean version.",
+      "language": "en"
+    },
+    {
+      "id": "fda-ai-regulatory-decision-making",
+      "title": "Considerations for the Use of Artificial Intelligence To Support Regulatory Decision-Making for Drug and Biological Products (draft guidance)",
+      "title_ko": "의약품·생물학적제제 규제 의사결정 지원을 위한 인공지능 활용 고려사항 (초안 지침)",
+      "authority": "FDA",
+      "issuer": "FDA CDER / CBER",
+      "category": "gmp-ai",
+      "status": "draft",
+      "document_date": "2025-01-07",
+      "reference": "Docket FDA-2024-D-4689",
+      "landing_page": "https://www.fda.gov/regulatory-information/search-fda-guidance-documents/considerations-use-artificial-intelligence-support-regulatory-decision-making-drug-and-biological",
+      "direct_url": "https://www.fda.gov/media/184830/download",
+      "discover": {
+        "pattern": "(?i)/media/\\d+/download[^\"']*"
+      },
+      "filename": "FDA_AI_RegulatoryDecisionMaking_draft_2025-01.pdf",
+      "notes": "Risk-based credibility assessment framework for AI models, explicitly covering the manufacturing phase. Comment period closed 2025-04-07; still draft as of 2026-08 — check the landing page for a final version.",
+      "language": "en"
+    },
+    {
+      "id": "fda-ai-drug-manufacturing",
+      "title": "Discussion Paper: Artificial Intelligence in Drug Manufacturing",
+      "title_ko": "논의 문서: 의약품 제조에서의 인공지능",
+      "authority": "FDA",
+      "issuer": "FDA CDER (FRAME initiative)",
+      "category": "gmp-ai",
+      "status": "discussion-paper",
+      "document_date": "2023-03-01",
+      "reference": "CDER FRAME discussion paper",
+      "landing_page": "https://www.fda.gov/about-fda/center-drug-evaluation-and-research-cder/cders-framework-regulatory-advanced-manufacturing-evaluation-frame-initiative",
+      "direct_url": "https://www.fda.gov/media/165743/download",
+      "discover": {
+        "pattern": "(?i)/media/\\d+/download[^\"']*"
+      },
+      "filename": "FDA_AI_in_Drug_Manufacturing_DiscussionPaper_2023-03.pdf",
+      "notes": "The closest FDA counterpart to Annex 22 on the manufacturing side — not binding guidance.",
+      "language": "en"
+    },
+    {
+      "id": "fda-good-ai-practice",
+      "title": "Guiding Principles of Good AI Practice in Drug Development (FDA copy)",
+      "title_ko": "의약품 개발에서의 우수 AI 실무 지침 원칙 (FDA 배포본)",
+      "authority": "FDA",
+      "issuer": "FDA and EMA (joint)",
+      "category": "gmp-ai",
+      "status": "final",
+      "document_date": "2026-01-01",
+      "reference": "FDA/EMA joint guiding principles",
+      "landing_page": "https://www.fda.gov/about-fda/center-drug-evaluation-and-research-cder/artificial-intelligence-drug-development",
+      "direct_url": "https://www.fda.gov/media/189581/download",
+      "discover": {
+        "pattern": "(?i)/media/\\d+/download[^\"']*"
+      },
+      "filename": "FDA-EMA_GuidingPrinciples_GoodAIPractice_2026-01.pdf",
+      "notes": "Same content as the EMA copy; kept separately so both official sources are archived.",
+      "language": "en"
+    },
+    {
+      "id": "fda-computer-software-assurance",
+      "title": "Computer Software Assurance for Production and Quality System Software (final guidance)",
+      "title_ko": "생산 및 품질시스템 소프트웨어에 대한 컴퓨터 소프트웨어 보증 (최종 지침)",
+      "authority": "FDA",
+      "issuer": "FDA CDRH / CBER",
+      "category": "computerised-systems",
+      "status": "final",
+      "document_date": "2025-09-24",
+      "reference": "CSA final guidance",
+      "landing_page": "https://www.fda.gov/regulatory-information/search-fda-guidance-documents/computer-software-assurance-production-and-quality-system-software",
+      "direct_url": "https://www.fda.gov/media/188844/download",
+      "discover": {
+        "pattern": "(?i)/media/\\d+/download[^\"']*"
+      },
+      "filename": "FDA_ComputerSoftwareAssurance_final_2025-09.pdf",
+      "notes": "Risk-based validation approach for production/quality software; the FDA analogue to the Annex 11 validation expectations. An updated version was issued 2026-02-03 — the landing page always serves the current one.",
+      "language": "en"
+    },
+    {
+      "id": "fda-ai-device-lifecycle",
+      "title": "Artificial Intelligence-Enabled Device Software Functions: Lifecycle Management and Marketing Submission Recommendations (draft guidance)",
+      "title_ko": "AI 기반 의료기기 소프트웨어 기능: 전주기 관리 및 시판 신청 권고사항 (초안 지침)",
+      "authority": "FDA",
+      "issuer": "FDA CDRH",
+      "category": "medical-device-ai",
+      "status": "draft",
+      "document_date": "2025-01-07",
+      "reference": "Docket FDA-2024-D-4488",
+      "landing_page": "https://www.fda.gov/regulatory-information/search-fda-guidance-documents/artificial-intelligence-enabled-device-software-functions-lifecycle-management-and-marketing",
+      "direct_url": null,
+      "discover": {
+        "pattern": "(?i)/media/\\d+/download[^\"']*"
+      },
+      "filename": "FDA_AI_Enabled_Device_Software_Lifecycle_draft_2025-01.pdf",
+      "notes": "Device-side total product lifecycle expectations. Relevant if the AI system is itself a regulated device or is reused across device and drug operations.",
+      "language": "en"
+    },
+    {
+      "id": "fda-pccp-ai-device",
+      "title": "Predetermined Change Control Plans for Machine Learning-Enabled Device Software Functions (final guidance)",
+      "title_ko": "머신러닝 기반 의료기기 소프트웨어의 사전 변경관리 계획 (최종 지침)",
+      "authority": "FDA",
+      "issuer": "FDA CDRH / CBER",
+      "category": "medical-device-ai",
+      "status": "final",
+      "document_date": "2024-12-04",
+      "reference": "PCCP final guidance",
+      "landing_page": "https://www.fda.gov/regulatory-information/search-fda-guidance-documents/marketing-submission-recommendations-predetermined-change-control-plan-artificial-intelligence",
+      "direct_url": null,
+      "discover": {
+        "pattern": "(?i)/media/\\d+/download[^\"']*"
+      },
+      "filename": "FDA_PCCP_AI_ML_Device_final_2024-12.pdf",
+      "notes": "The reference model for managing planned model retraining/changes without a new submission — useful precedent for Annex 22 change control.",
+      "language": "en"
+    },
+    {
+      "id": "fda-data-integrity-cgmp",
+      "title": "Data Integrity and Compliance With Drug CGMP: Questions and Answers (final guidance)",
+      "title_ko": "데이터 무결성 및 의약품 CGMP 준수: 질의응답 (최종 지침)",
+      "authority": "FDA",
+      "issuer": "FDA CDER / CBER / CVM",
+      "category": "data-integrity",
+      "status": "final",
+      "document_date": "2018-12-01",
+      "reference": "Data Integrity Q&A",
+      "landing_page": "https://www.fda.gov/regulatory-information/search-fda-guidance-documents/data-integrity-and-compliance-drug-cgmp-questions-and-answers",
+      "direct_url": null,
+      "discover": {
+        "pattern": "(?i)/media/\\d+/download[^\"']*"
+      },
+      "filename": "FDA_DataIntegrity_CGMP_QA_final_2018-12.pdf",
+      "notes": "Baseline CGMP data integrity expectations that AI training and inference data must still satisfy.",
+      "language": "en"
+    },
+    {
+      "id": "fda-part11",
+      "title": "Part 11, Electronic Records; Electronic Signatures - Scope and Application (final guidance)",
+      "title_ko": "Part 11 전자기록·전자서명: 적용 범위 (최종 지침)",
+      "authority": "FDA",
+      "issuer": "FDA",
+      "category": "data-integrity",
+      "status": "final",
+      "document_date": "2003-08-01",
+      "reference": "21 CFR Part 11 guidance",
+      "landing_page": "https://www.fda.gov/regulatory-information/search-fda-guidance-documents/part-11-electronic-records-electronic-signatures-scope-and-application",
+      "direct_url": null,
+      "discover": {
+        "pattern": "(?i)/media/\\d+/download[^\"']*"
+      },
+      "filename": "FDA_Part11_ElectronicRecords_ScopeAndApplication_2003-08.pdf",
+      "notes": "Records and signature requirements that apply to AI system outputs used in GMP decisions.",
+      "language": "en"
+    }
+  ]
+}
