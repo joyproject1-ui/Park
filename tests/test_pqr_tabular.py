@@ -30,12 +30,28 @@ RELS = """<?xml version="1.0"?>
 <Relationship Id="rId1" Type="worksheet" Target="worksheets/sheet1.xml"/></Relationships>"""
 
 
-def make_xlsx(path):
+SECOND_SHEET_XML = """<?xml version="1.0"?>
+<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
+<sheetData>
+<row r="1"><c r="A1" t="s"><v>0</v></c></row>
+<row r="2"><c r="A2" t="inlineStr"><is><t>안내문</t></is></c></row>
+</sheetData></worksheet>"""
+
+WORKBOOK_TWO = WORKBOOK.replace(
+    "</sheets>", '<sheet name="안내" sheetId="2" r:id="rId2"/></sheets>')
+RELS_TWO = RELS.replace(
+    "</Relationships>",
+    '<Relationship Id="rId2" Type="worksheet" Target="worksheets/sheet2.xml"/></Relationships>')
+
+
+def make_xlsx(path, second_sheet=False):
     with zipfile.ZipFile(path, "w") as archive:
-        archive.writestr("xl/workbook.xml", WORKBOOK)
-        archive.writestr("xl/_rels/workbook.xml.rels", RELS)
+        archive.writestr("xl/workbook.xml", WORKBOOK_TWO if second_sheet else WORKBOOK)
+        archive.writestr("xl/_rels/workbook.xml.rels", RELS_TWO if second_sheet else RELS)
         archive.writestr("xl/sharedStrings.xml", SHARED)
         archive.writestr("xl/worksheets/sheet1.xml", SHEET_XML)
+        if second_sheet:
+            archive.writestr("xl/worksheets/sheet2.xml", SECOND_SHEET_XML)
 
 
 class TabularTest(unittest.TestCase):
@@ -73,6 +89,15 @@ class TabularTest(unittest.TestCase):
         self.assertEqual(rows[0]["제품코드"], "HP-101")
         self.assertEqual(rows[1]["제품코드"], "HP-102")
         self.assertEqual(rows[0]["결과값"], "99.4")
+
+    def test_reads_only_the_first_sheet(self):
+        """안내 시트를 뒤에 붙여도 데이터 시트만 읽어야 합니다."""
+        path = os.path.join(self.dir, "two.xlsx")
+        make_xlsx(path, second_sheet=True)
+        rows = read_xlsx(path)
+        self.assertEqual(len(rows), 2)
+        self.assertEqual(rows[0]["제품코드"], "HP-101")
+        self.assertEqual(read_xlsx(path, sheet="안내")[0]["제품코드"], "안내문")
 
     def test_read_table_dispatches_by_suffix(self):
         path = os.path.join(self.dir, "y.xlsx")

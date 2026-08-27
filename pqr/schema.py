@@ -216,6 +216,18 @@ def normalize(rows, dataset, source="", default_product_code=None):
                                % (folder_code, written),
                 })
 
+        # 표 아래에 적어 둔 안내·비고 문장이 한 건의 자료로 잡히지 않게 걸러 냅니다.
+        filled = {key: value for key, value in record.items() if value not in (None, "")}
+        if len(filled) == 1:
+            only = list(filled.values())[0]
+            if isinstance(only, str) and len(only) > 40:
+                issues.append({
+                    "source": source, "row": line_no, "field": list(filled)[0],
+                    "level": "info",
+                    "message": "설명문으로 보여 건너뛴 행입니다",
+                })
+                continue
+
         # 숫자 0(예: 안정성 0개월 시점)은 값이 있는 것이므로 '비어 있음'으로 보면 안 됩니다.
         missing = [field for field in spec["required"]
                    if record.get(field) is None or record.get(field) == ""]

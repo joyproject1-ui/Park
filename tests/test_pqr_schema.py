@@ -75,6 +75,24 @@ class NormalizeTest(unittest.TestCase):
         self.assertEqual(len(warnings), 1)
         self.assertIn("HP-201", warnings[0]["message"])
 
+    def test_note_row_below_the_table_is_skipped(self):
+        """표 아래 안내 문장이 제품 한 건으로 잡히면 안 됩니다."""
+        rows = [
+            {"제품코드": "HP-110", "제품명": "레보클점안액"},
+            {"제품코드": "노란 칸은 채우거나 확인해야 하는 값입니다. 제품을 추가할 때는 "
+                     "3행부터 같은 형식으로 이어서 적으면 됩니다.", "제품명": ""},
+        ]
+        records, issues = normalize(rows, "products", "m.xlsx")
+        self.assertEqual(len(records), 1)
+        self.assertEqual(records[0]["product_code"], "HP-110")
+        skipped = [i for i in issues if "설명문" in i["message"]]
+        self.assertEqual(len(skipped), 1)
+
+    def test_short_single_field_row_is_kept(self):
+        """코드만 적힌 행은 정상 자료이므로 남겨야 합니다."""
+        records, _ = normalize([{"제품코드": "HP-110"}], "products", "m.xlsx")
+        self.assertEqual(len(records), 1)
+
     def test_unmapped_columns_are_reported_as_info(self):
         rows = [{"제품코드": "HP-1", "배치번호": "A1", "시험항목": "함량", "비고": "메모"}]
         _, issues = normalize(rows, "batches", "f.csv")
