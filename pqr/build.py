@@ -161,6 +161,7 @@ def load(input_dir=None, files=None):
         issues.extend(found_issues)
         sources.setdefault(dataset, []).append({
             "file": os.path.basename(path),
+            "path": os.path.abspath(path),
             "product": folder_code or "(공통)",
             "rows": len(normalized),
             "skipped": len(raw) - len(normalized),

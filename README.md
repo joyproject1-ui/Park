@@ -10,7 +10,7 @@
 ```bash
 python -m gmpai list                 # 규정 문서 목록
 python -m pqr demo -o sample_input   # PQR 예시 자료 만들기
-python -m pqr build --in sample_input
+python -m pqr serve --in sample_input # 대시보드 + 화면에서 자료 올리기
 ```
 
 ---
@@ -152,7 +152,7 @@ python -m gmpai download
 python -m unittest discover -s tests -t .
 ```
 
-두 도구를 합쳐 89건의 테스트가 네트워크 없이 동작합니다. `gmpai` 는 로컬 모의 서버로
+두 도구를 합쳐 103건의 테스트가 네트워크 없이 동작합니다. `gmpai` 는 로컬 모의 서버로
 다운로드·재개정 감지·링크 탐색 폴백·HTML 오응답 차단을 검증하고, `pqr` 은 엑셀·CSV 적재부터
 공정능력·경향 판정·보고서 생성까지 검증합니다 (Claude API 호출은 가짜 클라이언트로 대체).
 

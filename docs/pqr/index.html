@@ -109,13 +109,15 @@ button{font:inherit;color:inherit}
 .seg button{border:0;background:none;border-radius:7px;padding:5px 12px;font-size:12px;font-weight:500;color:var(--ink-2);cursor:pointer;white-space:nowrap}
 .seg button[aria-pressed="true"]{background:var(--accent);color:#fff;font-weight:600}
 .search{position:relative}
+.search{flex:0 1 186px;min-width:120px}
 .search input{
-  width:186px;padding:7px 11px 7px 30px;border:1px solid var(--line-2);border-radius:9px;
+  width:100%;padding:7px 11px 7px 30px;border:1px solid var(--line-2);border-radius:9px;
   background:var(--surface-2);color:var(--ink);font:inherit;font-size:13px;
 }
 .search input::placeholder{color:var(--ink-3)}
 .search span{position:absolute;left:10px;top:50%;transform:translateY(-50%);font-size:12px;opacity:.6}
 .icon-btn{border:1px solid var(--line-2);background:var(--surface-2);border-radius:9px;padding:6px 10px;font-size:13px;cursor:pointer;display:inline-flex;align-items:center;gap:6px}
+.icon-btn[hidden]{display:none}
 .source-note{display:inline-flex;align-items:center;font-size:12px;white-space:nowrap}
 .seg[hidden]{display:none}
 
@@ -281,6 +283,53 @@ td.wrap{white-space:normal;min-width:220px}
 .stepitem .txt{padding-bottom:12px}
 .stepitem .txt small{display:block;color:var(--ink-3);font-size:11.5px}
 
+/* 업로드 */
+.cell-btn{border:0;background:none;padding:4px;border-radius:7px;cursor:pointer;line-height:0}
+.cell-btn:hover{background:var(--surface-3);box-shadow:0 0 0 1px var(--line-2)}
+.cell-btn[disabled]{cursor:default}
+.cell-btn[disabled]:hover{background:none;box-shadow:none}
+.modal{
+  position:fixed;left:50%;top:50%;z-index:70;width:min(540px,94vw);
+  transform:translate(-50%,-48%);opacity:0;pointer-events:none;transition:opacity .16s,transform .16s;
+  background:var(--surface);border:1px solid var(--line);border-radius:16px;box-shadow:var(--shadow-lg);
+  display:flex;flex-direction:column;max-height:88vh;
+}
+.modal.open{opacity:1;pointer-events:auto;transform:translate(-50%,-50%)}
+.modal-head{display:flex;align-items:flex-start;gap:12px;padding:18px 20px 14px;border-bottom:1px solid var(--line)}
+.modal-head h2{margin:2px 0 0;font-size:16px;font-weight:700}
+.modal-body{padding:16px 20px;overflow-y:auto;display:flex;flex-direction:column;gap:14px}
+.modal-foot{display:flex;gap:8px;justify-content:flex-end;padding:14px 20px;border-top:1px solid var(--line)}
+.btn{border:1px solid var(--accent);background:var(--accent);color:#fff;font-weight:600;font-size:13px;
+  border-radius:9px;padding:8px 16px;cursor:pointer}
+.btn[disabled]{opacity:.45;cursor:not-allowed}
+.btn.ghost{background:var(--surface-2);border-color:var(--line-2);color:var(--ink-2);font-weight:500}
+:root[data-theme="dark"] .btn{color:#0d1117}
+.field{display:flex;flex-direction:column;gap:6px;font-size:12.5px;color:var(--ink-2)}
+.field select{
+  border:1px solid var(--line-2);border-radius:9px;padding:8px 10px;font:inherit;font-size:13px;
+  background:var(--surface-2);color:var(--ink);
+}
+.drop{
+  border:1.5px dashed var(--line-2);border-radius:12px;padding:22px 16px;text-align:center;
+  background:var(--surface-2);cursor:pointer;display:flex;flex-direction:column;gap:5px;align-items:center;
+}
+.drop:hover,.drop.over{border-color:var(--accent);background:var(--accent-soft)}
+.drop b{font-size:13px;font-weight:600}
+.drop small{font-size:11.5px;color:var(--ink-3)}
+.drop .picked{font-size:12.5px;color:var(--accent);font-weight:600;font-family:"IBM Plex Mono",monospace}
+.up-path{font-size:12px;color:var(--ink-2);background:var(--surface-3);border-radius:9px;padding:9px 12px;
+  font-family:"IBM Plex Mono",monospace;word-break:break-all}
+.up-note{font-size:12.5px;color:var(--ink-2);line-height:1.6}
+.up-note code{background:var(--surface-3);border-radius:5px;padding:1px 6px;font-size:12px}
+.up-result{font-size:12.5px;display:flex;flex-direction:column;gap:6px}
+.up-result.ok{color:var(--ok)} .up-result.bad{color:var(--crit)}
+.up-result ul{margin:0;padding-left:18px;color:var(--ink-2)}
+.uploadgrid td{white-space:nowrap}
+.mini{border:1px solid var(--line-2);background:var(--surface);border-radius:8px;padding:4px 10px;
+  font-size:12px;color:var(--ink-2);cursor:pointer}
+.mini:hover{border-color:var(--accent);color:var(--accent)}
+.mini.done{color:var(--ok);border-color:var(--ok-soft);background:var(--ok-soft)}
+
 /* tooltip */
 .tip{
   position:fixed;z-index:80;pointer-events:none;opacity:0;transition:opacity .1s;
@@ -352,7 +401,7 @@ td.wrap{white-space:normal;min-width:220px}
       </div>
       <div class="search"><span aria-hidden="true">🔍</span><input id="q" type="search" placeholder="제품명 · 코드 · 담당자" aria-label="검색"></div>
       <span id="source-note" class="source-note"></span>
-      <label class="icon-btn" title="pqr build 가 만든 data.json 열기">📂
+      <label class="icon-btn" id="file-open" title="pqr build 가 만든 data.json 열기">📂
         <input id="file-input" type="file" accept=".json,application/json" hidden>
       </label>
       <button class="icon-btn" id="theme-btn" title="화면 모드 전환" aria-label="화면 모드 전환">◐</button>
@@ -432,7 +481,7 @@ td.wrap{white-space:normal;min-width:220px}
               <span class="k"><i class="swatch" style="background:var(--ok)"></i>수집 완료</span>
               <span class="k"><i class="swatch" style="background:var(--warn)"></i>요청 · 진행 중</span>
               <span class="k"><i class="swatch" style="background:var(--line-2)"></i>미착수</span>
-              <span class="k muted">· 셀에 마우스를 올리면 항목명과 상태가 표시됩니다</span>
+              <span class="k muted" id="matrix-hint">· 셀에 마우스를 올리면 항목명과 상태가 표시됩니다</span>
             </div>
             <div class="itemkey" id="itemkey"></div>
           </div>
@@ -497,6 +546,24 @@ td.wrap{white-space:normal;min-width:220px}
         </div>
       </section>
 
+      <!-- ============ 자료 업로드 ============ -->
+      <section class="view" id="v-upload" hidden>
+        <div class="card">
+          <div class="card-head">
+            <h2>제품별 자료 제출 현황</h2>
+            <span class="pill" id="up-count">0품목</span>
+            <button class="link" id="up-export">보고서 다시 만들기 →</button>
+          </div>
+          <div class="card-body" id="upload-note"></div>
+          <div class="tablewrap">
+            <table class="uploadgrid">
+              <thead><tr id="upload-head"><th>코드</th><th>제품명</th></tr></thead>
+              <tbody id="upload-body"></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
       <!-- ============ placeholder ============ -->
       <section class="view" id="v-todo" hidden>
         <div class="card">
@@ -524,6 +591,35 @@ td.wrap{white-space:normal;min-width:220px}
   </div>
   <div class="drawer-body" id="dr-body"></div>
 </aside>
+<div class="modal" id="upload-modal" role="dialog" aria-modal="true" aria-labelledby="up-title">
+  <div class="modal-head">
+    <div>
+      <div class="mono" style="font-size:12px;color:var(--ink-3)" id="up-product"></div>
+      <h2 id="up-title">자료 올리기</h2>
+    </div>
+    <button class="icon-btn" id="up-close" style="margin-left:auto" aria-label="닫기">✕</button>
+  </div>
+  <div class="modal-body">
+    <div class="up-note" id="up-desc"></div>
+    <label class="field" id="up-dataset-field">
+      <span>자료 종류</span>
+      <select id="up-dataset"></select>
+    </label>
+    <div class="drop" id="up-drop" tabindex="0" role="button"
+         aria-label="파일 선택 — 끌어다 놓거나 눌러서 고르세요">
+      <input type="file" id="up-file" accept=".csv,.tsv,.txt,.xlsx,.xlsm" hidden>
+      <b>파일을 끌어다 놓거나 눌러서 고르세요</b>
+      <small>xlsx · xlsm · csv · tsv (최대 64 MB)</small>
+      <span class="picked" id="up-filename"></span>
+    </div>
+    <div class="up-path" id="up-path"></div>
+    <div class="up-result" id="up-result"></div>
+  </div>
+  <div class="modal-foot">
+    <button class="btn ghost" id="up-cancel">닫기</button>
+    <button class="btn" id="up-submit" disabled>올리기</button>
+  </div>
+</div>
 <div class="tip" id="tip" role="status" aria-live="polite"></div>
 
 <!-- `python -m pqr build` 가 만든 data.js 를 이 파일 옆에 두면 실제 데이터로 채워집니다.
@@ -853,6 +949,9 @@ function renderProducts(rows, mode){
 
 /* ---- 평가항목 매트릭스 ---- */
 function renderMatrix(rows){
+  $("#matrix-hint").textContent = uploadEnabled()
+    ? "· 칸을 누르면 그 항목의 자료를 바로 올릴 수 있습니다"
+    : "· 셀에 마우스를 올리면 항목명과 상태가 표시됩니다";
   $("#itemkey").innerHTML = ITEMS.map(([k,n,s])=>`<div><b>(${k})</b>${esc(n)} <span class="muted">· ${esc(s)}</span></div>`).join("");
   const head = $("#matrix-head");
   head.innerHTML = `<th>코드</th><th>제품명</th>` + ITEMS.map(([k])=>`<th class="rot mono">${k}</th>`).join("") + `<th>수집률</th><th>단계</th>`;
@@ -862,14 +961,18 @@ function renderMatrix(rows){
     <tr>
       <td>${codeCell(d)}</td>
       <td class="wrap">${esc(d.name)}</td>
-      ${d.checks.map((c,i)=>`<td class="cell"><span class="dot ${c}" data-tip="${d.code}|${i}"></span></td>`).join("")}
+      ${d.checks.map((c,i)=>`<td class="cell"><button class="cell-btn" data-upload="${d.code}|${ITEMS[i][0]}"
+          data-tip="${d.code}|${i}" ${uploadEnabled()?"":"disabled"}
+          aria-label="${esc(d.name)} (${ITEMS[i][0]}) ${esc(ITEMS[i][1])} 자료 올리기"><span class="dot ${c}"></span></button>`).join("")}
       <td>${progCell(d)}</td>
       <td>${stageTag(d)}</td>
     </tr>`).join("");
-  $("#matrix-body").querySelectorAll(".dot").forEach(n=>{
+  $("#matrix-body").querySelectorAll(".cell-btn").forEach(n=>{
     const [code,i] = n.dataset.tip.split("|");
     const d = DATA.find(x=>x.code===code), it = ITEMS[+i];
-    bindTip(n, `<b>(${it[0]}) ${esc(it[1])}</b><br>${esc(d.name)}<br>${label[d.checks[+i]]}`);
+    const hint = uploadEnabled() ? "<br><b>눌러서 자료 올리기</b>"
+      : "<br>자료를 올리려면 <b>python -m pqr serve</b> 로 실행하세요";
+    bindTip(n, `<b>(${it[0]}) ${esc(it[1])}</b><br>${esc(d.name)}<br>${label[d.checks[+i]]}${hint}`);
   });
 }
 
@@ -967,6 +1070,170 @@ function renderLead(rows){
     || `<tr><td colspan="7" class="muted" style="padding:22px">지연 중인 PQR이 없습니다.</td></tr>`;
 }
 
+/* ============================ 자료 올리기 ============================
+   `python -m pqr serve` 로 띄운 경우에만 동작합니다. 정적 파일로 열었을 때는
+   버튼이 비활성화되고 실행 방법을 안내합니다. */
+function uploadEnabled(){ return !!(SOURCE && SOURCE.upload && SOURCE.upload.enabled); }
+function uploadConfig(){ return (SOURCE && SOURCE.upload) || {}; }
+
+const modal = $("#upload-modal");
+let uploadTarget = null;     // {code, item}
+let pickedFile = null;
+
+function datasetsForItem(itemKey){
+  const map = uploadConfig().item_datasets || {};
+  return map[itemKey] || [];
+}
+function datasetLabel(name){
+  const specs = uploadConfig().datasets || {};
+  return (specs[name] && specs[name].label) || DATASET_LABELS[name] || name;
+}
+
+function openUpload(code, itemKey){
+  const product = DATA.find(d=>d.code===code);
+  const item = ITEMS.find(row=>row[0]===itemKey);
+  if (!product || !item) return;
+  uploadTarget = { code, item: itemKey };
+  pickedFile = null;
+
+  $("#up-product").textContent = `${product.code} · ${product.name}`;
+  $("#up-title").textContent = `(${item[0]}) ${item[1]}`;
+  $("#up-filename").textContent = "";
+  $("#up-result").textContent = "";
+  $("#up-result").className = "up-result";
+  $("#up-submit").disabled = true;
+
+
+  if (!uploadEnabled()){
+    $("#up-desc").innerHTML = `현재 상태: <b>${itemState(code, itemKey)}</b><br><br>`
+      + `이 화면은 정적 파일로 열려 있어 파일을 저장할 수 없습니다. 아래처럼 실행하면 `
+      + `이 자리에서 바로 올릴 수 있습니다.<br><code>python -m pqr serve --in &lt;입력폴더&gt;</code>`;
+    $("#up-dataset-field").hidden = true;
+    $("#up-drop").hidden = true;
+    $("#up-path").hidden = true;
+    $("#up-submit").hidden = true;
+  } else {
+    const datasets = datasetsForItem(itemKey);
+    refreshUploadState();
+    $("#up-dataset-field").hidden = datasets.length === 0;
+    $("#up-dataset").innerHTML = datasets
+      .map(name=>`<option value="${esc(name)}">${esc(datasetLabel(name))}</option>`).join("");
+    $("#up-drop").hidden = false;
+    $("#up-path").hidden = false;
+    $("#up-submit").hidden = false;
+    updatePathHint();
+  }
+  scrim.classList.add("open");
+  modal.classList.add("open");
+  $("#up-drop").focus();
+}
+
+/* 항목의 현재 자료 상태 — 업로드 뒤에도 최신 값을 보여줍니다. */
+function itemState(code, itemKey){
+  const product = DATA.find(d=>d.code===code);
+  const index = ITEMS.findIndex(row=>row[0]===itemKey);
+  if (!product || index < 0) return "—";
+  return { y:"수집 완료", p:"요청 · 진행 중", n:"미착수" }[product.checks[index]];
+}
+
+function refreshUploadState(){
+  if (!uploadTarget) return;
+  const item = ITEMS.find(row=>row[0]===uploadTarget.item);
+  $("#up-desc").innerHTML = `현재 상태: <b>${itemState(uploadTarget.code, uploadTarget.item)}</b> · `
+    + `${esc(item[2])}<br>이 항목은 아래 자료로 채워집니다.`;
+}
+
+function updatePathHint(){
+  if (!uploadTarget || !uploadEnabled()) return;
+  const dataset = $("#up-dataset").value;
+  const spec = (uploadConfig().datasets || {})[dataset] || {};
+  const product = DATA.find(d=>d.code===uploadTarget.code);
+  const folder = spec.scope === "common" ? "공통"
+    : `${uploadTarget.code} ${product ? product.name : ""}`.trim();
+  const name = pickedFile ? pickedFile.name : `${spec.filename || dataset}.xlsx`;
+  $("#up-path").textContent = `저장 위치:  ${folder}/${name}`;
+}
+
+function closeUpload(){
+  modal.classList.remove("open");
+  if (!drawer.classList.contains("open")) scrim.classList.remove("open");
+  uploadTarget = null; pickedFile = null;
+}
+
+function pickFile(file){
+  if (!file) return;
+  pickedFile = file;
+  $("#up-filename").textContent = `${file.name} · ${(file.size/1024).toFixed(0)} KB`;
+  $("#up-submit").disabled = false;
+  updatePathHint();
+}
+
+async function submitUpload(){
+  if (!pickedFile || !uploadTarget) return;
+  const button = $("#up-submit");
+  const result = $("#up-result");
+  button.disabled = true; button.textContent = "올리는 중…";
+  result.className = "up-result"; result.textContent = "";
+  const form = new FormData();
+  form.append("product", uploadTarget.code);
+  form.append("dataset", $("#up-dataset").value);
+  form.append("file", pickedFile, pickedFile.name);
+  try {
+    const response = await fetch("api/upload", { method:"POST", body: form });
+    const payload = await response.json();
+    if (!response.ok || !payload.ok) throw new Error(payload.error || "업로드에 실패했습니다");
+    adopt(payload.data);
+    render();
+    renderSourceNote();
+    refreshUploadState();
+    result.className = "up-result ok";
+    const errors = payload.errors || [], warnings = payload.warnings || [];
+    result.innerHTML = `<div><b>${esc(payload.saved)}</b> 에 저장했습니다 · `
+      + `${payload.rows}행 적재${payload.skipped ? ` · ${payload.skipped}행 건너뜀` : ""}</div>`
+      + (errors.length ? `<ul>${errors.map(e=>`<li>${esc(e.row)}행 ${esc(e.field)} — ${esc(e.message)}</li>`).join("")}</ul>` : "")
+      + (warnings.length ? `<ul>${warnings.map(e=>`<li>${esc(e.row)}행 ${esc(e.field)} — ${esc(e.message)}</li>`).join("")}</ul>` : "");
+    if (errors.length){ result.className = "up-result bad"; }
+    $("#up-filename").textContent = ""; pickedFile = null;
+  } catch (error) {
+    result.className = "up-result bad";
+    result.textContent = error.message;
+  } finally {
+    button.textContent = "올리기"; button.disabled = !pickedFile;
+  }
+}
+
+/* ---- 자료 업로드 화면 ---- */
+function renderUpload(rows){
+  const specs = uploadConfig().datasets || {};
+  const names = Object.keys(specs).filter(name=>specs[name].scope === "product");
+  const columns = names.length ? names : ["batches","deviations","changes","stability"];
+  $("#up-count").textContent = rows.length + "품목";
+  $("#upload-head").innerHTML = `<th>코드</th><th>제품명</th>`
+    + columns.map(name=>`<th>${esc(datasetLabel(name))}</th>`).join("")
+    + `<th>자료 수집</th>`;
+  $("#upload-body").innerHTML = rows.map(d=>`
+    <tr>
+      <td>${codeCell(d)}</td>
+      <td class="wrap">${esc(d.name)}</td>
+      ${columns.map(name=>{
+        const has = !(d.missing_datasets || []).includes(name);
+        const item = Object.entries(uploadConfig().item_datasets || {})
+          .find(([, list])=>list[0] === name);
+        const key = item ? item[0] : ITEMS[0][0];
+        return `<td><button class="mini ${has?"done":""}" data-upload="${d.code}|${key}"
+          ${uploadEnabled()?"":"disabled"}>${has?"제출됨 · 교체":"올리기"}</button></td>`;
+      }).join("")}
+      <td>${progCell(d)}</td>
+    </tr>`).join("");
+
+  $("#upload-note").innerHTML = uploadEnabled()
+    ? `<p class="up-note" style="margin:0">담당자가 올린 파일은 <code>${esc(uploadConfig().input_dir || "")}</code> 아래
+       제품 폴더에 저장되고, 저장 즉시 다시 집계됩니다. 같은 종류의 자료를 다시 올리면 이전 파일을 대체합니다.</p>`
+    : `<p class="up-note" style="margin:0">이 화면은 정적 파일로 열려 있어 자료를 올릴 수 없습니다.
+       <code>python -m pqr serve --in &lt;입력폴더&gt;</code> 로 실행한 뒤 브라우저에서 열면
+       칸을 눌러 그 자리에서 올릴 수 있습니다.</p>`;
+}
+
 /* ---- 상세 패널 ---- */
 const DATASET_LABELS = {
   batches:"시험성적서 · 공정관리", deviations:"일탈 · OOS/OOT · CAPA",
@@ -1016,12 +1283,52 @@ function openDrawer(code){
   scrim.classList.add("open"); drawer.classList.add("open"); drawer.focus();
 }
 function closeDrawer(){ scrim.classList.remove("open"); drawer.classList.remove("open"); if(lastFocus) lastFocus.focus(); }
-scrim.addEventListener("click", closeDrawer);
+scrim.addEventListener("click", ()=>{ closeUpload(); closeDrawer(); });
 $("#dr-close").addEventListener("click", closeDrawer);
-document.addEventListener("keydown", e=>{ if(e.key==="Escape") closeDrawer(); });
+document.addEventListener("keydown", e=>{
+  if (e.key !== "Escape") return;
+  if (modal.classList.contains("open")) closeUpload(); else closeDrawer();
+});
 document.addEventListener("click", e=>{
-  const b = e.target.closest(".code-btn");
-  if (b) openDrawer(b.dataset.code);
+  const uploader = e.target.closest("[data-upload]");
+  if (uploader && !uploader.disabled){
+    const [code, item] = uploader.dataset.upload.split("|");
+    hideTip();
+    openUpload(code, item);
+    return;
+  }
+  const code = e.target.closest(".code-btn");
+  if (code) openDrawer(code.dataset.code);
+});
+
+$("#up-close").addEventListener("click", closeUpload);
+$("#up-cancel").addEventListener("click", closeUpload);
+$("#up-submit").addEventListener("click", submitUpload);
+$("#up-dataset").addEventListener("change", updatePathHint);
+$("#up-file").addEventListener("change", e=>pickFile(e.target.files[0]));
+$("#up-drop").addEventListener("click", ()=>$("#up-file").click());
+$("#up-drop").addEventListener("keydown", e=>{
+  if (e.key === "Enter" || e.key === " "){ e.preventDefault(); $("#up-file").click(); }
+});
+["dragenter","dragover"].forEach(type=>$("#up-drop").addEventListener(type, e=>{
+  e.preventDefault(); $("#up-drop").classList.add("over");
+}));
+["dragleave","drop"].forEach(type=>$("#up-drop").addEventListener(type, e=>{
+  e.preventDefault(); $("#up-drop").classList.remove("over");
+}));
+$("#up-drop").addEventListener("drop", e=>pickFile(e.dataTransfer.files[0]));
+$("#up-export").addEventListener("click", async ()=>{
+  if (!uploadEnabled()){ alert("python -m pqr serve 로 실행한 경우에만 동작합니다."); return; }
+  const button = $("#up-export");
+  button.textContent = "만드는 중…";
+  try {
+    const response = await fetch("api/export", { method:"POST" });
+    const payload = await response.json();
+    button.textContent = payload.ok ? `보고서 ${payload.files.length}건 생성됨` : "실패";
+  } catch (error) {
+    button.textContent = "실패: " + error.message;
+  }
+  setTimeout(()=>{ button.textContent = "보고서 다시 만들기 →"; }, 4000);
 });
 
 /* ---- 준비 중 화면 ---- */
@@ -1057,8 +1364,9 @@ const VIEWMAP = {
   items:{ sec:"v-items", title:"평가항목 자료 수집", crumb:"EU GMP Part I §1.10 (a)~(l) 항목별 수집 상태" },
   trend:{ sec:"v-trend", title:"품질 이슈 경향", crumb:"최근 12개월 일탈 · OOS/OOT · 불만 발생 추이" },
   lead:{ sec:"v-lead", title:"지연 현황 · 리드타임", crumb:"단계별 소요일과 지연 사유" },
+  upload:{ sec:"v-upload", title:"자료 업로드", crumb:"제품 폴더에 자료를 올리고 즉시 다시 집계합니다" },
   flow:{ sec:"v-todo", todo:"flow" }, capa:{ sec:"v-todo", todo:"capa" },
-  upload:{ sec:"v-todo", todo:"upload" }, criteria:{ sec:"v-todo", todo:"criteria" },
+  criteria:{ sec:"v-todo", todo:"criteria" },
   report:{ sec:"v-todo", todo:"report" }
 };
 function go(view){
@@ -1093,6 +1401,7 @@ function render(){
   else if (cfg.sec==="v-items"){ renderMatrix(rows); }
   else if (cfg.sec==="v-trend"){ renderTrend(); }
   else if (cfg.sec==="v-lead"){ renderLead(rows); }
+  else if (cfg.sec==="v-upload"){ renderUpload(rows); }
   else if (cfg.sec==="v-todo"){ renderTodo(cfg.todo); }
   updateBadges();
 }
@@ -1140,6 +1449,7 @@ function renderSourceNote(){
   if (SOURCE.sample){
     note.innerHTML = `<span class="tag a">샘플 데이터</span>`;
     note.title = "python -m pqr build 로 만든 data.js 를 이 파일 옆에 두면 실제 데이터로 바뀝니다.";
+    $("#file-open").hidden = false;
     foot.innerHTML = "화면의 제품·배치·일탈 정보는 레이아웃 검토용 <b>샘플 데이터</b>입니다. 실제 품질 기록과 무관합니다. "
       + "<code>python -m pqr build</code> 가 만든 <code>data.js</code> 를 이 파일 옆에 두면 실제 데이터로 바뀝니다.";
   } else {
@@ -1147,6 +1457,7 @@ function renderSourceNote(){
     note.innerHTML = `<span class="tag g">생성 데이터</span>`
       + `<span class="muted" style="margin-left:8px">${esc((SOURCE.generated_at||"").replace("T"," "))}</span>`
       + (errors ? `<span class="tag r" style="margin-left:8px">적재 오류 ${errors}건</span>` : "");
+    $("#file-open").hidden = uploadEnabled();
     const files = Object.values(SOURCE.sources || {}).reduce((sum, list)=>sum + list.length, 0);
     foot.innerHTML = `제출 파일 ${files}건으로 ${esc((SOURCE.generated_at || "").replace("T", " "))} 에 생성한 데이터입니다. `
       + `서술 문안이 포함된 보고서는 생성형 AI가 작성한 <b>초안</b>이며, 발행 전 담당자 검토와 승인이 필요합니다.`;

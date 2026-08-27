@@ -3,6 +3,7 @@
     python -m pqr demo                       예시 입력 파일 만들기
     python -m pqr check  --in <입력폴더>       파일 인식 · 열 매핑 점검 (계산 전)
     python -m pqr build  --in <입력폴더>       집계 · 판정 → 대시보드 데이터 + 보고서
+    python -m pqr serve  --in <입력폴더>       대시보드를 띄우고 화면에서 자료 올리기
     python -m pqr narrate --data <pqr.json>   서술 문안 초안 (Claude API)
     python -m pqr report  --data <pqr.json>   보고서만 다시 생성
 """
@@ -249,6 +250,23 @@ def cmd_build(args):
     return 1 if errors else 0
 
 
+def cmd_serve(args):
+    from . import server as server_module
+    if not os.path.isdir(args.input):
+        _print("입력 폴더를 찾을 수 없습니다: %s" % args.input)
+        return 2
+    httpd = server_module.serve(args.input, host=args.host, port=args.port,
+                                out_dir=args.out, today=args.today, log=_print)
+    try:
+        httpd.serve_forever()
+    except KeyboardInterrupt:
+        _print("")
+        _print("종료합니다.")
+    finally:
+        httpd.server_close()
+    return 0
+
+
 def cmd_narrate(args):
     from . import narrate as narrate_module
     data = _load_data(args.data)
@@ -309,6 +327,16 @@ def build_parser():
                            help="Claude API 로 서술 문안 초안까지 생성")
     build_cmd.add_argument("--model", default="claude-opus-5", help="서술 문안 생성 모델")
     build_cmd.set_defaults(func=cmd_build)
+
+    serve_cmd = subparsers.add_parser(
+        "serve", help="대시보드를 띄우고 화면에서 자료를 올릴 수 있게 함")
+    serve_cmd.add_argument("-i", "--in", dest="input", required=True, help="입력 폴더")
+    serve_cmd.add_argument("-o", "--out", default=DEFAULT_OUT, help="보고서 출력 폴더 (기본 out)")
+    serve_cmd.add_argument("--host", default="127.0.0.1",
+                           help="기본 127.0.0.1 (이 PC에서만 접속). 사내에 열려면 0.0.0.0")
+    serve_cmd.add_argument("--port", type=int, default=8787)
+    serve_cmd.add_argument("--today", help="기준일 (기본 오늘)")
+    serve_cmd.set_defaults(func=cmd_serve)
 
     narrate_cmd = subparsers.add_parser("narrate", help="서술 문안 초안 (Claude API)")
     narrate_cmd.add_argument("-d", "--data", required=True, help="build 가 만든 pqr.json")
