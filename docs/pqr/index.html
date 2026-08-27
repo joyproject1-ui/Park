@@ -401,6 +401,8 @@ td.wrap{white-space:normal;min-width:220px}
       </div>
       <div class="search"><span aria-hidden="true">🔍</span><input id="q" type="search" placeholder="제품명 · 코드 · 담당자" aria-label="검색"></div>
       <span id="source-note" class="source-note"></span>
+      <button class="icon-btn" id="reload-btn" hidden
+              title="폴더의 파일을 다시 읽어 화면을 갱신합니다">↻</button>
       <label class="icon-btn" id="file-open" title="pqr build 가 만든 data.json 열기">📂
         <input id="file-input" type="file" accept=".json,application/json" hidden>
       </label>
@@ -1317,6 +1319,24 @@ $("#up-drop").addEventListener("keydown", e=>{
   e.preventDefault(); $("#up-drop").classList.remove("over");
 }));
 $("#up-drop").addEventListener("drop", e=>pickFile(e.dataTransfer.files[0]));
+$("#reload-btn").addEventListener("click", async ()=>{
+  const button = $("#reload-btn");
+  button.textContent = "…"; button.disabled = true;
+  try {
+    const response = await fetch("api/rebuild", { method:"POST" });
+    const payload = await response.json();
+    if (!payload.ok) throw new Error(payload.error || "다시 읽지 못했습니다");
+    adopt(payload.data);
+    renderSiteFilter();
+    render();
+    renderSourceNote();
+  } catch (error) {
+    alert("다시 읽지 못했습니다: " + error.message);
+  } finally {
+    button.textContent = "↻"; button.disabled = false;
+  }
+});
+
 $("#up-export").addEventListener("click", async ()=>{
   if (!uploadEnabled()){ alert("python -m pqr serve 로 실행한 경우에만 동작합니다."); return; }
   const button = $("#up-export");
@@ -1450,6 +1470,7 @@ function renderSourceNote(){
     note.innerHTML = `<span class="tag a">샘플 데이터</span>`;
     note.title = "python -m pqr build 로 만든 data.js 를 이 파일 옆에 두면 실제 데이터로 바뀝니다.";
     $("#file-open").hidden = false;
+    $("#reload-btn").hidden = true;
     foot.innerHTML = "화면의 제품·배치·일탈 정보는 레이아웃 검토용 <b>샘플 데이터</b>입니다. 실제 품질 기록과 무관합니다. "
       + "<code>python -m pqr build</code> 가 만든 <code>data.js</code> 를 이 파일 옆에 두면 실제 데이터로 바뀝니다.";
   } else {
@@ -1458,6 +1479,7 @@ function renderSourceNote(){
       + `<span class="muted" style="margin-left:8px">${esc((SOURCE.generated_at||"").replace("T"," "))}</span>`
       + (errors ? `<span class="tag r" style="margin-left:8px">적재 오류 ${errors}건</span>` : "");
     $("#file-open").hidden = uploadEnabled();
+    $("#reload-btn").hidden = !uploadEnabled();
     const files = Object.values(SOURCE.sources || {}).reduce((sum, list)=>sum + list.length, 0);
     foot.innerHTML = `제출 파일 ${files}건으로 ${esc((SOURCE.generated_at || "").replace("T", " "))} 에 생성한 데이터입니다. `
       + `서술 문안이 포함된 보고서는 생성형 AI가 작성한 <b>초안</b>이며, 발행 전 담당자 검토와 승인이 필요합니다.`;
