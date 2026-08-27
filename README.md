@@ -1,3 +1,20 @@
+# GMP 품질 도구 모음
+
+이 저장소에는 두 가지 도구가 있습니다.
+
+| 도구 | 하는 일 | 문서 |
+| --- | --- | --- |
+| `gmpai` | EU · FDA 의 GMP × AI 규정 원문을 공식 사이트에서 내려받고 개정을 추적 | 아래 |
+| `pqr` | 담당자가 제품 폴더에 올린 자료로 제품품질평가(PQR) 집계 · 판정 · 보고서 초안 생성 | [`pqr/README.md`](pqr/README.md) · [대시보드](docs/pqr/README.md) |
+
+```bash
+python -m gmpai list                 # 규정 문서 목록
+python -m pqr demo -o sample_input   # PQR 예시 자료 만들기
+python -m pqr build --in sample_input
+```
+
+---
+
 # GMP × AI 규정 다운로더
 
 EU(European Commission · EMA · EUR-Lex)와 미국 FDA가 발행한 **GMP 환경에서의 인공지능 관련 규정 원문**을
@@ -135,8 +152,9 @@ python -m gmpai download
 python -m unittest discover -s tests -t .
 ```
 
-30건의 테스트가 로컬 모의 서버를 띄워 다운로드·재개정 감지·링크 탐색 폴백·HTML 오응답 차단까지
-네트워크 없이 검증합니다.
+두 도구를 합쳐 89건의 테스트가 네트워크 없이 동작합니다. `gmpai` 는 로컬 모의 서버로
+다운로드·재개정 감지·링크 탐색 폴백·HTML 오응답 차단을 검증하고, `pqr` 은 엑셀·CSV 적재부터
+공정능력·경향 판정·보고서 생성까지 검증합니다 (Claude API 호출은 가짜 클라이언트로 대체).
 
 ## 라이선스와 저작권
 

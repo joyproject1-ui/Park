@@ -9,3 +9,9 @@ __pycache__/
 venv/
 *.egg-info/
 .pytest_cache/
+
+# pqr 산출물
+out/
+sample_input/
+docs/pqr/data.js
+docs/pqr/data.json
