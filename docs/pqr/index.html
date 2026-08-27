@@ -1,0 +1,1062 @@
+<title>PQR 관리 시스템</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+KR:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
+<style>
+:root{
+  --bg:#f4f6fa; --surface:#ffffff; --surface-2:#f8fafc; --surface-3:#eef2f8;
+  --line:#e3e8f0; --line-2:#d3dbe8;
+  --ink:#101828; --ink-2:#475467; --ink-3:#8492a6;
+  --accent:#1d4ed8; --accent-2:#2563eb; --accent-soft:#eaf0ff; --accent-line:#c3d4fb;
+  --teal:#0f766e; --teal-soft:#e6f4f1;
+  --crit:#c62a20; --crit-soft:#fdf1f0; --crit-line:#f6cdc9;
+  --warn:#b45309; --warn-soft:#fdf6e7; --warn-line:#f2ddb0;
+  --ok:#067647; --ok-soft:#e9f6ef;
+  --bar:#3b82f6; --bar-soft:#bfd4fb;
+  --s1:#2563eb; --s2:#0d9488; --s3:#a855f7;
+  --shadow:0 1px 2px rgba(16,24,40,.05),0 1px 3px rgba(16,24,40,.04);
+  --shadow-lg:0 8px 28px rgba(16,24,40,.14);
+  --rail:244px;
+}
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]){
+    --bg:#0d1117; --surface:#151b24; --surface-2:#1a222d; --surface-3:#212b38;
+    --line:#26313f; --line-2:#31405230;
+    --ink:#e8edf5; --ink-2:#a3b0c2; --ink-3:#7c8ba0;
+    --accent:#7aa5ff; --accent-2:#8fb4ff; --accent-soft:#18243a; --accent-line:#2c4270;
+    --teal:#4fd1c5; --teal-soft:#122a29;
+    --crit:#f87171; --crit-soft:#2a1618; --crit-line:#5b2a2a;
+    --warn:#e0a84a; --warn-soft:#2a2114; --warn-line:#584523;
+    --ok:#4ade80; --ok-soft:#132a1e;
+    --bar:#3b82f6; --bar-soft:#24406e;
+    --s1:#3b82f6; --s2:#0d9488; --s3:#a855f7;
+    --shadow:0 1px 2px rgba(0,0,0,.5); --shadow-lg:0 8px 28px rgba(0,0,0,.55);
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#0d1117; --surface:#151b24; --surface-2:#1a222d; --surface-3:#212b38;
+  --line:#26313f; --line-2:#314052;
+  --ink:#e8edf5; --ink-2:#a3b0c2; --ink-3:#7c8ba0;
+  --accent:#7aa5ff; --accent-2:#8fb4ff; --accent-soft:#18243a; --accent-line:#2c4270;
+  --teal:#4fd1c5; --teal-soft:#122a29;
+  --crit:#f87171; --crit-soft:#2a1618; --crit-line:#5b2a2a;
+  --warn:#e0a84a; --warn-soft:#2a2114; --warn-line:#584523;
+  --ok:#4ade80; --ok-soft:#132a1e;
+  --bar:#3b82f6; --bar-soft:#24406e;
+  --s1:#3b82f6; --s2:#0d9488; --s3:#a855f7;
+  --shadow:0 1px 2px rgba(0,0,0,.5); --shadow-lg:0 8px 28px rgba(0,0,0,.55);
+}
+*{box-sizing:border-box}
+body{
+  margin:0;background:var(--bg);color:var(--ink);
+  font-family:"IBM Plex Sans KR",Pretendard,-apple-system,BlinkMacSystemFont,"Malgun Gothic","맑은 고딕",sans-serif;
+  font-size:14px;line-height:1.5;-webkit-font-smoothing:antialiased;
+}
+.mono{font-family:"IBM Plex Mono",ui-monospace,SFMono-Regular,Menlo,monospace}
+.num{font-variant-numeric:tabular-nums}
+button{font:inherit;color:inherit}
+:focus-visible{outline:2px solid var(--accent-2);outline-offset:2px;border-radius:4px}
+
+/* ---------- shell ---------- */
+.app{
+  display:grid;grid-template-columns:var(--rail) minmax(0,1fr);min-height:100vh;
+  background:linear-gradient(to right,var(--surface) 0 calc(var(--rail) - 1px),var(--line) calc(var(--rail) - 1px) var(--rail),var(--bg) var(--rail));
+}
+
+/* ---------- sidebar ---------- */
+.rail{
+  background:var(--surface);border-right:1px solid var(--line);
+  display:flex;flex-direction:column;gap:2px;padding:0 0 24px;
+  position:sticky;top:0;height:100vh;overflow-y:auto;
+}
+.brand{padding:18px 16px 14px;border-bottom:1px solid var(--line);margin-bottom:10px}
+.brand-mark{display:flex;align-items:center;gap:9px}
+.brand-dot{width:26px;height:26px;border-radius:7px;background:var(--accent);position:relative;flex:none}
+.brand-dot::after{content:"";position:absolute;inset:8px;border-radius:3px;background:var(--surface);opacity:.9}
+.brand-name{font-weight:700;letter-spacing:-.01em;font-size:15px}
+.brand-sub{margin-top:8px;font-size:13px;font-weight:600;color:var(--ink)}
+.brand-en{font-size:11px;color:var(--ink-3);letter-spacing:.02em}
+.nav-group{padding:10px 10px 2px}
+.nav-label{
+  display:flex;align-items:center;justify-content:space-between;
+  padding:6px 8px;font-size:11px;font-weight:600;color:var(--ink-3);letter-spacing:.06em;
+}
+.nav-count{
+  font-size:10px;font-weight:600;color:var(--crit);background:var(--crit-soft);
+  border-radius:999px;padding:1px 7px;letter-spacing:0;
+}
+.nav-item{
+  display:flex;align-items:center;gap:9px;width:100%;text-align:left;
+  padding:8px 10px;margin:1px 0;border:0;border-radius:8px;background:none;
+  color:var(--ink-2);font-size:13px;cursor:pointer;
+}
+.nav-item:hover{background:var(--surface-3);color:var(--ink)}
+.nav-item[aria-current="page"]{background:var(--accent-soft);color:var(--accent);font-weight:600}
+.nav-ico{width:18px;text-align:center;font-size:13px;flex:none;opacity:.9}
+.nav-item .badge{margin-left:auto;font-size:10px;font-weight:600;padding:1px 6px;border-radius:999px;background:var(--surface-3);color:var(--ink-2)}
+.nav-item .badge.hot{background:var(--crit-soft);color:var(--crit)}
+
+/* ---------- topbar ---------- */
+.main{min-width:0;display:flex;flex-direction:column}
+.topbar{
+  position:sticky;top:0;z-index:20;background:var(--surface);border-bottom:1px solid var(--line);
+  display:flex;align-items:center;gap:16px;padding:12px 24px;
+}
+.topbar h1{margin:0;font-size:17px;font-weight:700;letter-spacing:-.015em}
+.topbar .crumb{font-size:12px;color:var(--ink-3);margin-top:1px}
+.spacer{flex:1}
+.seg{display:flex;background:var(--surface-3);border-radius:9px;padding:3px;gap:2px}
+.seg button{border:0;background:none;border-radius:7px;padding:5px 12px;font-size:12px;font-weight:500;color:var(--ink-2);cursor:pointer}
+.seg button[aria-pressed="true"]{background:var(--accent);color:#fff;font-weight:600}
+.search{position:relative}
+.search input{
+  width:210px;padding:7px 11px 7px 30px;border:1px solid var(--line-2);border-radius:9px;
+  background:var(--surface-2);color:var(--ink);font:inherit;font-size:13px;
+}
+.search input::placeholder{color:var(--ink-3)}
+.search span{position:absolute;left:10px;top:50%;transform:translateY(-50%);font-size:12px;opacity:.6}
+.icon-btn{border:1px solid var(--line-2);background:var(--surface-2);border-radius:9px;padding:6px 10px;font-size:13px;cursor:pointer}
+
+/* ---------- content ---------- */
+.content{padding:20px 24px 56px;display:flex;flex-direction:column;gap:16px}
+.view[hidden]{display:none}
+.view{display:flex;flex-direction:column;gap:16px}
+
+.flowbar{
+  background:linear-gradient(103deg,var(--accent) 0%,#1e40af 52%,#312e81 100%);
+  color:#fff;border-radius:14px;padding:16px 20px;display:flex;align-items:center;gap:18px;flex-wrap:wrap;
+}
+.flowbar .fb-title{font-size:13px;font-weight:600;letter-spacing:.01em;opacity:.92}
+.flowbar .fb-sub{font-size:11.5px;opacity:.7;margin-top:2px}
+.flow{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-left:auto}
+.flow .step{display:flex;align-items:center;gap:7px;background:rgba(255,255,255,.13);border:1px solid rgba(255,255,255,.16);border-radius:999px;padding:5px 12px;font-size:12px}
+.flow .step b{font-weight:600}
+.flow .step .n{font-size:10px;opacity:.75}
+.flow .sep{opacity:.45;font-size:11px}
+
+/* KPI */
+.kpis{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:12px}
+@media (max-width:1400px){.kpis{grid-template-columns:repeat(3,minmax(0,1fr))}}
+@media (max-width:760px){.kpis{grid-template-columns:repeat(2,minmax(0,1fr))}}
+.kpi{
+  background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:16px;
+  box-shadow:var(--shadow);display:flex;flex-direction:column;gap:6px;text-align:left;cursor:pointer;
+}
+.kpi:hover{border-color:var(--line-2)}
+.kpi .ico{width:34px;height:34px;border-radius:10px;background:var(--surface-3);display:grid;place-items:center;font-size:15px;margin-bottom:2px}
+.kpi .label{font-size:12.5px;color:var(--ink-2);font-weight:500}
+.kpi .value{font-size:30px;font-weight:700;letter-spacing:-.02em;line-height:1.1}
+.kpi .foot{font-size:11.5px;color:var(--ink-3)}
+.kpi.amber{background:var(--warn-soft);border-color:var(--warn-line)}
+.kpi.amber .value{color:var(--warn)} .kpi.amber .ico{background:#f6e7c6;color:#8a4b09}
+.kpi.blue{background:var(--accent-soft);border-color:var(--accent-line)}
+.kpi.blue .value{color:var(--accent)} .kpi.blue .ico{background:#d5e2fd;color:#1d4ed8}
+.kpi.red{background:var(--crit-soft);border-color:var(--crit-line)}
+.kpi.red .value{color:var(--crit)} .kpi.red .ico{background:#f8d8d4;color:#a5251c}
+:root[data-theme="dark"] .kpi.amber .ico{background:#3a2c14;color:var(--warn)}
+:root[data-theme="dark"] .kpi.blue .ico{background:#1e2c4a;color:var(--accent)}
+:root[data-theme="dark"] .kpi.red .ico{background:#37201f;color:var(--crit)}
+
+/* card */
+.card{background:var(--surface);border:1px solid var(--line);border-radius:14px;box-shadow:var(--shadow);overflow:hidden}
+.card-head{display:flex;align-items:center;gap:10px;padding:15px 18px;border-bottom:1px solid var(--line)}
+.card-head h2{margin:0;font-size:14.5px;font-weight:600;letter-spacing:-.01em}
+.card-head .pill{font-size:11px;font-weight:600;color:var(--ink-2);background:var(--surface-3);border-radius:999px;padding:2px 8px}
+.card-head .link{margin-left:auto;font-size:12px;color:var(--accent);text-decoration:none;font-weight:500;background:none;border:0;cursor:pointer}
+.card-body{padding:18px}
+.grid-2{display:grid;grid-template-columns:minmax(0,1.35fr) minmax(0,1fr);gap:16px}
+@media (max-width:1120px){.grid-2{grid-template-columns:minmax(0,1fr)}}
+
+/* stage bar chart */
+.stagechart{display:flex;align-items:flex-end;gap:0;min-height:230px;padding:22px 0 0}
+.stagecol{flex:1;display:flex;flex-direction:column;align-items:center;gap:0;height:100%;padding:0 6px;justify-content:flex-end;cursor:default}
+.stagecol .v{font-size:12.5px;font-weight:600;margin-bottom:6px}
+.stagecol .bar{width:100%;max-width:74px;background:var(--bar);border-radius:4px 4px 0 0;min-height:3px;transition:filter .12s}
+.stagecol:hover .bar{filter:brightness(1.12)}
+.stagecol .cap{margin-top:0;padding-top:9px;border-top:1px solid var(--line);width:100%;font-size:11.5px;color:var(--ink-2);text-align:center;line-height:1.35}
+.stagecol .cap i{display:block;font-style:normal;font-size:10px;color:var(--ink-3)}
+
+/* tables */
+.tablewrap{overflow-x:auto}
+.compact thead th,.compact tbody td{padding:9px 10px}
+.compact td.wrap{min-width:140px}
+table{width:100%;border-collapse:collapse;font-size:13px}
+thead th{
+  text-align:left;font-size:11.5px;font-weight:600;color:var(--ink-2);letter-spacing:.02em;
+  padding:10px 14px;background:var(--surface-2);border-bottom:1px solid var(--line);white-space:nowrap;
+}
+tbody td{padding:11px 14px;border-bottom:1px solid var(--line);vertical-align:middle;white-space:nowrap}
+tbody tr:hover{background:var(--surface-2)}
+tbody tr:last-child td{border-bottom:0}
+td.wrap{white-space:normal;min-width:220px}
+.code-btn{border:0;background:none;padding:0;color:var(--accent);font-weight:600;cursor:pointer;font-family:"IBM Plex Mono",monospace;font-size:12.5px}
+.code-btn:hover{text-decoration:underline}
+
+/* chips */
+.tag{display:inline-flex;align-items:center;gap:5px;font-size:11.5px;font-weight:600;padding:3px 9px;border-radius:999px;border:1px solid transparent;white-space:nowrap}
+.tag::before{content:"";width:5px;height:5px;border-radius:50%;background:currentColor;flex:none}
+.tag.g{color:var(--ok);background:var(--ok-soft)}
+.tag.b{color:var(--accent);background:var(--accent-soft)}
+.tag.a{color:var(--warn);background:var(--warn-soft)}
+.tag.r{color:var(--crit);background:var(--crit-soft)}
+.tag.n{color:var(--ink-2);background:var(--surface-3)}
+.tag.plain::before{display:none}
+.muted{color:var(--ink-3)}
+.warnlink{color:var(--crit);font-size:12.5px}
+.okmini{color:var(--ink-3);font-size:12.5px}
+
+/* progress */
+.prog{display:flex;align-items:center;gap:8px;min-width:118px}
+.prog .track{display:block;flex:1;height:6px;border-radius:999px;background:var(--surface-3);overflow:hidden}
+.prog .fill{display:block;height:100%;border-radius:999px;background:var(--bar)}
+.prog .pct{font-size:11.5px;color:var(--ink-2);width:34px;text-align:right}
+
+/* filters */
+.filters{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:12px 18px;border-bottom:1px solid var(--line);background:var(--surface-2)}
+.chip{border:1px solid var(--line-2);background:var(--surface);border-radius:999px;padding:5px 12px;font-size:12px;color:var(--ink-2);cursor:pointer}
+.chip[aria-pressed="true"]{background:var(--accent);border-color:var(--accent);color:#fff;font-weight:600}
+.filters .note{margin-left:auto;font-size:12px;color:var(--ink-3)}
+
+/* matrix */
+.matrix th.rot{font-size:10.5px;padding:8px 4px;text-align:center;width:38px}
+.matrix td.cell{text-align:center;padding:7px 4px}
+.dot{display:inline-block;width:15px;height:15px;border-radius:5px;border:1px solid transparent}
+.dot.y{background:var(--ok);border-color:var(--ok)}
+.dot.p{background:var(--warn-soft);border-color:var(--warn);position:relative}
+.dot.p::after{content:"";position:absolute;left:2px;top:2px;right:2px;bottom:2px;border-radius:3px;background:var(--warn);clip-path:polygon(0 0,100% 0,0 100%)}
+.dot.n{background:var(--surface-3);border-color:var(--line-2)}
+.legend{display:flex;gap:16px;flex-wrap:wrap;align-items:center;font-size:12px;color:var(--ink-2)}
+.legend .k{display:inline-flex;align-items:center;gap:6px}
+.swatch{width:11px;height:11px;border-radius:3px;display:inline-block}
+.itemkey{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:6px 18px;font-size:12px;color:var(--ink-2)}
+.itemkey b{color:var(--ink);font-family:"IBM Plex Mono",monospace;font-size:11.5px;margin-right:6px}
+
+/* trend chart */
+.chartsvg{width:100%;height:auto;display:block;overflow:visible}
+.chartsvg .grid{stroke:var(--line);stroke-width:1}
+.chartsvg .axistext{fill:var(--ink-3);font-size:11px;font-family:"IBM Plex Mono",monospace}
+.chartsvg .val{fill:var(--ink-2);font-size:10px;font-family:"IBM Plex Mono",monospace}
+.serieslegend{display:flex;gap:18px;flex-wrap:wrap;font-size:12px;color:var(--ink-2);margin-bottom:6px}
+
+/* lead time */
+.lt{display:flex;flex-direction:column;gap:14px}
+.lt-row{display:grid;grid-template-columns:130px minmax(0,1fr) 92px;align-items:center;gap:12px}
+.lt-name{font-size:12.5px;color:var(--ink-2)}
+.lt-track{display:block;position:relative;height:22px;background:var(--surface-3);border-radius:6px;overflow:visible}
+.lt-fill{display:block;height:100%;border-radius:6px;background:var(--bar);min-width:4px}
+.lt-fill.over{background:var(--crit)}
+.lt-target{display:block;position:absolute;top:-4px;bottom:-4px;width:2px;background:var(--ink-2);opacity:.7}
+.lt-num{font-size:12.5px;text-align:right;color:var(--ink)}
+.lt-num small{color:var(--ink-3);font-size:11px}
+
+/* drawer */
+.scrim{position:fixed;inset:0;background:rgba(16,24,40,.42);z-index:60;opacity:0;pointer-events:none;transition:opacity .16s}
+.scrim.open{opacity:1;pointer-events:auto}
+.drawer{
+  position:fixed;top:0;right:0;bottom:0;width:min(560px,94vw);background:var(--surface);z-index:61;
+  border-left:1px solid var(--line);box-shadow:var(--shadow-lg);transform:translateX(102%);transition:transform .2s ease;
+  display:flex;flex-direction:column;
+}
+.drawer.open{transform:none}
+.drawer-head{padding:18px 20px;border-bottom:1px solid var(--line);display:flex;align-items:flex-start;gap:12px}
+.drawer-body{padding:18px 20px 32px;overflow-y:auto;display:flex;flex-direction:column;gap:18px}
+.kv{display:grid;grid-template-columns:104px minmax(0,1fr);gap:8px 12px;font-size:13px}
+.kv dt{color:var(--ink-3);font-size:12.5px}
+.kv dd{margin:0}
+.sec-title{font-size:12px;font-weight:600;color:var(--ink-2);letter-spacing:.03em;margin-bottom:8px}
+.checklist{display:flex;flex-direction:column;gap:1px;border:1px solid var(--line);border-radius:10px;overflow:hidden}
+.checkrow{display:flex;align-items:center;gap:10px;padding:9px 12px;background:var(--surface);border-bottom:1px solid var(--line);font-size:12.5px}
+.checkrow:last-child{border-bottom:0}
+.checkrow .k{font-family:"IBM Plex Mono",monospace;font-size:11px;color:var(--ink-3);width:14px}
+.checkrow .st{margin-left:auto}
+.stepline{display:flex;flex-direction:column;gap:0}
+.stepitem{display:flex;gap:10px;align-items:flex-start;font-size:12.5px}
+.stepitem .rail2{display:flex;flex-direction:column;align-items:center;flex:none;width:16px}
+.stepitem .knob{width:10px;height:10px;border-radius:50%;background:var(--line-2);margin-top:4px}
+.stepitem.done .knob{background:var(--ok)}
+.stepitem.now .knob{background:var(--accent);box-shadow:0 0 0 3px var(--accent-soft)}
+.stepitem .wire{width:2px;flex:1;min-height:16px;background:var(--line)}
+.stepitem .txt{padding-bottom:12px}
+.stepitem .txt small{display:block;color:var(--ink-3);font-size:11.5px}
+
+/* tooltip */
+.tip{
+  position:fixed;z-index:80;pointer-events:none;opacity:0;transition:opacity .1s;
+  background:var(--ink);color:var(--bg);border-radius:8px;padding:7px 10px;font-size:12px;line-height:1.45;box-shadow:var(--shadow-lg);
+}
+:root[data-theme="dark"] .tip{background:#e8edf5;color:#0d1117}
+.tip.on{opacity:1}
+.tip b{font-weight:600}
+
+.footnote{font-size:11.5px;color:var(--ink-3);padding:0 4px}
+@media (prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
+@media (max-width:900px){.app{grid-template-columns:1fr;background:var(--bg)}.rail{position:static;height:auto;flex-direction:row;overflow-x:auto;gap:0}.rail .brand{display:none}.nav-group{display:flex;gap:4px;align-items:center}.nav-label{display:none}}
+</style>
+
+<div class="app">
+  <aside class="rail">
+    <div class="brand">
+      <div class="brand-mark">
+        <span class="brand-dot" aria-hidden="true"></span>
+        <span class="brand-name">QUALITY OPS</span>
+      </div>
+      <div class="brand-sub">제품품질평가(PQR) 관리</div>
+      <div class="brand-en">Product Quality Review</div>
+    </div>
+
+    <nav class="nav-group" aria-label="내 업무">
+      <div class="nav-label"><span>내 업무</span></div>
+      <button class="nav-item" data-view="dash" aria-current="page"><span class="nav-ico">📋</span>대시보드 — 오늘 할 일</button>
+      <button class="nav-item" data-view="mine"><span class="nav-ico">📁</span>내 담당 PQR<span class="badge" id="b-mine">0</span></button>
+      <button class="nav-item" data-view="flow"><span class="nav-ico">🎯</span>QA 파트별 워크플로우</button>
+    </nav>
+
+    <nav class="nav-group" aria-label="현황">
+      <div class="nav-label"><span>현황</span><span class="nav-count" id="b-status">0</span></div>
+      <button class="nav-item" data-view="products"><span class="nav-ico">🏭</span>제품별 현황</button>
+      <button class="nav-item" data-view="items"><span class="nav-ico">🗂️</span>평가항목 자료 수집<span class="badge" id="b-items">0</span></button>
+      <button class="nav-item" data-view="issues"><span class="nav-ico">⚠️</span>일탈 · OOS/OOT<span class="badge hot" id="b-dev">0</span></button>
+      <button class="nav-item" data-view="schedule"><span class="nav-ico">🗓️</span>PQR 일정(전체)<span class="badge" id="b-sched">0</span></button>
+      <button class="nav-item" data-view="approval"><span class="nav-ico">🖊️</span>검토 · 승인 현황</button>
+    </nav>
+
+    <nav class="nav-group" aria-label="분석">
+      <div class="nav-label"><span>분석</span><span class="nav-count" id="b-analysis">0</span></div>
+      <button class="nav-item" data-view="lead"><span class="nav-ico">⏱️</span>지연 현황 · 리드타임<span class="badge hot" id="b-late">0</span></button>
+      <button class="nav-item" data-view="trend"><span class="nav-ico">📈</span>품질 이슈 경향</button>
+      <button class="nav-item" data-view="capa"><span class="nav-ico">🔁</span>CAPA 유효성 검토</button>
+    </nav>
+
+    <nav class="nav-group" aria-label="자료 · 도구">
+      <div class="nav-label"><span>자료 · 도구</span></div>
+      <button class="nav-item" data-view="upload"><span class="nav-ico">📤</span>자료 업로드</button>
+      <button class="nav-item" data-view="criteria"><span class="nav-ico">📏</span>평가 기준 · 규격</button>
+      <button class="nav-item" data-view="report"><span class="nav-ico">📄</span>보고서 생성</button>
+    </nav>
+  </aside>
+
+  <div class="main">
+    <header class="topbar">
+      <div>
+        <h1 id="view-title">대시보드 — 오늘 할 일</h1>
+        <div class="crumb" id="view-crumb">평가기간 2025.07 ~ 2026.06 · 기준일 2026-08-27</div>
+      </div>
+      <div class="spacer"></div>
+      <div class="seg" role="group" aria-label="공장 필터">
+        <button data-site="all" aria-pressed="true">전체</button>
+        <button data-site="무균1">무균 1공장</button>
+        <button data-site="고형2">내용고형 2공장</button>
+        <button data-site="주사3">주사 3공장</button>
+      </div>
+      <div class="search"><span aria-hidden="true">🔍</span><input id="q" type="search" placeholder="제품명 · 코드 · 담당자" aria-label="검색"></div>
+      <button class="icon-btn" id="theme-btn" title="화면 모드 전환" aria-label="화면 모드 전환">◐</button>
+    </header>
+
+    <main class="content">
+      <!-- ============ 대시보드 ============ -->
+      <section class="view" id="v-dash">
+        <div class="flowbar">
+          <div>
+            <div class="fb-title">PQR 진행 워크플로우</div>
+            <div class="fb-sub">EU GMP Part I §1.10 · KGMP 제품품질평가 · 연 1회 정기 평가</div>
+          </div>
+          <div class="flow" id="flowsteps"></div>
+        </div>
+
+        <div class="kpis" id="kpis"></div>
+
+        <div class="card">
+          <div class="card-head">
+            <h2>단계별 PQR 분포</h2>
+            <span class="pill" id="stage-total">0건</span>
+            <button class="link" data-view="flow">워크플로우 트래킹으로 →</button>
+          </div>
+          <div class="card-body">
+            <div class="stagechart" id="stagechart"></div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-head">
+            <h2>마감 임박 — 마감일이 지났거나 30일 이내인 PQR</h2>
+            <span class="pill" id="due-count">0건</span>
+            <span class="link" style="margin-left:auto;color:var(--ink-3);cursor:default">마감 임박 순</span>
+          </div>
+          <div class="tablewrap">
+            <table>
+              <thead><tr>
+                <th>코드</th><th>제품명</th><th>평가기간</th><th>마감일</th><th>지연</th><th>단계</th><th>담당</th><th>확인 필요 사항</th>
+              </tr></thead>
+              <tbody id="due-body"></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <!-- ============ 제품별 현황 ============ -->
+      <section class="view" id="v-products" hidden>
+        <div class="card">
+          <div class="card-head"><h2>제품별 PQR 현황</h2><span class="pill" id="p-count">0건</span></div>
+          <div class="filters" id="p-filters">
+            <button class="chip" data-f="all" aria-pressed="true">전체</button>
+            <button class="chip" data-f="late">지연</button>
+            <button class="chip" data-f="soon">30일 내 마감</button>
+            <button class="chip" data-f="review">검토·승인 대기</button>
+            <button class="chip" data-f="issue">중대 이슈 보유</button>
+            <button class="chip" data-f="done">발행 완료</button>
+            <span class="note">행을 클릭하면 평가항목 상세가 열립니다</span>
+          </div>
+          <div class="tablewrap">
+            <table>
+              <thead><tr>
+                <th>코드</th><th>제품명</th><th>제형</th><th>공장</th><th>배치</th><th>일탈</th><th>OOS/OOT</th><th>변경</th><th>불만</th><th>자료 수집</th><th>단계</th><th>마감일</th>
+              </tr></thead>
+              <tbody id="p-body"></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <!-- ============ 평가항목 자료 수집 ============ -->
+      <section class="view" id="v-items" hidden>
+        <div class="card">
+          <div class="card-head"><h2>평가항목별 자료 수집 현황</h2><span class="pill">EU GMP §1.10 (a)~(l)</span></div>
+          <div class="card-body" style="display:flex;flex-direction:column;gap:14px">
+            <div class="legend">
+              <span class="k"><i class="swatch" style="background:var(--ok)"></i>수집 완료</span>
+              <span class="k"><i class="swatch" style="background:var(--warn)"></i>요청 · 진행 중</span>
+              <span class="k"><i class="swatch" style="background:var(--line-2)"></i>미착수</span>
+              <span class="k muted">· 셀에 마우스를 올리면 항목명과 상태가 표시됩니다</span>
+            </div>
+            <div class="itemkey" id="itemkey"></div>
+          </div>
+          <div class="tablewrap">
+            <table class="matrix">
+              <thead><tr id="matrix-head"><th>코드</th><th>제품명</th></tr></thead>
+              <tbody id="matrix-body"></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <!-- ============ 품질 이슈 경향 ============ -->
+      <section class="view" id="v-trend" hidden>
+        <div class="grid-2">
+          <div class="card">
+            <div class="card-head"><h2>월별 품질 이슈 발생 추이</h2><span class="pill">최근 12개월</span></div>
+            <div class="card-body">
+              <div class="serieslegend" id="trend-legend"></div>
+              <div class="tablewrap"><svg class="chartsvg" id="trendsvg" viewBox="0 0 760 300" role="img" aria-label="월별 일탈, OOS/OOT, 불만 발생 건수 추이"></svg></div>
+            </div>
+          </div>
+          <div class="card">
+            <div class="card-head"><h2>이슈 상위 제품</h2><span class="pill">일탈 + OOS/OOT + 불만</span></div>
+            <div class="tablewrap">
+              <table class="compact"><thead><tr><th>코드</th><th>제품명</th><th>일탈</th><th>OOS</th><th>불만</th><th>합계</th></tr></thead>
+              <tbody id="top-body"></tbody></table>
+            </div>
+          </div>
+        </div>
+        <div class="card">
+          <div class="card-head"><h2>월별 발생 건수 (표)</h2><span class="pill">차트와 동일한 데이터</span></div>
+          <div class="tablewrap"><table><thead id="trend-thead"></thead><tbody id="trend-tbody"></tbody></table></div>
+        </div>
+      </section>
+
+      <!-- ============ 리드타임 ============ -->
+      <section class="view" id="v-lead" hidden>
+        <div class="grid-2">
+          <div class="card">
+            <div class="card-head"><h2>단계별 평균 소요일</h2><span class="pill">기준 대비</span></div>
+            <div class="card-body">
+              <div class="legend" style="margin-bottom:14px">
+                <span class="k"><i class="swatch" style="background:var(--bar)"></i>실제 평균</span>
+                <span class="k"><i class="swatch" style="background:var(--crit)"></i>기준 초과</span>
+                <span class="k"><i class="swatch" style="width:2px;height:12px;background:var(--ink-2)"></i>내부 기준일</span>
+              </div>
+              <div class="lt" id="lt-list"></div>
+            </div>
+          </div>
+          <div class="card">
+            <div class="card-head"><h2>지연 사유 분포</h2><span class="pill" id="late-pill">0건</span></div>
+            <div class="card-body"><div class="lt" id="reason-list"></div></div>
+          </div>
+        </div>
+        <div class="card">
+          <div class="card-head"><h2>지연 중인 PQR</h2><span class="pill" id="late-count">0건</span></div>
+          <div class="tablewrap">
+            <table><thead><tr><th>코드</th><th>제품명</th><th>마감일</th><th>지연</th><th>단계</th><th>담당</th><th>지연 사유</th></tr></thead>
+            <tbody id="late-body"></tbody></table>
+          </div>
+        </div>
+      </section>
+
+      <!-- ============ placeholder ============ -->
+      <section class="view" id="v-todo" hidden>
+        <div class="card">
+          <div class="card-head"><h2 id="todo-title">준비 중</h2></div>
+          <div class="card-body" style="display:flex;flex-direction:column;gap:10px">
+            <p style="margin:0;color:var(--ink-2);font-size:13px" id="todo-desc"></p>
+            <ul style="margin:0;padding-left:18px;color:var(--ink-2);font-size:13px;line-height:1.9" id="todo-list"></ul>
+          </div>
+        </div>
+      </section>
+
+      <p class="footnote">화면의 제품·배치·일탈 정보는 레이아웃 검토용 <b>샘플 데이터</b>입니다. 실제 품질 기록과 무관합니다.</p>
+    </main>
+  </div>
+</div>
+
+<div class="scrim" id="scrim"></div>
+<aside class="drawer" id="drawer" role="dialog" aria-modal="true" aria-labelledby="dr-title" tabindex="-1">
+  <div class="drawer-head">
+    <div>
+      <div class="mono" style="font-size:12px;color:var(--ink-3)" id="dr-code"></div>
+      <h2 style="margin:2px 0 0;font-size:16px;font-weight:700" id="dr-title"></h2>
+    </div>
+    <button class="icon-btn" id="dr-close" style="margin-left:auto" aria-label="닫기">✕</button>
+  </div>
+  <div class="drawer-body" id="dr-body"></div>
+</aside>
+<div class="tip" id="tip" role="status" aria-live="polite"></div>
+
+<script>
+"use strict";
+/* ============================================================
+   PQR 관리 대시보드 — 샘플 데이터 및 화면 구성
+   기준일(TODAY)을 바꾸면 지연/임박 계산이 모두 따라 움직입니다.
+   ============================================================ */
+const TODAY = new Date("2026-08-27T00:00:00");
+const PERIOD = "2025.07 ~ 2026.06";
+
+const STAGES = ["계획 수립","자료 수집","데이터 검증","보고서 초안","부서 검토","QA 검토","품질책임자 승인","발행 완료"];
+const SITES = { "무균1":"무균 1공장", "고형2":"내용고형 2공장", "주사3":"주사 3공장" };
+
+/* EU GMP Part I §1.10 (a)~(l) 평가항목 */
+const ITEMS = [
+  ["a","출발물질 · 포장재 검토","신규 공급원 포함 입고·시험 이력"],
+  ["b","중요 공정관리 · 완제품 시험결과","공정관리 및 완제품 시험 데이터"],
+  ["c","규격 부적합 배치 · 조사","부적합 배치와 조사 결과"],
+  ["d","중대 일탈 · 부적합 · CAPA","조사 및 CAPA 유효성"],
+  ["e","공정 · 분석법 변경","변경관리 이력"],
+  ["f","허가사항 변경","제출 · 승인 · 거부 현황"],
+  ["g","안정성 모니터링 · 부정적 경향","장기·가속 안정성 결과"],
+  ["h","반품 · 불만 · 회수","품질 관련 건과 조사"],
+  ["i","이전 개선조치 적절성","전년도 조치의 유효성"],
+  ["j","허가 후속 확약사항","신규·변경 허가 확약 이행"],
+  ["k","관련 설비 적격성 상태","HVAC · 제조용수 · 압축가스"],
+  ["l","위 · 수탁 기술협약 검토","계약 제조·시험 협약 유효성"]
+];
+
+/* [코드, 제품명, 제형, 공장, 마감일, 단계, 담당자, 일탈, OOS/OOT, 변경, 불만, 배치수, 지연사유] */
+const RAW = [
+  ["HP-101","히알로타인 점안액 0.1%","점안제","무균1","2026-06-30",1,"김현우",3,1,2,1,42,"자료 회신 지연"],
+  ["HP-102","히알로타인 점안액 0.15%","점안제","무균1","2026-06-30",1,"김현우",2,0,2,0,31,"자료 회신 지연"],
+  ["HP-103","히알로타인 점안액 0.3%","점안제","무균1","2026-07-15",2,"김현우",1,0,1,0,18,"안정성 데이터 미도착"],
+  ["HP-110","레보클린 점안액 0.5%","점안제","무균1","2026-07-31",0,"이서연",5,2,1,3,27,"일탈 CAPA 미완결"],
+  ["HP-115","옵티솔 점안액","점안제","무균1","2026-08-14",3,"이서연",1,0,0,1,22,"검토자 부재"],
+  ["HP-120","브리모텐 점안액 0.15%","점안제","무균1","2026-08-31",4,"이서연",2,1,3,0,19,""],
+  ["HP-125","트라반 점안액","점안제","무균1","2026-09-10",5,"박지훈",0,0,1,0,15,""],
+  ["HP-130","사이클로에이 점안유제","점안제","무균1","2026-09-20",2,"박지훈",4,1,2,2,12,""],
+  ["HP-135","디쿠아린 점안액 3%","점안제","무균1","2026-10-05",1,"박지훈",1,0,0,0,24,""],
+  ["HP-140","플루오메드 점안현탁액","점안제","무균1","2026-11-30",0,"최민서",0,0,1,0,9,""],
+  ["HP-201","로수바틴 정 10mg","정제","고형2","2026-05-31",3,"최민서",6,2,4,2,58,"일탈 CAPA 미완결"],
+  ["HP-202","로수바틴 정 20mg","정제","고형2","2026-05-31",3,"최민서",4,1,4,1,46,"일탈 CAPA 미완결"],
+  ["HP-205","암로바스탄 복합정","정제","고형2","2026-07-20",4,"정하늘",2,0,2,1,63,"자료 회신 지연"],
+  ["HP-210","에스오메졸 장용정 20mg","정제","고형2","2026-08-20",5,"정하늘",1,1,1,0,71,"검토자 부재"],
+  ["HP-215","페브릭산 정 80mg","정제","고형2","2026-08-31",6,"정하늘",0,0,2,0,34,""],
+  ["HP-220","메트포민 서방정 500mg","정제","고형2","2026-09-15",2,"강예린",3,2,1,4,88,""],
+  ["HP-225","실데날 정 50mg","정제","고형2","2026-09-30",7,"강예린",0,0,1,0,29,""],
+  ["HP-230","몬테칸 츄정 5mg","정제","고형2","2026-10-15",1,"강예린",1,0,0,1,37,""],
+  ["HP-235","리나글정 5mg","정제","고형2","2026-10-31",0,"윤도현",2,0,3,0,26,""],
+  ["HP-240","아토젠 캡슐 20mg","캡슐제","고형2","2026-11-20",7,"윤도현",0,0,0,0,41,""],
+  ["HP-301","세프트리 주 1g","주사제","주사3","2026-04-30",2,"윤도현",7,3,2,1,33,"일탈 CAPA 미완결"],
+  ["HP-305","리나졸리드 주 600mg","주사제","주사3","2026-06-15",1,"한지우",3,1,1,0,21,"안정성 데이터 미도착"],
+  ["HP-310","이토프리 주 20mg","주사제","주사3","2026-08-25",4,"한지우",2,0,1,1,17,"검토자 부재"],
+  ["HP-315","헤파린나트륨 주 5000IU","주사제","주사3","2026-09-05",5,"한지우",1,1,0,0,14,""],
+  ["HP-320","비타콤플 주","주사제","주사3","2026-10-10",3,"김현우",2,0,2,0,11,""],
+  ["HP-325","소디움클로라이드 주 0.9%","주사제","주사3","2026-12-15",0,"김현우",0,0,0,0,52,""],
+  ["HP-401","암브록솔 시럽","시럽제","고형2","2026-07-10",6,"이서연",1,0,1,2,23,"자료 회신 지연"],
+  ["HP-405","세티리 시럽","시럽제","고형2","2026-09-25",7,"박지훈",0,0,0,1,19,""],
+  ["HP-410","케토프로 카타플라스마","외용제","고형2","2026-10-20",1,"최민서",2,1,0,0,16,""],
+  ["HP-415","히알로타인 점안액 0.18% (수탁)","점안제","무균1","2026-08-28",4,"정하늘",1,0,2,0,13,""]
+];
+
+/* 12개월 품질 이슈 추이 (2025-09 ~ 2026-08) */
+const TREND = {
+  months: ["25-09","25-10","25-11","25-12","26-01","26-02","26-03","26-04","26-05","26-06","26-07","26-08"],
+  series: [
+    { key:"일탈",     color:"var(--s1)", data:[6,8,5,9,7,11,8,6,10,7,5,4] },
+    { key:"OOS/OOT",  color:"var(--s2)", data:[2,1,3,2,4,3,5,2,3,4,2,1] },
+    { key:"불만",     color:"var(--s3)", data:[3,4,2,5,3,2,4,6,3,2,3,2] }
+  ]
+};
+
+/* 단계별 평균 소요일 vs 내부 기준 */
+const LEADTIME = STAGES.slice(0,7).map((s,i)=>({
+  stage:s,
+  actual:[5,26,11,16,9,13,6][i],
+  target:[5,21,10,14,7,10,5][i]
+}));
+
+/* ---------- 파생값 ---------- */
+const DAY = 86400000;
+const fmt = d => d.toISOString().slice(0,10);
+const parse = s => new Date(s + "T00:00:00");
+
+function seeded(str){ let h=2166136261; for(const c of str){h^=c.charCodeAt(0);h=Math.imul(h,16777619);} return ()=>{h+=0x6D2B79F5;let t=h;t=Math.imul(t^t>>>15,t|1);t^=t+Math.imul(t^t>>>7,t|61);return ((t^t>>>14)>>>0)/4294967296;}; }
+
+const DATA = RAW.map(r=>{
+  const [code,name,form,site,due,stage,owner,dev,oos,chg,cmp,batches,reason] = r;
+  const dueD = parse(due);
+  const dday = Math.round((dueD - TODAY)/DAY);
+  const done = stage === STAGES.length-1;
+  const rnd = seeded(code);
+  /* 단계가 진행될수록 자료 수집이 완료된 항목이 늘어난다 */
+  const bias = Math.min(1, stage/5.2);
+  const checks = ITEMS.map(()=>{
+    const v = rnd();
+    if (done) return "y";
+    if (v < 0.12 + bias*0.78) return "y";
+    if (v < 0.42 + bias*0.5) return "p";
+    return "n";
+  });
+  const collected = checks.filter(c=>c==="y").length;
+  return {
+    code,name,form,site,due,dueD,dday,stage,owner,dev,oos,chg,cmp,batches,
+    reason: reason || (dday<0 ? "자료 회신 지연" : ""),
+    done, checks, collected,
+    pct: Math.round(collected/ITEMS.length*100),
+    issues: dev+oos+cmp,
+    late: !done && dday < 0
+  };
+});
+
+const OPEN = DATA.filter(d=>!d.done);
+const state = { view:"dash", site:"all", q:"", filter:"all" };
+
+function visible(){
+  return DATA.filter(d=>{
+    if (state.site !== "all" && d.site !== state.site) return false;
+    if (state.q){
+      const q = state.q.toLowerCase();
+      if (!(d.code+d.name+d.owner+d.form).toLowerCase().includes(q)) return false;
+    }
+    return true;
+  });
+}
+
+/* ============================ 화면 구성 ============================ */
+const $ = s => document.querySelector(s);
+const el = (t,c,h) => { const n=document.createElement(t); if(c)n.className=c; if(h!=null)n.innerHTML=h; return n; };
+const esc = s => String(s).replace(/[&<>"]/g,m=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[m]));
+
+/* ---- 툴팁 ---- */
+const tip = $("#tip");
+function showTip(e, html){ tip.innerHTML = html; tip.classList.add("on"); moveTip(e); }
+function moveTip(e){
+  const pad=14, r=tip.getBoundingClientRect();
+  let x=e.clientX+pad, y=e.clientY+pad;
+  if (x+r.width>innerWidth-8) x=e.clientX-r.width-pad;
+  if (y+r.height>innerHeight-8) y=e.clientY-r.height-pad;
+  tip.style.left=x+"px"; tip.style.top=y+"px";
+}
+function hideTip(){ tip.classList.remove("on"); }
+function bindTip(node, html){
+  node.addEventListener("mouseenter", e=>showTip(e,html));
+  node.addEventListener("mousemove", moveTip);
+  node.addEventListener("mouseleave", hideTip);
+}
+
+/* ---- 워크플로우 배너 ---- */
+function renderFlow(){
+  const wrap = $("#flowsteps"); wrap.textContent="";
+  STAGES.forEach((s,i)=>{
+    if(i) wrap.appendChild(el("span","sep","›"));
+    wrap.appendChild(el("span","step",`<span class="n mono">${i+1}</span><b>${esc(s)}</b>`));
+  });
+}
+
+/* ---- KPI ---- */
+function kpiDefs(rows){
+  const open = rows.filter(d=>!d.done);
+  return [
+    { k:"all",    ico:"📦", cls:"",      label:"관리 중 PQR",        v:open.length, foot:`발행 완료 ${rows.length-open.length}건 제외` },
+    { k:"soon",   ico:"📅", cls:"amber", label:"마감 임박 (30일 내)", v:open.filter(d=>d.dday<=30).length, foot:"마감일 초과 포함" },
+    { k:"collect",ico:"🗂️", cls:"blue",  label:"자료 대기 (수집 필요)", v:open.filter(d=>d.stage<=1).length, foot:"§1.10 자료 미완결" },
+    { k:"review", ico:"🖊️", cls:"blue",  label:"검토 대기 (승인 필요)", v:open.filter(d=>d.stage>=4).length, foot:"부서 · QA · QP 단계" },
+    { k:"late",   ico:"⏰", cls:"red",   label:"지연",               v:open.filter(d=>d.late).length, foot:"마감일 초과" },
+    { k:"issue",  ico:"⚠️", cls:"red",   label:"중대 이슈 확인",      v:open.filter(d=>d.dev+d.oos>0).length, foot:"일탈 · OOS/OOT 미결" }
+  ];
+}
+function renderKpis(rows){
+  const wrap = $("#kpis"); wrap.textContent="";
+  kpiDefs(rows).forEach(d=>{
+    const b = el("button","kpi "+d.cls,
+      `<span class="ico" aria-hidden="true">${d.ico}</span>
+       <span class="label">${esc(d.label)}</span>
+       <span class="value num">${d.v}</span>
+       <span class="foot">${esc(d.foot)}</span>`);
+    b.addEventListener("click",()=>{ state.filter = d.k==="collect"?"all":(d.k==="soon"?"soon":d.k==="review"?"review":d.k==="late"?"late":d.k==="issue"?"issue":"all"); go("products"); });
+    wrap.appendChild(b);
+  });
+}
+
+/* ---- 단계별 분포 ---- */
+function renderStages(rows){
+  const counts = STAGES.map((s,i)=>rows.filter(d=>d.stage===i).length);
+  const max = Math.max(1,...counts);
+  const wrap = $("#stagechart"); wrap.textContent="";
+  counts.forEach((c,i)=>{
+    const col = el("div","stagecol");
+    col.appendChild(el("div","v num", String(c)));
+    const bar = el("div","bar");
+    bar.style.height = Math.max(3, Math.round(c/max*152)) + "px";
+    if (i === STAGES.length-1) bar.style.background = "var(--ok)";
+    col.appendChild(bar);
+    col.appendChild(el("div","cap",`${esc(STAGES[i])}<i>${i+1}단계</i>`));
+    bindTip(col, `<b>${esc(STAGES[i])}</b><br>${c}건 · 전체의 ${Math.round(c/Math.max(1,rows.length)*100)}%`);
+    wrap.appendChild(col);
+  });
+  $("#stage-total").textContent = rows.length + "건";
+}
+
+/* ---- 확인 필요 사항 ---- */
+function needText(d){
+  const p=[];
+  if (d.dev) p.push(`일탈 미결 ${d.dev}건`);
+  if (d.oos) p.push(`OOS/OOT ${d.oos}건`);
+  if (d.cmp) p.push(`불만 ${d.cmp}건`);
+  const miss = ITEMS.length - d.collected;
+  if (miss) p.push(`평가자료 ${miss}개 미수집`);
+  return p.length ? p.join(" / ") : "확인 완료";
+}
+function stageTag(d){
+  if (d.done) return `<span class="tag g">발행 완료</span>`;
+  if (d.late) return `<span class="tag r">지연(${esc(STAGES[d.stage])})</span>`;
+  if (d.dday<=14) return `<span class="tag a">${esc(STAGES[d.stage])}</span>`;
+  return `<span class="tag b">${esc(STAGES[d.stage])}</span>`;
+}
+function ddayCell(d){
+  if (d.done) return `<span class="muted">—</span>`;
+  if (d.dday<0) return `<span class="tag r num">+${-d.dday}일</span>`;
+  if (d.dday<=14) return `<span class="tag a num">D-${d.dday}</span>`;
+  return `<span class="tag n num">D-${d.dday}</span>`;
+}
+function codeCell(d){
+  return `<button class="code-btn" data-code="${d.code}">${d.code}</button>`;
+}
+function progCell(d){
+  return `<div class="prog"><span class="track"><span class="fill" style="width:${d.pct}%"></span></span><span class="pct num">${d.pct}%</span></div>`;
+}
+
+/* ---- 마감 임박 테이블 ---- */
+function renderDue(rows){
+  const list = rows.filter(d=>!d.done && d.dday<=30).sort((a,b)=>a.dday-b.dday);
+  $("#due-count").textContent = list.length + "건";
+  $("#due-body").innerHTML = list.map(d=>`
+    <tr>
+      <td>${codeCell(d)}</td>
+      <td class="wrap">${esc(d.name)}</td>
+      <td class="mono muted">${PERIOD}</td>
+      <td class="mono">${d.due}</td>
+      <td>${ddayCell(d)}</td>
+      <td>${stageTag(d)}</td>
+      <td>${esc(d.owner)}</td>
+      <td class="wrap ${d.dev+d.oos ? "warnlink":"okmini"}">${esc(needText(d))}</td>
+    </tr>`).join("") || `<tr><td colspan="8" class="muted" style="padding:22px">해당 조건의 PQR이 없습니다.</td></tr>`;
+}
+
+/* ---- 제품별 현황 (여러 메뉴가 이 표를 공유) ---- */
+const MODES = {
+  products: { title:"제품별 현황", crumb:"전체 PQR 대상 제품", pred:()=>true },
+  mine:     { title:"내 담당 PQR", crumb:"담당자 · 정하늘 (QA 1파트)", pred:d=>d.owner==="정하늘" },
+  issues:   { title:"일탈 · OOS/OOT", crumb:"미결 이슈를 보유한 PQR", pred:d=>d.dev+d.oos>0, sort:(a,b)=>(b.dev+b.oos)-(a.dev+a.oos) },
+  schedule: { title:"PQR 일정(전체)", crumb:"마감일 순 전체 일정", sort:(a,b)=>a.dueD-b.dueD, pred:()=>true },
+  approval: { title:"검토 · 승인 현황", crumb:"부서 검토 · QA 검토 · 품질책임자 승인 단계", pred:d=>d.stage>=4 && !d.done }
+};
+const FILTERS = {
+  all:()=>true,
+  late:d=>d.late,
+  soon:d=>!d.done && d.dday<=30,
+  review:d=>!d.done && d.stage>=4,
+  issue:d=>d.dev+d.oos>0,
+  done:d=>d.done
+};
+function renderProducts(rows, mode){
+  const m = MODES[mode] || MODES.products;
+  let list = rows.filter(m.pred).filter(FILTERS[state.filter]);
+  if (m.sort) list = list.slice().sort(m.sort); else list = list.slice().sort((a,b)=>a.dueD-b.dueD);
+  $("#p-count").textContent = list.length + "건";
+  $("#p-body").innerHTML = list.map(d=>`
+    <tr>
+      <td>${codeCell(d)}</td>
+      <td class="wrap">${esc(d.name)}</td>
+      <td class="muted">${esc(d.form)}</td>
+      <td class="muted">${esc(SITES[d.site])}</td>
+      <td class="num">${d.batches}</td>
+      <td class="num ${d.dev?"warnlink":"muted"}">${d.dev}</td>
+      <td class="num ${d.oos?"warnlink":"muted"}">${d.oos}</td>
+      <td class="num muted">${d.chg}</td>
+      <td class="num ${d.cmp?"warnlink":"muted"}">${d.cmp}</td>
+      <td>${progCell(d)}</td>
+      <td>${stageTag(d)}</td>
+      <td class="mono">${d.due} ${d.done?"":`<span style="margin-left:6px">${ddayCell(d)}</span>`}</td>
+    </tr>`).join("") || `<tr><td colspan="12" class="muted" style="padding:22px">조건에 맞는 PQR이 없습니다.</td></tr>`;
+}
+
+/* ---- 평가항목 매트릭스 ---- */
+function renderMatrix(rows){
+  $("#itemkey").innerHTML = ITEMS.map(([k,n,s])=>`<div><b>(${k})</b>${esc(n)} <span class="muted">· ${esc(s)}</span></div>`).join("");
+  const head = $("#matrix-head");
+  head.innerHTML = `<th>코드</th><th>제품명</th>` + ITEMS.map(([k])=>`<th class="rot mono">${k}</th>`).join("") + `<th>수집률</th><th>단계</th>`;
+  const label = { y:"수집 완료", p:"요청 · 진행 중", n:"미착수" };
+  const list = rows.slice().sort((a,b)=>a.collected-b.collected);
+  $("#matrix-body").innerHTML = list.map(d=>`
+    <tr>
+      <td>${codeCell(d)}</td>
+      <td class="wrap">${esc(d.name)}</td>
+      ${d.checks.map((c,i)=>`<td class="cell"><span class="dot ${c}" data-tip="${d.code}|${i}"></span></td>`).join("")}
+      <td>${progCell(d)}</td>
+      <td>${stageTag(d)}</td>
+    </tr>`).join("");
+  $("#matrix-body").querySelectorAll(".dot").forEach(n=>{
+    const [code,i] = n.dataset.tip.split("|");
+    const d = DATA.find(x=>x.code===code), it = ITEMS[+i];
+    bindTip(n, `<b>(${it[0]}) ${esc(it[1])}</b><br>${esc(d.name)}<br>${label[d.checks[+i]]}`);
+  });
+}
+
+/* ---- 품질 이슈 경향 ---- */
+function topRoundedBar(x,y,w,h,r){
+  r = Math.min(r, w/2, h);
+  return `M${x},${y+h} L${x},${y+r} Q${x},${y} ${x+r},${y} L${x+w-r},${y} Q${x+w},${y} ${x+w},${y+r} L${x+w},${y+h} Z`;
+}
+function renderTrend(){
+  const S = TREND.series, M = TREND.months;
+  $("#trend-legend").innerHTML = S.map(s=>
+    `<span class="k" style="display:inline-flex;align-items:center;gap:7px"><i class="swatch" style="background:${s.color}"></i>${esc(s.key)}</span>`
+  ).join("");
+
+  const W=760,H=300,L=40,R=10,T=14,B=36;
+  const pw=W-L-R, ph=H-T-B;
+  const max = Math.max(...S.flatMap(s=>s.data));
+  const yMax = Math.ceil(max/3)*3 || 3;
+  const gw = pw/M.length, bw = (gw-12)/S.length - 2;
+  let g = "";
+  for(let v=0; v<=yMax; v+=yMax/4){
+    const y = T+ph-(v/yMax)*ph;
+    g += `<line class="grid" x1="${L}" x2="${W-R}" y1="${y.toFixed(1)}" y2="${y.toFixed(1)}"></line>`;
+    g += `<text class="axistext" x="${L-8}" y="${(y+4).toFixed(1)}" text-anchor="end">${v}</text>`;
+  }
+  M.forEach((m,i)=>{
+    const gx = L + i*gw;
+    g += `<text class="axistext" x="${(gx+gw/2).toFixed(1)}" y="${H-B+20}" text-anchor="middle">${m}</text>`;
+    S.forEach((s,j)=>{
+      const v=s.data[i], h=(v/yMax)*ph, x=gx+6+j*(bw+2), y=T+ph-h;
+      g += `<path class="tbar" d="${topRoundedBar(x,y,bw,Math.max(h,1.5),4)}" fill="${s.color}" data-tip="${i}|${j}"></path>`;
+    });
+  });
+  const svg = $("#trendsvg");
+  svg.innerHTML = g + `<line class="grid" x1="${L}" x2="${W-R}" y1="${T+ph}" y2="${T+ph}"></line>`;
+  svg.querySelectorAll(".tbar").forEach(n=>{
+    const [i,j]=n.dataset.tip.split("|").map(Number);
+    bindTip(n, `<b>20${M[i].replace("-",".")}</b><br>${esc(S[j].key)} · ${S[j].data[i]}건`);
+  });
+
+  $("#trend-thead").innerHTML = `<tr><th>구분</th>${M.map(m=>`<th class="mono" style="text-align:right">${m}</th>`).join("")}<th style="text-align:right">합계</th></tr>`;
+  $("#trend-tbody").innerHTML = S.map(s=>`
+    <tr><td><span class="tag plain" style="background:transparent;padding:0"><i class="swatch" style="background:${s.color};margin-right:7px"></i>${esc(s.key)}</span></td>
+    ${s.data.map(v=>`<td class="num" style="text-align:right">${v}</td>`).join("")}
+    <td class="num" style="text-align:right;font-weight:600">${s.data.reduce((a,b)=>a+b,0)}</td></tr>`).join("");
+
+  const top = DATA.slice().sort((a,b)=>b.issues-a.issues).slice(0,10);
+  $("#top-body").innerHTML = top.map(d=>`
+    <tr><td>${codeCell(d)}</td><td class="wrap">${esc(d.name)}</td>
+    <td class="num">${d.dev}</td><td class="num">${d.oos}</td><td class="num">${d.cmp}</td>
+    <td class="num" style="font-weight:600">${d.issues}</td></tr>`).join("");
+}
+
+/* ---- 리드타임 · 지연 ---- */
+function renderLead(rows){
+  const scale = Math.max(...LEADTIME.map(l=>Math.max(l.actual,l.target))) * 1.12;
+  $("#lt-list").innerHTML = LEADTIME.map(l=>{
+    const over = l.actual > l.target;
+    return `<div class="lt-row">
+      <span class="lt-name">${esc(l.stage)}</span>
+      <span class="lt-track">
+        <span class="lt-fill ${over?"over":""}" style="width:${(l.actual/scale*100).toFixed(1)}%"></span>
+        <span class="lt-target" style="left:${(l.target/scale*100).toFixed(1)}%" title="기준 ${l.target}일"></span>
+      </span>
+      <span class="lt-num num">${l.actual}일 <small>/ 기준 ${l.target}</small></span>
+    </div>`;
+  }).join("");
+
+  const late = rows.filter(d=>d.late).sort((a,b)=>a.dday-b.dday);
+  $("#late-count").textContent = late.length + "건";
+  $("#late-pill").textContent = late.length + "건";
+  const byReason = {};
+  late.forEach(d=>{ byReason[d.reason] = (byReason[d.reason]||0)+1; });
+  const entries = Object.entries(byReason).sort((a,b)=>b[1]-a[1]);
+  const rmax = Math.max(1,...entries.map(e=>e[1]));
+  $("#reason-list").innerHTML = entries.map(([r,c])=>`
+    <div class="lt-row">
+      <span class="lt-name">${esc(r)}</span>
+      <span class="lt-track"><span class="lt-fill" style="width:${(c/rmax*100).toFixed(1)}%"></span></span>
+      <span class="lt-num num">${c}건 <small>/ ${Math.round(c/Math.max(1,late.length)*100)}%</small></span>
+    </div>`).join("") || `<p class="muted" style="margin:0">지연 중인 PQR이 없습니다.</p>`;
+
+  $("#late-body").innerHTML = late.map(d=>`
+    <tr><td>${codeCell(d)}</td><td class="wrap">${esc(d.name)}</td><td class="mono">${d.due}</td>
+    <td>${ddayCell(d)}</td><td>${stageTag(d)}</td><td>${esc(d.owner)}</td>
+    <td class="wrap warnlink">${esc(d.reason)}</td></tr>`).join("")
+    || `<tr><td colspan="7" class="muted" style="padding:22px">지연 중인 PQR이 없습니다.</td></tr>`;
+}
+
+/* ---- 상세 패널 ---- */
+const drawer=$("#drawer"), scrim=$("#scrim");
+let lastFocus=null;
+function openDrawer(code){
+  const d = DATA.find(x=>x.code===code); if(!d) return;
+  lastFocus = document.activeElement;
+  $("#dr-code").textContent = `${d.code} · ${SITES[d.site]} · ${d.form}`;
+  $("#dr-title").textContent = d.name;
+  const label = { y:['tag g','수집 완료'], p:['tag a','요청 · 진행 중'], n:['tag n','미착수'] };
+  $("#dr-body").innerHTML = `
+    <dl class="kv">
+      <dt>평가기간</dt><dd class="mono">${PERIOD}</dd>
+      <dt>마감일</dt><dd class="mono">${d.due} ${d.done?'':`&nbsp;${ddayCell(d)}`}</dd>
+      <dt>현재 단계</dt><dd>${stageTag(d)}</dd>
+      <dt>담당자</dt><dd>${esc(d.owner)}</dd>
+      <dt>대상 배치</dt><dd class="num">${d.batches} 배치</dd>
+      <dt>이슈</dt><dd>일탈 ${d.dev} · OOS/OOT ${d.oos} · 변경 ${d.chg} · 불만 ${d.cmp}</dd>
+    </dl>
+    <div>
+      <div class="sec-title">진행 단계</div>
+      <div class="stepline">${STAGES.map((s,i)=>{
+        const cls = i<d.stage ? "done" : i===d.stage ? "now" : "";
+        const note = i<d.stage ? "완료" : i===d.stage ? "진행 중" : "대기";
+        return `<div class="stepitem ${cls}"><span class="rail2"><span class="knob"></span>${i<STAGES.length-1?'<span class="wire"></span>':''}</span>
+          <span class="txt"><b>${i+1}. ${esc(s)}</b><small>${note}</small></span></div>`;
+      }).join("")}</div>
+    </div>
+    <div>
+      <div class="sec-title">평가항목 자료 (EU GMP §1.10)</div>
+      <div class="checklist">${ITEMS.map(([k,n],i)=>{
+        const [cls,txt] = label[d.checks[i]];
+        return `<div class="checkrow"><span class="k">(${k})</span><span>${esc(n)}</span><span class="st"><span class="${cls}">${txt}</span></span></div>`;
+      }).join("")}</div>
+    </div>`;
+  scrim.classList.add("open"); drawer.classList.add("open"); drawer.focus();
+}
+function closeDrawer(){ scrim.classList.remove("open"); drawer.classList.remove("open"); if(lastFocus) lastFocus.focus(); }
+scrim.addEventListener("click", closeDrawer);
+$("#dr-close").addEventListener("click", closeDrawer);
+document.addEventListener("keydown", e=>{ if(e.key==="Escape") closeDrawer(); });
+document.addEventListener("click", e=>{
+  const b = e.target.closest(".code-btn");
+  if (b) openDrawer(b.dataset.code);
+});
+
+/* ---- 준비 중 화면 ---- */
+const TODO = {
+  flow:["QA 파트별 워크플로우","파트·담당자별로 진행 중인 PQR을 칸반으로 배치해 병목 단계를 바로 확인합니다.",
+    ["파트(QA 1~3파트) × 단계 칸반 보드","담당자별 진행 건수와 평균 체류일","단계 이동 시 결재선 자동 지정"]],
+  capa:["CAPA 유효성 검토","전년도 PQR에서 도출된 개선조치가 실제로 효과가 있었는지 추적합니다.",
+    ["CAPA 항목별 이행 상태와 종결일","조치 전후 일탈·OOS 발생률 비교","유효성 미확인 항목 자동 재기표"]],
+  upload:["자료 업로드","LIMS · MES · ERP 추출 파일을 올려 평가항목에 자동 매핑합니다.",
+    ["배치 시험성적서 · 공정관리 데이터 (CSV · XLSX)","일탈/변경/불만 대장 일괄 업로드","업로드 이력과 원본 파일 보관"]],
+  criteria:["평가 기준 · 규격","경향 판정에 사용할 규격과 관리 기준을 제품별로 관리합니다.",
+    ["제품별 시험항목 규격 · 관리한계 (Cp/Cpk 기준)","경향 이탈(OOT) 판정 규칙","단계별 내부 리드타임 기준일"]],
+  report:["보고서 생성","확정된 데이터로 PQR 보고서 초안을 서식에 맞춰 만듭니다.",
+    ["표준 서식 기반 초안 자동 작성 (DOCX · PDF)","전자결재 연동 및 승인 이력 기록","발행본 보관 및 차년도 이관"]]
+};
+function renderTodo(key){
+  const [t,desc,list] = TODO[key] || ["준비 중","","",[]];
+  $("#todo-title").textContent = t;
+  $("#todo-desc").textContent = desc;
+  $("#todo-list").innerHTML = (list||[]).map(x=>`<li>${esc(x)}</li>`).join("");
+}
+
+/* ---- 뷰 전환 ---- */
+const VIEWMAP = {
+  dash:{ sec:"v-dash", title:"대시보드 — 오늘 할 일", crumb:`평가기간 ${PERIOD} · 기준일 ${fmt(TODAY)}` },
+  products:{ sec:"v-products", mode:"products" },
+  mine:{ sec:"v-products", mode:"mine" },
+  issues:{ sec:"v-products", mode:"issues" },
+  schedule:{ sec:"v-products", mode:"schedule" },
+  approval:{ sec:"v-products", mode:"approval" },
+  items:{ sec:"v-items", title:"평가항목 자료 수집", crumb:"EU GMP Part I §1.10 (a)~(l) 항목별 수집 상태" },
+  trend:{ sec:"v-trend", title:"품질 이슈 경향", crumb:"최근 12개월 일탈 · OOS/OOT · 불만 발생 추이" },
+  lead:{ sec:"v-lead", title:"지연 현황 · 리드타임", crumb:"단계별 소요일과 지연 사유" },
+  flow:{ sec:"v-todo", todo:"flow" }, capa:{ sec:"v-todo", todo:"capa" },
+  upload:{ sec:"v-todo", todo:"upload" }, criteria:{ sec:"v-todo", todo:"criteria" },
+  report:{ sec:"v-todo", todo:"report" }
+};
+function go(view){
+  state.view = view;
+  const cfg = VIEWMAP[view] || VIEWMAP.dash;
+  document.querySelectorAll(".view").forEach(s=>{ s.hidden = (s.id !== cfg.sec); });
+  document.querySelectorAll(".nav-item").forEach(b=>{
+    if (b.dataset.view === view) b.setAttribute("aria-current","page"); else b.removeAttribute("aria-current");
+  });
+  if (cfg.mode){
+    const m = MODES[cfg.mode];
+    $("#view-title").textContent = m.title;
+    $("#view-crumb").textContent = m.crumb;
+  } else if (cfg.todo){
+    const t = TODO[cfg.todo];
+    $("#view-title").textContent = t[0];
+    $("#view-crumb").textContent = "설계 예정 화면";
+  } else {
+    $("#view-title").textContent = cfg.title;
+    $("#view-crumb").textContent = cfg.crumb;
+  }
+  render();
+  window.scrollTo({top:0,behavior:"instant"});
+}
+function render(){
+  const rows = visible();
+  const cfg = VIEWMAP[state.view] || VIEWMAP.dash;
+  document.querySelectorAll("#p-filters .chip").forEach(c=>c.setAttribute("aria-pressed", String(c.dataset.f===state.filter)));
+  if (cfg.sec==="v-dash"){ renderKpis(rows); renderStages(rows); renderDue(rows); }
+  else if (cfg.sec==="v-products"){ renderProducts(rows, cfg.mode); }
+  else if (cfg.sec==="v-items"){ renderMatrix(rows); }
+  else if (cfg.sec==="v-trend"){ renderTrend(); }
+  else if (cfg.sec==="v-lead"){ renderLead(rows); }
+  else if (cfg.sec==="v-todo"){ renderTodo(cfg.todo); }
+  updateBadges();
+}
+function updateBadges(){
+  const open = OPEN;
+  $("#b-mine").textContent = open.filter(d=>d.owner==="정하늘").length;
+  $("#b-items").textContent = open.filter(d=>d.collected<ITEMS.length).length;
+  $("#b-dev").textContent = open.filter(d=>d.dev+d.oos>0).length;
+  $("#b-sched").textContent = DATA.length;
+  $("#b-late").textContent = open.filter(d=>d.late).length;
+  $("#b-status").textContent = open.filter(d=>d.dev+d.oos+d.cmp>0).length;
+  $("#b-analysis").textContent = open.filter(d=>d.late).length;
+}
+
+/* ---- 이벤트 ---- */
+document.querySelectorAll(".nav-item").forEach(b=>b.addEventListener("click",()=>{ state.filter="all"; go(b.dataset.view); }));
+document.querySelectorAll("[data-view].link").forEach(b=>b.addEventListener("click",()=>go(b.dataset.view)));
+document.querySelectorAll(".seg button").forEach(b=>b.addEventListener("click",()=>{
+  state.site=b.dataset.site;
+  document.querySelectorAll(".seg button").forEach(x=>x.setAttribute("aria-pressed", String(x===b)));
+  render();
+}));
+document.querySelectorAll("#p-filters .chip").forEach(c=>c.addEventListener("click",()=>{ state.filter=c.dataset.f; render(); }));
+$("#q").addEventListener("input", e=>{ state.q=e.target.value.trim(); render(); });
+$("#theme-btn").addEventListener("click", ()=>{
+  const cur = document.documentElement.getAttribute("data-theme");
+  const next = cur==="dark" ? "light" : cur==="light" ? "dark"
+    : (matchMedia("(prefers-color-scheme: dark)").matches ? "light" : "dark");
+  document.documentElement.setAttribute("data-theme", next);
+  try{ localStorage.setItem("pqr-theme", next); }catch(e){}
+});
+try{ const t=localStorage.getItem("pqr-theme"); if(t) document.documentElement.setAttribute("data-theme",t); }catch(e){}
+
+renderFlow();
+go("dash");
+</script>
