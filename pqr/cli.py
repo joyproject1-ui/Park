@@ -360,7 +360,16 @@ def main(argv=None):
     if not getattr(args, "func", None):
         parser.print_help()
         return 0
-    return args.func(args)
+    try:
+        return args.func(args)
+    except BrokenPipeError:
+        # `... | head` 처럼 받는 쪽이 먼저 닫힌 경우 — 조용히 끝냅니다.
+        os.dup2(os.open(os.devnull, os.O_WRONLY), sys.stdout.fileno())
+        return 0
+    except KeyboardInterrupt:
+        _print("")
+        _print("중단했습니다.")
+        return 130
 
 
 if __name__ == "__main__":
