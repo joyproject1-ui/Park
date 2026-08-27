@@ -3,7 +3,8 @@
     python -m pqr demo                       예시 입력 파일 만들기
     python -m pqr check  --in <입력폴더>       파일 인식 · 열 매핑 점검 (계산 전)
     python -m pqr build  --in <입력폴더>       집계 · 판정 → 대시보드 데이터 + 보고서
-    python -m pqr serve  --in <입력폴더>       대시보드를 띄우고 화면에서 자료 올리기
+    python -m pqr launch                     폴더 준비 + 브라우저 열기 + 실행 (가장 간단)
+    python -m pqr serve  --in <입력폴더>       대시보드만 띄우기
     python -m pqr narrate --data <pqr.json>   서술 문안 초안 (Claude API)
     python -m pqr report  --data <pqr.json>   보고서만 다시 생성
 """
@@ -250,6 +251,71 @@ def cmd_build(args):
     return 1 if errors else 0
 
 
+DEFAULT_INPUT = "입력폴더"
+
+
+def _free_port(host, preferred, attempts=10):
+    """원하는 포트가 이미 쓰이면 다음 번호로 넘어갑니다."""
+    import socket
+    for offset in range(attempts):
+        port = preferred + offset
+        probe = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        try:
+            probe.bind((host, port))
+            return port
+        except OSError:
+            continue
+        finally:
+            probe.close()
+    return preferred
+
+
+def cmd_launch(args):
+    """더블클릭 실행용 — 폴더 준비 · 브라우저 열기 · 서버 실행을 한 번에.
+
+    실행 파일(.bat)이 한글을 다루지 않도록, 안내 문구는 모두 여기서 출력합니다.
+    """
+    import threading
+    import webbrowser
+    from . import server as server_module
+
+    input_dir = args.input or DEFAULT_INPUT
+    common = os.path.join(input_dir, "공통")
+    first_time = not os.path.isdir(input_dir)
+    os.makedirs(common, exist_ok=True)
+
+    _print("")
+    _print("  PQR 대시보드")
+    _print("  " + "-" * 56)
+    if first_time:
+        _print("  입력 폴더를 만들었습니다: %s" % os.path.abspath(input_dir))
+        _print("")
+        _print("  [먼저 할 일] 제품 마스터 파일을 아래 폴더에 넣어 주세요.")
+        _print("               %s" % os.path.abspath(common))
+        _print("               넣은 뒤 화면 오른쪽 위의 ↻ 단추를 누르면 반영됩니다.")
+
+    port = _free_port(args.host, args.port)
+    try:
+        httpd = server_module.serve(input_dir, host=args.host, port=port,
+                                    out_dir=args.out, today=args.today, log=_print)
+    except OSError as error:
+        _print("")
+        _print("  [문제] 대시보드를 시작하지 못했습니다: %s" % error)
+        return 2
+
+    url = "http://%s:%d" % (args.host, httpd.server_port)
+    if not args.no_open:
+        threading.Timer(1.0, lambda: webbrowser.open(url)).start()
+    try:
+        httpd.serve_forever()
+    except KeyboardInterrupt:
+        _print("")
+        _print("  종료합니다.")
+    finally:
+        httpd.server_close()
+    return 0
+
+
 def cmd_serve(args):
     from . import server as server_module
     if not os.path.isdir(args.input):
@@ -327,6 +393,17 @@ def build_parser():
                            help="Claude API 로 서술 문안 초안까지 생성")
     build_cmd.add_argument("--model", default="claude-opus-5", help="서술 문안 생성 모델")
     build_cmd.set_defaults(func=cmd_build)
+
+    launch = subparsers.add_parser(
+        "launch", help="폴더 준비 · 브라우저 열기 · 서버 실행을 한 번에 (더블클릭 실행용)")
+    launch.add_argument("-i", "--in", dest="input", help="입력 폴더 (기본 '입력폴더')")
+    launch.add_argument("-o", "--out", default=DEFAULT_OUT, help="보고서 출력 폴더")
+    launch.add_argument("--host", default="127.0.0.1")
+    launch.add_argument("--port", type=int, default=8787,
+                        help="이미 쓰이고 있으면 다음 번호를 씁니다")
+    launch.add_argument("--today", help="기준일 (기본 오늘)")
+    launch.add_argument("--no-open", action="store_true", help="브라우저를 열지 않음")
+    launch.set_defaults(func=cmd_launch)
 
     serve_cmd = subparsers.add_parser(
         "serve", help="대시보드를 띄우고 화면에서 자료를 올릴 수 있게 함")
