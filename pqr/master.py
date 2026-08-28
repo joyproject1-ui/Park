@@ -224,6 +224,95 @@ def parse_equipment_sheet(rows, line):
     return sorted(latest.values(), key=lambda item: item["asset_id"])
 
 
+# --------------------------------------------------------------------------
+# 10.3 · 10.4 · 10.5 제조지원 설비 (공조 · 제조용수 · 질소/압축가스)
+# --------------------------------------------------------------------------
+
+def parse_support_sheet(rows, line=None, floor=None, asset_ids=None, system=None):
+    """제조지원 설비 표에서 해당 제품에 걸리는 설비만 고릅니다.
+
+    이 표에는 제조 라인 열이 없습니다. 대신 설비명에 라인이 적혀 있는 경우가
+    있어(예: 'A.H.U 3호 (BFS2호 라인)') 그것으로 맞춥니다. 라인 표기가 없는
+    용수·가스 설비는 층으로 좁히거나, 관리번호를 직접 지정해야 합니다.
+
+    asset_ids 를 주면 그 목록만 씁니다 — 가장 확실한 방법입니다.
+    """
+    try:
+        header_index, cells = find_header(rows, ("설비명", "관리번호"))
+    except MasterError:
+        return []
+    col = {
+        "system": _column(cells, "시스템"),
+        "kind": _column(cells, "구분"),
+        "asset": _column(cells, "설비명"),
+        "asset_id": _column(cells, "관리번호"),
+        "dq_doc": _column(cells, "dq문서번호"),
+        "dq_date": _column(cells, "dq승인일"),
+        "iq_doc": _column(cells, "iq문서번호"),
+        "iq_date": _column(cells, "iq승인일"),
+        "oq_doc": _column(cells, "oq문서번호"),
+        "oq_date": _column(cells, "oq승인일"),
+        "pq_doc": _column(cells, "pq문서번호"),
+        "pq_date": _column(cells, "pq승인일"),
+    }
+    body = _carry(rows[header_index + 1:], [col["system"], col["kind"]])
+    wanted = {_squash(item) for item in (asset_ids or [])}
+
+    found = []
+    for row in body:
+        def cell(key):
+            index = col[key]
+            if index is None or index >= len(row) or row[index] is None:
+                return ""
+            return " ".join(str(row[index]).split())
+
+        asset, asset_id = cell("asset"), cell("asset_id")
+        if not asset and not asset_id:
+            continue
+        if wanted:
+            if _squash(asset_id) not in wanted:
+                continue
+        else:
+            haystack = _squash(asset) + _squash(cell("kind"))
+            if line and _squash(line) not in haystack:
+                if floor is None:
+                    continue
+                if _squash("%s층" % floor) not in haystack:
+                    continue
+            elif not line and floor is not None:
+                if _squash("%s층" % floor) not in haystack:
+                    continue
+        if system and _squash(system) not in _squash(cell("system")):
+            continue
+        found.append({
+            "system": cell("system"), "kind": cell("kind"),
+            "asset": asset, "asset_id": asset_id,
+            "dq": {"doc": cell("dq_doc"), "date": cell("dq_date")},
+            "iq": {"doc": cell("iq_doc"), "date": cell("iq_date")},
+            "oq": {"doc": cell("oq_doc"), "date": cell("oq_date")},
+            "pq": {"doc": cell("pq_doc"), "date": cell("pq_date")},
+        })
+    return found
+
+
+def read_support_master(path, line=None, floor=None, asset_ids=None,
+                        system=None, sheet=None):
+    """제조지원 설비 마스터파일에서 해당 설비를 읽습니다."""
+    from openpyxl import load_workbook
+    workbook = load_workbook(path, data_only=True, read_only=True)
+    try:
+        for name in ([sheet] if sheet else workbook.sheetnames):
+            rows = [list(row) for row in
+                    workbook[name].iter_rows(max_col=24, values_only=True)]
+            found = parse_support_sheet(rows, line=line, floor=floor,
+                                        asset_ids=asset_ids, system=system)
+            if found:
+                return found
+    finally:
+        workbook.close()
+    return []
+
+
 def read_equipment_master(path, line, sheet=None):
     """라인에 속한 설비의 최신 적격성 이력을 돌려줍니다.
 

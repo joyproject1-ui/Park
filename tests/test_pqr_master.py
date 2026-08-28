@@ -7,7 +7,7 @@
 import unittest
 
 from pqr.master import (MasterError, find_header, parse_equipment_sheet,
-                        parse_pv_sheet)
+                        parse_pv_sheet, parse_support_sheet)
 
 # 공정밸리데이션(PV) 마스터 — 제품 한 건에 검증 Lot 3개가 병합 셀로 딸려 있습니다.
 PV_ROWS = [
@@ -43,6 +43,52 @@ EQUIPMENT_ROWS = [
     ["3", "생산1부", "BFS2", "DAF5058", "BFS2호 충전기", "PQ25-R", "2",
      "2025.12.22", "2026", "정기적격성평가", None],
 ]
+
+
+# 제조지원 설비 표 — 라인 열이 없고, 설비명에 라인이 적혀 있기도 합니다.
+SUPPORT_ROWS = [
+    ["적격성평가 현황표(제조지원 설비)"] + [None] * 11,
+    [None] * 12,
+    [None, None, "1. 제조지원설비 적격성평가"] + [None] * 9,
+    [None, None, "시스템", "구분", "설비명", "관리번호", None,
+     "DQ 문서번호", "DQ 승인일", "사유", "IQ 문서번호", "IQ 승인일"],
+    [None, None, "수처리시스템", "제조 시스템", "정제수 제조 시스템 (1층 액제, 안구이식제)",
+     "PWG2301", None, "DQ23-R", "2023.04.12", "신규", "IQ23-R", "2023.09.08"],
+    [None, None, None, None, "주사용수 제조 시스템 (2t - 2층)", "HJA5037",
+     None, "DQ12-R", "2012.06.07", "신규", "IQ12-R", "2012.08.11"],
+    [None, None, "공조기 시스템", "공조기 (1층)", "A.H.U 2호 (MAR1 라인, BFS3호 라인)",
+     "HBA5031", None, "DQ15-R", "2015.05.01", "신규", "IQ15-R", "2015.07.01"],
+    [None, None, None, None, "A.H.U 3호 (BFS2호 라인)", "HBA5032",
+     None, "DQ15-R", "2015.05.02", "신규", "IQ15-R", "2015.07.24"],
+    [None, None, None, "공조기 (2층)", "A.H.U 13호 (2층 포장실)", "HCA5074",
+     None, "DQ16-R", "2016.01.01", "신규", "IQ16-R", "2016.03.01"],
+]
+
+
+class SupportTest(unittest.TestCase):
+    def test_line_written_into_the_asset_name_is_matched(self):
+        """'A.H.U 3호 (BFS2호 라인)' 처럼 설비명에 라인이 적힌 것을 찾습니다."""
+        found = parse_support_sheet(SUPPORT_ROWS, line="BFS2호")
+        self.assertEqual([f["asset_id"] for f in found], ["HBA5032"])
+        self.assertEqual(found[0]["iq"]["date"], "2015.07.24")
+
+    def test_a_different_line_is_not_matched(self):
+        found = parse_support_sheet(SUPPORT_ROWS, line="BFS1호")
+        self.assertEqual(found, [])
+
+    def test_floor_filter_when_the_line_is_not_written(self):
+        found = parse_support_sheet(SUPPORT_ROWS, floor=1, system="수처리")
+        self.assertEqual([f["asset_id"] for f in found], ["PWG2301"])
+
+    def test_explicit_asset_ids_win(self):
+        """관리번호를 직접 주면 이름·층과 무관하게 그것만 씁니다."""
+        found = parse_support_sheet(SUPPORT_ROWS, asset_ids=["HJA5037", "HBA5032"])
+        self.assertEqual(sorted(f["asset_id"] for f in found), ["HBA5032", "HJA5037"])
+
+    def test_system_and_kind_carry_down(self):
+        found = parse_support_sheet(SUPPORT_ROWS, asset_ids=["HBA5032"])
+        self.assertEqual(found[0]["system"], "공조기 시스템")
+        self.assertEqual(found[0]["kind"], "공조기 (1층)")
 
 
 class HeaderTest(unittest.TestCase):
