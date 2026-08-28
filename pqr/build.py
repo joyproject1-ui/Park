@@ -242,7 +242,11 @@ def _test_summary(rows, config):
         values = [row.get("value") for row in test_rows]
         lsl = next((row.get("lsl") for row in test_rows if row.get("lsl") is not None), None)
         usl = next((row.get("usl") for row in test_rows if row.get("usl") is not None), None)
-        cap = metrics.capability(values, lsl, usl)
+        cap = metrics.capability(
+            values, lsl, usl,
+            min_lots=config["thresholds"].get("cpk_min_lots", 1),
+            two_sided_only=config["thresholds"].get("cpk_two_sided_only", False),
+            threshold=config["thresholds"].get("cpk_sufficient", metrics.CPK_SUFFICIENT))
         limits, oot_flags = metrics.out_of_trend(values, sigma)
         oos_index = metrics.out_of_spec(values, lsl, usl)
         summary.append({

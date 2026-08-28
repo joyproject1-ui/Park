@@ -19,12 +19,13 @@
     "품질책임자 승인": 5
   },
   "thresholds": {
-    "cpk_good": 1.33,
-    "cpk_watch": 1.0,
     "control_sigma": 3.0,
     "stability_horizon_months": 36,
     "qualification_due_days": 90,
-    "due_soon_days": 30
+    "due_soon_days": 30,
+    "cpk_sufficient": 1.0,
+    "cpk_min_lots": 10,
+    "cpk_two_sided_only": true
   },
   "items": [
     [

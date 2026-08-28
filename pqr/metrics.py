@@ -9,9 +9,13 @@ import statistics
 
 # 관리한계는 평균 ± 3σ 를 기본으로 봅니다 (내부 기준이 있으면 config 로 바꿉니다).
 DEFAULT_SIGMA = 3.0
-# Cpk 판정 기준: 1.33 이상 양호, 1.00 이상 주의, 미만은 조치 필요
-CPK_GOOD = 1.33
-CPK_WATCH = 1.00
+# Cpk 판정 기준 (사내 규정 QC-126): Cpk ≥ 1 공정능력 충분, 1 미만 공정능력 부족.
+# 적용 대상은 10 Lot 이상 생산했고 상·하한 규격이 모두 설정된 시험항목입니다.
+CPK_SUFFICIENT = 1.00
+CPK_MIN_LOTS = 10
+VERDICT_SUFFICIENT = "공정능력 충분"
+VERDICT_INSUFFICIENT = "공정능력 부족"
+VERDICT_NOT_APPLICABLE = "산출 대상 아님"
 
 
 def describe(values):
@@ -27,17 +31,23 @@ def describe(values):
     return result
 
 
-def capability(values, lsl=None, usl=None):
+def capability(values, lsl=None, usl=None, min_lots=1, two_sided_only=False,
+               threshold=CPK_SUFFICIENT):
     """공정능력 Cp · Cpk.
 
-    한쪽 규격만 있으면 Cp 는 없고 Cpk 만 계산합니다 (단측 규격).
-    표준편차가 0 이거나 표본이 2개 미만이면 계산하지 않습니다.
+    min_lots · two_sided_only 는 사내 규정의 적용 조건입니다. 조건을 채우지
+    못하면 계산하지 않고 '산출 대상 아님' 과 그 이유를 돌려줍니다 — 조건 밖의
+    값을 굳이 내놓으면 보고서에서 잘못 인용될 수 있기 때문입니다.
     """
     stats = describe(values)
-    out = {"cp": None, "cpk": None, "verdict": "산출 불가", "reason": ""}
+    out = {"cp": None, "cpk": None, "verdict": VERDICT_NOT_APPLICABLE, "reason": ""}
     out.update(stats)
-    if stats["n"] < 2:
-        out["reason"] = "표본이 2건 미만"
+    if stats["n"] < max(2, min_lots):
+        out["reason"] = ("%d Lot — 기준 %d Lot 미만" % (stats["n"], min_lots)
+                         if min_lots > 1 else "표본이 2건 미만")
+        return out
+    if two_sided_only and (lsl is None or usl is None):
+        out["reason"] = "상·하한 규격이 모두 설정된 항목만 적용"
         return out
     if lsl is None and usl is None:
         out["reason"] = "규격이 없음"
@@ -54,13 +64,8 @@ def capability(values, lsl=None, usl=None):
         out["cpk"] = (usl - mean) / (3 * sd)
     else:
         out["cpk"] = (mean - lsl) / (3 * sd)
-    cpk = out["cpk"]
-    if cpk >= CPK_GOOD:
-        out["verdict"] = "양호"
-    elif cpk >= CPK_WATCH:
-        out["verdict"] = "주의"
-    else:
-        out["verdict"] = "조치 필요"
+    out["verdict"] = (VERDICT_SUFFICIENT if out["cpk"] >= threshold
+                      else VERDICT_INSUFFICIENT)
     out["reason"] = ""
     return out
 

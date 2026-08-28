@@ -19,13 +19,35 @@ class CapabilityTest(unittest.TestCase):
         self.assertIsNotNone(result["cpk"])
 
     def test_verdict_thresholds(self):
+        """사내 규정: Cpk 1 이상 공정능력 충분, 미만 부족."""
         tight = metrics.capability([100.0, 100.1, 99.9, 100.0, 100.05], 95, 105)
-        self.assertEqual(tight["verdict"], "양호")
+        self.assertEqual(tight["verdict"], metrics.VERDICT_SUFFICIENT)
         wide = metrics.capability([96.0, 104.0, 97.0, 103.0, 100.0], 95, 105)
-        self.assertIn(wide["verdict"], ("주의", "조치 필요"))
+        self.assertEqual(wide["verdict"], metrics.VERDICT_INSUFFICIENT)
+
+    def test_minimum_lots_rule(self):
+        """10 Lot 미만이면 계산하지 않고 이유를 남깁니다."""
+        result = metrics.capability([7.0, 7.0, 7.09], 6.8, 7.2, min_lots=10)
+        self.assertEqual(result["verdict"], metrics.VERDICT_NOT_APPLICABLE)
+        self.assertIsNone(result["cpk"])
+        self.assertIn("10 Lot", result["reason"])
+
+    def test_two_sided_only_rule(self):
+        """상·하한이 모두 있는 항목만 적용합니다."""
+        one_sided = metrics.capability([0.04] * 12, None, 0.5,
+                                       min_lots=10, two_sided_only=True)
+        self.assertEqual(one_sided["verdict"], metrics.VERDICT_NOT_APPLICABLE)
+        self.assertIn("상·하한", one_sided["reason"])
+
+    def test_rules_pass_when_conditions_are_met(self):
+        values = [100.0, 100.5, 99.5, 100.2, 99.8, 100.1, 99.9, 100.3, 99.7, 100.4,
+                  100.0, 99.6]
+        result = metrics.capability(values, 95, 105, min_lots=10, two_sided_only=True)
+        self.assertEqual(result["verdict"], metrics.VERDICT_SUFFICIENT)
+        self.assertIsNotNone(result["cpk"])
 
     def test_not_computable_cases(self):
-        self.assertEqual(metrics.capability([100.0], 95, 105)["reason"], "표본이 2건 미만")
+        self.assertIn("2건 미만", metrics.capability([100.0], 95, 105)["reason"])
         self.assertEqual(metrics.capability([100.0, 101.0])["reason"], "규격이 없음")
         self.assertEqual(metrics.capability([100.0, 100.0], 95, 105)["reason"], "표준편차가 0")
 
