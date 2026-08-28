@@ -129,14 +129,39 @@ python -m gmpai download
 `direct_url` 과 `discover` 중 최소 하나는 있어야 하며, 테스트가 URL이 공식 도메인(HTTPS)인지 검사합니다.
 추가 후 `python -m gmpai index` 로 목록 파일을 다시 생성하세요.
 
+## 부록: 시간대별 주가 분석 (`stock`)
+
+같은 저장소에 분봉을 시간대별로 접어 보는 별도 도구가 들어 있습니다. GMP 다운로더와는 독립이며,
+역시 표준 라이브러리만 씁니다.
+
+```bash
+# 고점이 몇 시에 찍히고 그 뒤 얼마나 되돌리는지 (상승 타이밍)
+python -m stock peak prices/huons.min.csv --surge 3.0
+
+# 시간대별 평균 수익률·승률·거래비중
+python -m stock slots prices/huons.min.csv
+
+# 매수 시간대 × 매도 시간대 매트릭스
+python -m stock matrix prices/huons.min.csv
+
+# 전부 마크다운 한 파일로
+python -m stock report prices/huons.min.csv -o report.md
+```
+
+분봉은 `python -m stock fetch --code 휴온스 -o prices/huons.min.csv` 로 받거나, 외부 접속이 막힌
+환경에서는 HTS 에서 내보낸 CSV 를 그대로 넘기면 됩니다(한글 헤더·CP949 지원).
+
+지표의 의미, 표본이 얼마나 필요한지, 언제 그 숫자를 믿으면 안 되는지는
+[`docs/huons-intraday.md`](docs/huons-intraday.md) 에 정리했습니다.
+
 ## 테스트
 
 ```bash
 python -m unittest discover -s tests -t .
 ```
 
-30건의 테스트가 로컬 모의 서버를 띄워 다운로드·재개정 감지·링크 탐색 폴백·HTML 오응답 차단까지
-네트워크 없이 검증합니다.
+로컬 모의 서버를 띄워 다운로드·재개정 감지·링크 탐색 폴백·HTML 오응답 차단을 네트워크 없이
+검증하고, `stock` 쪽은 결정론적 합성 분봉으로 시간대 집계·고점 분포·CLI 종료코드를 검증합니다.
 
 ## 라이선스와 저작권
 

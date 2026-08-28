@@ -9,3 +9,7 @@ __pycache__/
 venv/
 *.egg-info/
 .pytest_cache/
+
+# 시세 데이터 (재배포 불가)
+prices/
+*.min.csv
