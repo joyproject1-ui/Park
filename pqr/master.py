@@ -48,6 +48,20 @@ def _column(cells, *words):
     return None
 
 
+_FLOORS = re.compile(r"((?:\d\s*[,·]\s*)*\d)\s*층")
+
+
+def mentions_floor(text, floor):
+    """'1층' · '1,2,3층' · '1층, 3층' 을 모두 그 층으로 봅니다."""
+    if floor is None:
+        return True
+    for match in _FLOORS.finditer(str(text or "")):
+        numbers = [part.strip() for part in re.split(r"[,·]", match.group(1))]
+        if str(floor) in numbers:
+            return True
+    return False
+
+
 def _carry(rows, columns):
     """병합으로 비어 있는 칸을 위 행의 값으로 채웁니다."""
     carried = []
@@ -228,7 +242,8 @@ def parse_equipment_sheet(rows, line):
 # 10.3 · 10.4 · 10.5 제조지원 설비 (공조 · 제조용수 · 질소/압축가스)
 # --------------------------------------------------------------------------
 
-def parse_support_sheet(rows, line=None, floor=None, asset_ids=None, system=None):
+def parse_support_sheet(rows, line=None, floor=None, asset_ids=None, system=None,
+                        exclude=None):
     """제조지원 설비 표에서 해당 제품에 걸리는 설비만 고릅니다.
 
     이 표에는 제조 라인 열이 없습니다. 대신 설비명에 라인이 적혀 있는 경우가
@@ -267,22 +282,24 @@ def parse_support_sheet(rows, line=None, floor=None, asset_ids=None, system=None
             return " ".join(str(row[index]).split())
 
         asset, asset_id = cell("asset"), cell("asset_id")
+        # 관리번호 칸에 설명이 붙어 있는 경우가 있습니다 ('HEA5029 (질소 ...)').
+        asset_id = asset_id.split()[0] if asset_id.split() else ""
         if not asset and not asset_id:
             continue
         if wanted:
             if _squash(asset_id) not in wanted:
                 continue
         else:
-            haystack = _squash(asset) + _squash(cell("kind"))
-            if line and _squash(line) not in haystack:
-                if floor is None:
+            haystack = asset + " " + cell("kind")
+            on_line = bool(line) and _squash(line) in _squash(haystack)
+            if not on_line:
+                if line and floor is None:
                     continue
-                if _squash("%s층" % floor) not in haystack:
-                    continue
-            elif not line and floor is not None:
-                if _squash("%s층" % floor) not in haystack:
+                if not mentions_floor(haystack, floor):
                     continue
         if system and _squash(system) not in _squash(cell("system")):
+            continue
+        if exclude and any(_squash(word) in _squash(asset) for word in exclude):
             continue
         found.append({
             "system": cell("system"), "kind": cell("kind"),
@@ -295,22 +312,47 @@ def parse_support_sheet(rows, line=None, floor=None, asset_ids=None, system=None
     return found
 
 
-def read_support_master(path, line=None, floor=None, asset_ids=None,
-                        system=None, sheet=None):
-    """제조지원 설비 마스터파일에서 해당 설비를 읽습니다."""
+def read_support_master(path, sheet=None, **rules):
+    """제조지원 설비 마스터파일에서 규칙에 맞는 설비를 읽습니다.
+
+    rules: line · floor · system · asset_ids · exclude
+    """
     from openpyxl import load_workbook
     workbook = load_workbook(path, data_only=True, read_only=True)
     try:
         for name in ([sheet] if sheet else workbook.sheetnames):
             rows = [list(row) for row in
                     workbook[name].iter_rows(max_col=24, values_only=True)]
-            found = parse_support_sheet(rows, line=line, floor=floor,
-                                        asset_ids=asset_ids, system=system)
+            found = parse_support_sheet(rows, **rules)
             if found:
                 return found
     finally:
         workbook.close()
     return []
+
+
+def support_for_line(path, line, config, sheet=None):
+    """설정에 적힌 관리번호로 §10.3~10.5 설비를 읽습니다.
+
+    설정이 비어 있으면 설비명의 라인 표기로 찾습니다(공조기는 이름에 라인이
+    적혀 있어 그것만으로 정확히 맞습니다). 용수·가스처럼 이름만으로 가릴 수
+    없는 것은 설정에 관리번호를 적어야 합니다.
+    """
+    listed = (config.get("support_equipment") or {}).get(line, {})
+    sections = {}
+    for section, rule in listed.items():
+        if section.startswith("_"):
+            continue
+        if isinstance(rule, dict):
+            sections[section] = read_support_master(path, sheet=sheet, **rule)
+        elif rule:
+            sections[section] = read_support_master(path, sheet=sheet, asset_ids=rule)
+        else:
+            # 아직 정하지 않은 항목 — 엉뚱한 설비가 들어가지 않도록 비워 둡니다.
+            sections[section] = []
+    if not sections:
+        sections["제조지원 설비"] = read_support_master(path, sheet=sheet, line=line)
+    return sections
 
 
 def read_equipment_master(path, line, sheet=None):

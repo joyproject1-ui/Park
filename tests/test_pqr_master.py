@@ -6,8 +6,8 @@
 
 import unittest
 
-from pqr.master import (MasterError, find_header, parse_equipment_sheet,
-                        parse_pv_sheet, parse_support_sheet)
+from pqr.master import (MasterError, find_header, mentions_floor,
+                        parse_equipment_sheet, parse_pv_sheet, parse_support_sheet)
 
 # 공정밸리데이션(PV) 마스터 — 제품 한 건에 검증 Lot 3개가 병합 셀로 딸려 있습니다.
 PV_ROWS = [
@@ -79,6 +79,36 @@ class SupportTest(unittest.TestCase):
     def test_floor_filter_when_the_line_is_not_written(self):
         found = parse_support_sheet(SUPPORT_ROWS, floor=1, system="수처리")
         self.assertEqual([f["asset_id"] for f in found], ["PWG2301"])
+
+    def test_exclusion_by_keyword(self):
+        """안구이식제 전용 설비를 빼는 규칙."""
+        found = parse_support_sheet(SUPPORT_ROWS, floor=1, system="수처리",
+                                    exclude=["안구이식제"])
+        self.assertEqual(found, [])
+
+    def test_asset_id_drops_the_note_beside_it(self):
+        rows = [row[:] for row in SUPPORT_ROWS]
+        rows[7][5] = "HBA5032\n(공조기 관련 설명)"
+        found = parse_support_sheet(rows, asset_ids=["HBA5032"])
+        self.assertEqual([f["asset_id"] for f in found], ["HBA5032"])
+
+
+class FloorTest(unittest.TestCase):
+    def test_single_floor(self):
+        self.assertTrue(mentions_floor("공조기 (1층)", 1))
+        self.assertFalse(mentions_floor("주사용수 분배 시스템 (2층)", 1))
+
+    def test_floor_list_counts_as_each_floor(self):
+        """'(1,2,3층)' 은 1층 설비이기도 합니다."""
+        self.assertTrue(mentions_floor("정제수 제조 시스템 (1,2,3층)", 1))
+        self.assertTrue(mentions_floor("정제수 제조 시스템 (1,2,3층)", 3))
+        self.assertFalse(mentions_floor("정제수 제조 시스템 (1,2,3층)", 4))
+
+    def test_two_separate_floor_mentions(self):
+        self.assertTrue(mentions_floor("정제수 분배 시스템 (1층, 3층)", 3))
+
+    def test_no_floor_asked_matches_everything(self):
+        self.assertTrue(mentions_floor("아무 설비", None))
 
     def test_explicit_asset_ids_win(self):
         """관리번호를 직접 주면 이름·층과 무관하게 그것만 씁니다."""
