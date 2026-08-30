@@ -1,0 +1,15 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/scripts/setup-office-skills.sh\"",
+            "timeout": 600
+          }
+        ]
+      }
+    ]
+  }
+}
