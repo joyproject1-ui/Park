@@ -67,7 +67,7 @@ python-docx 로 이 서식을 다루면 `table.cell(r, c)` 가 **틀린 칸을 �
 지워집니다. `scripts/docx_form.py` 에 이 문제를 피하는 헬퍼가 있으니 그대로 쓰세요:
 
 ```python
-from docx_form import set_cell, fill, clone_row, set_comment, drop_last_row, renumber_bookmarks
+from docx_form import set_cell, fill, clone_row, set_comment, drop_last_row, close_out, colliding_columns, renumber_bookmarks
 ```
 
 문단이나 표를 복사(`copy.deepcopy`)했다면 저장 전에 `renumber_bookmarks(document)` 를 부르세요 —

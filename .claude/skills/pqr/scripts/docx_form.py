@@ -181,3 +181,73 @@ def dump(table):
             text = ''.join(n.text or '' for n in tc.iter() if n.tag.endswith('}t'))
             cells.append(' '.join(text.split())[:40])
         print(index, '|', ' | '.join(cells))
+
+
+# w:tcPr 와 w:tcBorders 의 자식 순서는 스키마로 강제됩니다 — 아무 데나 붙이면
+# "This element is not expected" 로 검증에 걸립니다.
+_TCPR_ORDER = ('cnfStyle', 'tcW', 'gridSpan', 'hMerge', 'vMerge', 'tcBorders', 'shd',
+               'noWrap', 'tcMar', 'textDirection', 'tcFitText', 'vAlign', 'hideMark')
+_BORDER_ORDER = ('top', 'start', 'left', 'bottom', 'end', 'right',
+                 'insideH', 'insideV', 'tl2br', 'tr2bl')
+
+
+def _insert_ordered(parent, child, order):
+    name = child.tag.split('}')[1]
+    rank = order.index(name)
+    for existing in parent:
+        tag = existing.tag.split('}')[1]
+        if tag in order and order.index(tag) > rank:
+            existing.addprevious(child)
+            return
+    parent.append(child)
+
+
+def close_out(table, row, col):
+    """빈 칸에 대각선을 그어 마감 처리합니다 (엑셀 서식과 같은 사내 관행).
+
+    '아직 안 채운 칸'과 '해당 없어 안 채우는 칸'을 구분하는 표시입니다.
+    앞으로 채울 칸에는 긋지 마세요 — 시험을 안 한 것처럼 읽힙니다.
+    """
+    tc = cell_at(table, row, col)
+    if tc is None or _continues_above(tc):
+        return
+    pr = tc.find(qn('w:tcPr'))
+    if pr is None:
+        pr = tc.makeelement(qn('w:tcPr'), {})
+        tc.insert(0, pr)
+    borders = pr.find(qn('w:tcBorders'))
+    if borders is None:
+        borders = pr.makeelement(qn('w:tcBorders'), {})
+        _insert_ordered(pr, borders, _TCPR_ORDER)
+    existing = borders.find(qn('w:tl2br'))
+    if existing is not None:
+        borders.remove(existing)
+    line = borders.makeelement(qn('w:tl2br'), {})
+    line.set(qn('w:val'), 'single')
+    line.set(qn('w:sz'), '4')
+    line.set(qn('w:color'), '000000')
+    _insert_ordered(borders, line, _BORDER_ORDER)
+
+
+def colliding_columns(table, row, columns):
+    """``columns`` 중 같은 칸을 가리키는 조합을 돌려줍니다.
+
+    병합 때문에 논리적으로 다른 두 열이 한 칸으로 해석되면, 나중에 쓴 값이 앞 값을
+    소리 없이 덮어씁니다 (빈 값을 쓰면 앞 값이 아예 사라집니다). 서식의 머리글 병합과
+    데이터 행의 병합 경계가 어긋나 있을 때 실제로 일어나므로, 표를 채우기 전에 한 번
+    확인하세요.
+
+    lxml 프록시는 참조를 놓으면 회수되고 ``id()`` 가 재사용되므로, 여기서는 요소를
+    붙들어 둔 채 ``is`` 로 비교합니다.
+    """
+    held, pairs = {}, []
+    for col in columns:
+        tc = cell_at(table, row, col)
+        if tc is not None:
+            held[col] = tc
+    keys = list(held)
+    for first in range(len(keys)):
+        for second in range(first + 1, len(keys)):
+            if held[keys[first]] is held[keys[second]]:
+                pairs.append((keys[first], keys[second]))
+    return pairs
