@@ -572,6 +572,48 @@ def _month_key(value):
     return date.strftime("%y-%m") if date else None
 
 
+def _month_labels(today, months=12):
+    labels = []
+    year, month = today.year, today.month
+    for _ in range(months):
+        labels.append("%02d-%02d" % (year % 100, month))
+        month -= 1
+        if month == 0:
+            year, month = year - 1, 12
+    labels.reverse()
+    return labels
+
+
+def _cpk_trend(products, batches_by_product, today, months=12):
+    """공정능력 부족(Cpk < 1) 제품의 월별 발생 추이 — 제형별로 나눠 셉니다.
+
+    Cpk 는 한 해 전체 자료로 한 번 냅니다. 월별로 나누려면 '그 달에 제조된 배치를
+    가진 제품 중 Cpk 부족 항목이 있는 제품이 몇 개인가' 로 봅니다. 그래야 어느 달의
+    생산이 문제였는지 짚을 수 있습니다. 한 달에 여러 배치가 있어도 제품은 한 번만 셉니다.
+    """
+    labels = _month_labels(today, months)
+    index = {label: position for position, label in enumerate(labels)}
+    forms = []
+    counted = {}
+    for product in products:
+        if not product.get("cpk_low"):
+            continue
+        form = product.get("form_group") or "기타제"
+        if form not in counted:
+            counted[form] = [set() for _ in labels]
+            forms.append(form)
+        for row in batches_by_product.get(product["code"], []):
+            key = _month_key(row.get("mfg_date"))
+            if key in index:
+                counted[form][index[key]].add(product["code"])
+    return {
+        "months": labels,
+        "series": [{"key": form, "data": [len(bucket) for bucket in counted[form]]}
+                   for form in forms],
+        "label": "Cpk 1 미만 제품",
+    }
+
+
 def _trend(deviations, changes, classifier, today, months=12):
     """최근 N개월 일탈 · OOS/OOT · 불만 발생 건수."""
     labels = []
@@ -772,6 +814,11 @@ def build(input_dir=None, files=None, today=None, config=None, period=None):
         # 성적서 기준(시험결과가 규격을 벗어난 건)과 대장 기준(OOS/OOT 로 등록된 건)은
         # 같은 사건을 가리킬 수 있으므로 더하지 않고 따로 셉니다.
         oos_spec = sum(test["oos_count"] for test in tests)
+        # 공정능력 부족(Cpk < 1) 항목 — 화면의 'Cpk 발생' 과 경향 그래프가 이 값을 씁니다.
+        cpk_values = [test["cpk"] for test in tests if test.get("cpk") is not None]
+        cpk_low = [test for test in tests if test.get("cpk") is not None
+                   and test["cpk"] < config["thresholds"].get("cpk_sufficient",
+                                                              metrics.CPK_SUFFICIENT)]
         owner = meta.get("owner") or (config.get("owners_by_form") or {}).get(
             form_group(meta.get("form", ""), config, name), "")
         products.append({
@@ -798,6 +845,9 @@ def build(input_dir=None, files=None, today=None, config=None, period=None):
             "dev": len(deviation_rows),
             "oos": len(oos_rows),
             "oos_spec": oos_spec,
+            "cpk_low": len(cpk_low),
+            "cpk_low_tests": [test["test_name"] for test in cpk_low],
+            "cpk_min": min(cpk_values) if cpk_values else None,
             "chg": len(change_rows) + len(license_rows),
             "cmp": len(complaint_rows),
             "checks": checks,
@@ -837,8 +887,8 @@ def build(input_dir=None, files=None, today=None, config=None, period=None):
         "dosage_forms": config.get("dosage_forms", {}),
         "products": products,
         "quality": quality,
-        "trend": _trend(datasets.get("deviations", []), datasets.get("changes", []),
-                        classifier, today),
+        # 화면의 '품질 이슈 경향' 은 Cpk 1 미만 제품을 제형별로 봅니다.
+        "trend": _cpk_trend(products, batches, today),
         "leadtime": _leadtime(datasets.get("stagelog", []), config),
         "sources": sources,
         "issues": issues,

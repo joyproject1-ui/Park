@@ -385,14 +385,14 @@ td.wrap{white-space:normal;min-width:220px}
       <button class="nav-item" data-view="products"><span class="nav-ico">🏭</span>제품별 현황</button>
       <button class="nav-item" data-view="items"><span class="nav-ico">🗂️</span>평가항목 자료 수집<span class="badge" id="b-items">0</span></button>
       <button class="nav-item" data-view="schedule"><span class="nav-ico">🗓️</span>PQR 일정(전체)<span class="badge" id="b-sched">0</span></button>
-      <button class="nav-item" data-view="approval"><span class="nav-ico">🖊️</span>검토 · 승인 현황</button>
+      <button class="nav-item" data-view="approval"><span class="nav-ico">🖊️</span>보고서 작성 완료 현황</button>
     </nav>
 
     <nav class="nav-group" aria-label="분석">
       <div class="nav-label"><span>분석</span><span class="nav-count" id="b-analysis">0</span></div>
       <button class="nav-item" data-view="lead"><span class="nav-ico">⏱️</span>지연 현황 · 리드타임<span class="badge hot" id="b-late">0</span></button>
       <button class="nav-item" data-view="trend"><span class="nav-ico">📈</span>품질 이슈 경향</button>
-      <button class="nav-item" data-view="capa"><span class="nav-ico">🔁</span>CAPA 유효성 검토</button>
+      <button class="nav-item" data-view="capa"><span class="nav-ico">🔁</span>Cpk 1 미만 검토보고서<span class="badge hot" id="b-cpk">0</span></button>
     </nav>
 
     <nav class="nav-group" aria-label="자료 · 도구">
@@ -518,16 +518,16 @@ td.wrap{white-space:normal;min-width:220px}
       <section class="view" id="v-trend" hidden>
         <div class="grid-2">
           <div class="card">
-            <div class="card-head"><h2>월별 품질 이슈 발생 추이</h2><span class="pill">최근 12개월</span></div>
+            <div class="card-head"><h2>Cpk 1 미만 제품 발생 추이</h2><span class="pill">최근 12개월 · 제형별</span></div>
             <div class="card-body">
               <div class="serieslegend" id="trend-legend"></div>
-              <div class="tablewrap"><svg class="chartsvg" id="trendsvg" viewBox="0 0 760 300" role="img" aria-label="월별 일탈, OOS/OOT, 불만 발생 건수 추이"></svg></div>
+              <div class="tablewrap"><svg class="chartsvg" id="trendsvg" viewBox="0 0 760 300" role="img" aria-label="제형별 Cpk 1 미만 제품 월별 발생 추이"></svg></div>
             </div>
           </div>
           <div class="card">
-            <div class="card-head"><h2>이슈 상위 제품</h2><span class="pill">일탈 + OOS/OOT + 불만</span></div>
+            <div class="card-head"><h2>Cpk 1 미만 제품</h2><span class="pill">공정능력 부족</span></div>
             <div class="tablewrap">
-              <table class="compact"><thead><tr><th>코드</th><th>제품명</th><th>일탈</th><th>OOS</th><th>불만</th><th>합계</th></tr></thead>
+              <table class="compact"><thead><tr><th>코드</th><th>제품명</th><th>제형</th><th>최저 Cpk</th><th>해당 시험항목</th></tr></thead>
               <tbody id="top-body"></tbody></table>
             </div>
           </div>
@@ -636,7 +636,7 @@ td.wrap{white-space:normal;min-width:220px}
               <div class="contact-box">
                 <h3>이 프로그램에 대해</h3>
                 <ul>
-                  <li>제품품질평가(PQR) 자료 수집 현황과 보고서 초안 작성 도구</li>
+                  <li>제품품질평가(PQR) 자료 수집 현황과 보고서 작성 도구</li>
                   <li>자료는 <b>내 PC 안에서만</b> 처리합니다 — 밖으로 보내지 않습니다</li>
                   <li>Claude Code 로 제작 · 유지보수</li>
                 </ul>
@@ -713,7 +713,7 @@ td.wrap{white-space:normal;min-width:220px}
    `python -m pqr build` 가 만든 data.js 를 이 파일 옆에 두면 window.PQR_DATA 로 실려
    그 값으로 화면이 채워집니다. 없으면 아래 샘플 데이터로 동작합니다. */
 
-const SAMPLE_STAGES = ["자료 수집","보고서 초안 작성"];
+const SAMPLE_STAGES = ["자료 수집","보고서 작성"];
 
 /* 평가항목 — PQR 보고서 항 번호(3 · 8.1.1 · 9.2.4 …) */
 const SAMPLE_ITEMS = [
@@ -774,12 +774,13 @@ const SAMPLE_RAW = [
 ];
 
 /* 12개월 품질 이슈 추이 (2025-09 ~ 2026-08) */
+/* Cpk 1 미만 제품의 월별 발생 추이 — 제형별 (내장 샘플) */
 const SAMPLE_TREND = {
   months: ["25-09","25-10","25-11","25-12","26-01","26-02","26-03","26-04","26-05","26-06","26-07","26-08"],
   series: [
-    { key:"일탈",     color:"var(--s1)", data:[6,8,5,9,7,11,8,6,10,7,5,4] },
-    { key:"OOS/OOT",  color:"var(--s2)", data:[2,1,3,2,4,3,5,2,3,4,2,1] },
-    { key:"불만",     color:"var(--s3)", data:[3,4,2,5,3,2,4,6,3,2,3,2] }
+    { key:"점안제", color:"var(--s1)", data:[2,1,2,3,1,2,1,0,2,1,1,0] },
+    { key:"주사제", color:"var(--s2)", data:[1,0,1,1,2,1,0,1,1,0,1,0] },
+    { key:"정제",   color:"var(--s3)", data:[0,1,1,0,1,2,1,1,0,1,0,1] }
   ]
 };
 
@@ -846,7 +847,7 @@ function adopt(source){
   DATA = source.products.map(p=>{
     const dueD = p.due ? parse(p.due) : null;
     const dday = dueD ? Math.round((dueD - TODAY)/DAY) : null;
-    // 2단계 모델(자료 수집 → 보고서 초안 작성)에는 '발행 완료' 단계가 없습니다.
+    // 2단계 모델(자료 수집 → 보고서 작성)에는 '발행 완료' 단계가 없습니다.
     // 마지막 단계에 있다 = 아직 작성 중이므로, 완료로 접어 버리면 안 됩니다.
     const done = false;
     const checks = p.checks && p.checks.length === ITEMS.length
@@ -1011,9 +1012,9 @@ function kpiDefs(rows){
     { k:"all",    ico:"📦", cls:"",      label:"관리 중 PQR",        v:open.length, foot:`발행 완료 ${rows.length-open.length}건 제외` },
     { k:"soon",   ico:"📅", cls:"amber", label:"마감 임박 (30일 내)", v:open.filter(d=>d.dday<=30).length, foot:"마감일 초과 포함" },
     { k:"collect",ico:"🗂️", cls:"blue",  label:"자료 수집 중",          v:open.filter(d=>d.pct<100).length, foot:"원본 자료 미완결" },
-    { k:"review", ico:"📝", cls:"blue",  label:"보고서 초안 작성",       v:open.filter(d=>d.stage===STAGES.length-1).length, foot:"자료 수집 100% 완료" },
+    { k:"review", ico:"📝", cls:"blue",  label:"보고서 작성",       v:open.filter(d=>d.stage===STAGES.length-1).length, foot:"자료 수집 100% 완료" },
     { k:"late",   ico:"⏰", cls:"red",   label:"지연",               v:open.filter(d=>d.late).length, foot:"마감일 초과" },
-    { k:"issue",  ico:"⚠️", cls:"red",   label:"중대 이슈 확인",      v:open.filter(d=>d.dev+d.oos>0).length, foot:"일탈 · OOS/OOT 미결" }
+    { k:"cpk",    ico:"⚠️", cls:"red",   label:"Cpk 발생",           v:open.filter(d=>d.cpk_low>0).length, foot:"공정능력 부족 (Cpk < 1)" }
   ];
 }
 function renderKpis(rows){
@@ -1173,7 +1174,12 @@ const MODES = {
               pred:d=>!state.me || d.owner===state.me },
   issues:   { title:"일탈 · OOS/OOT", crumb:"미결 이슈를 보유한 PQR", pred:d=>d.dev+d.oos>0, sort:(a,b)=>(b.dev+b.oos)-(a.dev+a.oos) },
   schedule: { title:"PQR 일정(전체)", crumb:"마감일 순 전체 일정", sort:(a,b)=>a.dueD-b.dueD, pred:()=>true },
-  approval: { title:"검토 · 승인 현황", crumb:"보고서 초안 작성 단계 — 작성이 끝나면 부서·QA 검토로 넘어갑니다", pred:d=>d.stage===STAGES.length-1 && !d.done }
+  approval: { title:"보고서 작성 완료 현황", crumb:"자료 수집이 끝나 보고서를 작성하는 제품",
+              pred:d=>d.stage===STAGES.length-1 && !d.done },
+  /* 품질 이슈 경향에서 걸린 제품(Cpk 1 미만)은 검토보고서를 따로 써야 합니다.
+     두 화면이 같은 판단(cpk_low)을 쓰므로 목록이 어긋나지 않습니다. */
+  cpk:      { title:"Cpk 1 미만 검토보고서", crumb:"공정능력이 부족한 제품 — 검토보고서 작성 대상",
+              pred:d=>d.cpk_low>0, sort:(a,b)=>(a.cpk_min ?? 99)-(b.cpk_min ?? 99) }
 };
 /* 화면 위의 칩은 전체 · 지연 · PQR 완료 세 가지입니다.
    'PQR 완료' 는 제출용 보고서(완성본)가 제품 폴더에 있는 제품입니다 —
@@ -1181,7 +1187,8 @@ const MODES = {
 const FILTERS = {
   all:()=>true,
   late:d=>d.late,
-  done:d=>!!d.final_report
+  done:d=>!!d.final_report,
+  cpk:d=>d.cpk_low>0
 };
 /* 자료가 아직 안 올라온 항목은 0 이 아니라 '—' 로 둡니다.
    0 으로 적으면 '일탈 없음' 으로 읽혀 사실과 달라집니다. */
@@ -1298,11 +1305,16 @@ function renderTrend(){
     ${s.data.map(v=>`<td class="num" style="text-align:right">${v}</td>`).join("")}
     <td class="num" style="text-align:right;font-weight:600">${s.data.reduce((a,b)=>a+b,0)}</td></tr>`).join("");
 
-  const top = DATA.slice().sort((a,b)=>b.issues-a.issues).slice(0,10);
-  $("#top-body").innerHTML = top.map(d=>`
+  /* Cpk 1 미만 항목을 가진 제품을 낮은 Cpk 순으로 보여 줍니다.
+     한 건도 없으면 빈 표 대신 그 사실을 적습니다 — 빈 표는 '아직 안 봤다' 로 읽힙니다. */
+  const low = DATA.filter(d=>d.cpk_low>0)
+                  .sort((a,b)=>(a.cpk_min ?? 99)-(b.cpk_min ?? 99)).slice(0,20);
+  $("#top-body").innerHTML = low.map(d=>`
     <tr><td>${codeCell(d)}</td><td class="wrap">${esc(d.name)}</td>
-    <td class="num">${d.dev}</td><td class="num">${d.oos}</td><td class="num">${d.cmp}</td>
-    <td class="num" style="font-weight:600">${d.issues}</td></tr>`).join("");
+    <td class="muted">${esc(d.form_group || d.form || "—")}</td>
+    <td class="num" style="font-weight:600">${d.cpk_min != null ? d.cpk_min.toFixed(2) : "—"}</td>
+    <td class="wrap muted">${esc((d.cpk_low_tests || []).join(", ") || "—")}</td></tr>`).join("")
+    || `<tr><td colspan="5" class="muted" style="padding:20px">공정능력이 부족한(Cpk 1 미만) 제품이 없습니다.</td></tr>`;
 }
 
 /* ---- 리드타임 · 지연 ---- */
@@ -1705,11 +1717,11 @@ const VIEWMAP = {
   schedule:{ sec:"v-products", mode:"schedule" },
   approval:{ sec:"v-products", mode:"approval" },
   items:{ sec:"v-items", title:"평가항목 자료 수집", crumb:"PQR 보고서 항 번호별 원본 자료 수집 상태" },
-  trend:{ sec:"v-trend", title:"품질 이슈 경향", crumb:"최근 12개월 일탈 · OOS/OOT · 불만 발생 추이" },
+  trend:{ sec:"v-trend", title:"품질 이슈 경향", crumb:"Cpk 1 미만 제품 — 최근 12개월 제형별 발생 추이" },
   lead:{ sec:"v-lead", title:"지연 현황 · 리드타임", crumb:"단계별 소요일과 지연 사유" },
   upload:{ sec:"v-upload", title:"자료 업로드", crumb:"제품 폴더에 자료를 올리고 즉시 다시 집계합니다" },
   contact:{ sec:"v-contact", title:"제작자 문의", crumb:"고치고 싶은 것 · 사용 중 막히는 것" },
-  capa:{ sec:"v-todo", todo:"capa" },
+  capa:{ sec:"v-products", mode:"cpk" },
   report:{ sec:"v-todo", todo:"report" }
 };
 function go(view){
@@ -1761,6 +1773,7 @@ function updateBadges(){
     "b-late": open.filter(d=>d.late).length,
     "b-status": open.filter(d=>d.dev+d.oos+d.cmp>0).length,
     "b-analysis": open.filter(d=>d.late).length,
+    "b-cpk": open.filter(d=>d.cpk_low>0).length,
   };
   for (const [id, value] of Object.entries(counts)){
     const node = document.getElementById(id);

@@ -31,7 +31,17 @@ TESTS = {
 
 PERIOD_FROM = _dt.date(2025, 7, 1)
 PERIOD_TO = _dt.date(2026, 6, 30)
-STAGES = ["자료 수집", "보고서 초안 작성"]
+def _stages():
+    """예시 자료의 단계 이름은 config 를 따릅니다.
+
+    두 곳에 따로 적어 두면 config 만 고쳤을 때 예시의 단계 이력이 어느 단계에도
+    붙지 않아 리드타임이 조용히 비어 버립니다 — 실제로 겪은 일입니다.
+    """
+    from . import build
+    return list(build.load_config()["stages"])
+
+
+STAGES = _stages()
 
 
 def _write(path, header, rows):

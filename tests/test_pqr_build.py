@@ -71,10 +71,25 @@ class TreeLayoutTest(unittest.TestCase):
         self.assertGreaterEqual(content["oos_count"], 1)
         self.assertTrue(content["oos_batches"][0]["batch_no"])
 
-    def test_trend_has_twelve_months_and_three_series(self):
-        self.assertEqual(len(self.data["trend"]["months"]), 12)
-        self.assertEqual([s["key"] for s in self.data["trend"]["series"]],
-                         ["일탈", "OOS/OOT", "불만"])
+    def test_trend_counts_low_cpk_products_by_dosage_form(self):
+        """경향 그래프는 Cpk 1 미만 제품을 제형별로 셉니다."""
+        trend = self.data["trend"]
+        self.assertEqual(len(trend["months"]), 12)
+        self.assertEqual(trend.get("label"), "Cpk 1 미만 제품")
+        forms = {product["form_group"] for product in self.data["products"]
+                 if product["cpk_low"]}
+        self.assertEqual({s["key"] for s in trend["series"]}, forms)
+        for series in trend["series"]:
+            self.assertEqual(len(series["data"]), 12)
+
+    def test_low_cpk_products_are_flagged(self):
+        """'Cpk 발생' 카드와 목록이 이 값을 씁니다."""
+        for product in self.data["products"]:
+            tests = self.data["quality"][product["code"]]["tests"]
+            expected = [t["test_name"] for t in tests
+                        if t["cpk"] is not None and t["cpk"] < 1.0]
+            self.assertEqual(product["cpk_low"], len(expected), product["code"])
+            self.assertEqual(product["cpk_low_tests"], expected, product["code"])
 
     def test_leadtime_uses_stage_log(self):
         collecting = next(row for row in self.data["leadtime"] if row["stage"] == "자료 수집")
