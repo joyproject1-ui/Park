@@ -348,20 +348,30 @@ def _qualification_summary(rows, today, config):
     return summary
 
 
-def _checks(context, config):
+def _checks(context, config, meta=None):
     """평가항목별 자료 상태를 config 의 item_rules 로 판정합니다.
 
     항목 목록이 회사 문서 번호(3 · 8.1.1 · 9.2.4 …)로 바뀔 수 있으므로 규칙을 코드에
     박지 않습니다. 자료가 아예 없으면 '미착수(n)', 있는데 미결 건이 남았으면 '진행 중(p)',
     다 확인됐으면 '완료(y)' 입니다. 건수 0 은 '해당 없음'으로 보아 완료로 칩니다.
+
+    fields 를 적은 항목은 그 값들이 제품 마스터에 실제로 채워졌는지를 봅니다.
+    '자료를 담을 파일이 있다' 와 '그 자료가 있다' 는 다릅니다 — 파일 존재만으로
+    완료 처리하면 올리지도 않은 항목이 초록으로 보입니다.
     """
     has = context["has"]
+    meta = meta or {}
     rules = config.get("item_rules") or {}
     states = []
     for number, _label, _hint in config["items"]:
         rule = rules.get(number) or {}
         datasets = rule.get("datasets") or []
-        # datasets 를 안 적은 항목(허가증 등)은 파일을 올렸는지만 봅니다.
+        fields = rule.get("fields") or []
+        if fields:
+            filled = sum(1 for name in fields if str(meta.get(name) or "").strip())
+            states.append("y" if filled == len(fields) else ("p" if filled else "n"))
+            continue
+        # datasets 를 안 적은 항목은 그 이름의 파일을 올렸는지만 봅니다.
         present = any(has.get(name) for name in datasets) if datasets else has.get(number, False)
         pending = any(context.get(counter) for counter in (rule.get("pending") or []))
         states.append("n" if not present else ("p" if pending else "y"))
@@ -580,7 +590,7 @@ def build(input_dir=None, files=None, today=None, config=None, period=None):
                                 and item["state"] in ("기한 초과", "갱신 임박")),
         }
 
-        checks = _checks(context, config)
+        checks = _checks(context, config, meta)
         reasons = _reasons(context, checks)
         collected = checks.count("y")
 
@@ -599,15 +609,19 @@ def build(input_dir=None, files=None, today=None, config=None, period=None):
         # 성적서 기준(시험결과가 규격을 벗어난 건)과 대장 기준(OOS/OOT 로 등록된 건)은
         # 같은 사건을 가리킬 수 있으므로 더하지 않고 따로 셉니다.
         oos_spec = sum(test["oos_count"] for test in tests)
+        owner = meta.get("owner") or (config.get("owners_by_form") or {}).get(
+            form_group(meta.get("form", ""), config, name), "")
         products.append({
             "code": code,
             "name": name,
             "form": meta.get("form", ""),
             "form_group": form_group(meta.get("form", ""), config, name),
             "group": meta.get("group", ""),
+            # 담당자는 마스터에 적힌 값이 먼저고, 없으면 제형별 담당표에서 가져옵니다.
+            "owner_source": "master" if meta.get("owner") else ("form" if owner else ""),
             "lots": meta.get("lots"),
             "site": meta.get("site", ""),
-            "owner": meta.get("owner", ""),
+            "owner": owner,
             "due": due,
             "stage": stage,
             "batches": len({row.get("batch_no") for row in batch_rows if row.get("batch_no")}),

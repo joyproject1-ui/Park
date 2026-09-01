@@ -400,6 +400,7 @@ td.wrap{white-space:normal;min-width:220px}
         <button data-site="주사3">주사 3공장</button>
       </div>
       <div class="seg" id="form-seg" role="group" aria-label="제형 필터" hidden></div>
+      <div class="seg" id="me-seg" role="group" aria-label="담당자 선택" hidden></div>
       <div class="search"><span aria-hidden="true">🔍</span><input id="q" type="search" placeholder="제품명 · 코드 · 담당자" aria-label="검색"></div>
       <span id="source-note" class="source-note"></span>
       <button class="icon-btn" id="reload-btn" hidden
@@ -879,7 +880,7 @@ function classifyForm(text){
 }
 const formOf = d => d.form_group || classifyForm(d.form || d.name);
 
-const state = { view:"dash", site:"all", form:"all", q:"", filter:"all" };
+const state = { view:"dash", site:"all", form:"all", me:"", q:"", filter:"all" };
 
 function visible(){
   return DATA.filter(d=>{
@@ -1017,7 +1018,9 @@ function renderDue(rows){
 /* ---- 제품별 현황 (여러 메뉴가 이 표를 공유) ---- */
 const MODES = {
   products: { title:"제품별 현황", crumb:"전체 PQR 대상 제품", pred:()=>true },
-  mine:     { title:"내 담당 PQR", crumb:"담당자 · 정하늘 (QA 1파트)", pred:d=>d.owner==="정하늘" },
+  mine:     { title:"내 담당 PQR",
+              crumb:()=>state.me ? `담당자 · ${state.me}` : "상단에서 담당자를 고르세요",
+              pred:d=>!state.me || d.owner===state.me },
   issues:   { title:"일탈 · OOS/OOT", crumb:"미결 이슈를 보유한 PQR", pred:d=>d.dev+d.oos>0, sort:(a,b)=>(b.dev+b.oos)-(a.dev+a.oos) },
   schedule: { title:"PQR 일정(전체)", crumb:"마감일 순 전체 일정", sort:(a,b)=>a.dueD-b.dueD, pred:()=>true },
   approval: { title:"검토 · 승인 현황", crumb:"부서 검토 · QA 검토 · 품질책임자 승인 단계", pred:d=>d.stage>=4 && !d.done }
@@ -1051,16 +1054,17 @@ function renderProducts(rows, mode){
   let list = rows.filter(m.pred).filter(FILTERS[state.filter]);
   if (m.sort) list = list.slice().sort(m.sort); else list = list.slice().sort((a,b)=>a.dueD-b.dueD);
   $("#p-count").textContent = list.length + "건";
-  $("#p-head").innerHTML = `<th>코드</th><th>제품명</th><th>제형</th><th>그룹</th><th>생산 Lot</th>`
+  $("#p-head").innerHTML = `<th>코드</th><th>제품명</th><th>제형</th><th>그룹</th><th>담당자</th><th>생산 Lot</th>`
     + (withIssues ? `<th>일탈</th><th>OOS/OOT</th><th>변경</th><th>불만</th>` : "")
     + `<th>자료 수집</th><th>단계</th><th>마감일</th>`;
-  const span = withIssues ? 12 : 8;
+  const span = withIssues ? 13 : 9;
   $("#p-body").innerHTML = list.map(d=>`
     <tr>
       <td>${codeCell(d)}</td>
       <td class="wrap">${esc(d.name)}</td>
       <td class="muted">${esc(d.form)}</td>
       <td class="muted">${esc(d.group || d.site || "—")}</td>
+      <td>${esc(d.owner || "—")}</td>
       ${lotCell(d)}
       ${withIssues ? metricCell(d, d.dev, "deviations")
                    + metricCell(d, d.oos, "deviations")
@@ -1537,7 +1541,7 @@ function go(view){
   if (cfg.mode){
     const m = MODES[cfg.mode];
     $("#view-title").textContent = m.title;
-    $("#view-crumb").textContent = m.crumb;
+    $("#view-crumb").textContent = typeof m.crumb === "function" ? m.crumb() : m.crumb;
   } else if (cfg.todo){
     const t = TODO[cfg.todo];
     $("#view-title").textContent = t[0];
@@ -1554,6 +1558,7 @@ function render(){
   const rows = visible();
   const cfg = VIEWMAP[state.view] || VIEWMAP.dash;
   document.querySelectorAll("#p-filters .chip").forEach(c=>c.setAttribute("aria-pressed", String(c.dataset.f===state.filter)));
+  renderOwnerPicker();
   if (cfg.sec==="v-dash"){ renderKpis(rows); renderStages(rows); renderDue(rows); }
   else if (cfg.sec==="v-products"){ renderProducts(rows, cfg.mode); }
   else if (cfg.sec==="v-items"){ renderMatrix(rows); }
@@ -1565,7 +1570,7 @@ function render(){
 }
 function updateBadges(){
   const open = OPEN;
-  $("#b-mine").textContent = open.filter(d=>d.owner==="정하늘").length;
+  $("#b-mine").textContent = open.filter(d=>!state.me || d.owner===state.me).length;
   $("#b-items").textContent = open.filter(d=>d.collected<ITEMS.length).length;
   $("#b-dev").textContent = open.filter(d=>d.dev+d.oos>0).length;
   $("#b-sched").textContent = DATA.length;
@@ -1588,6 +1593,20 @@ function renderChipFilter(seg, key, values, label){
     state[key] = b.dataset.v;
     seg.querySelectorAll("button").forEach(x=>x.setAttribute("aria-pressed", String(x===b)));
     render();
+  }));
+}
+
+function renderOwnerPicker(){
+  const seg = $("#me-seg");
+  const owners = [...new Set(DATA.map(d=>d.owner).filter(Boolean))].sort();
+  seg.hidden = state.view !== "mine" || owners.length < 2;
+  if (seg.hidden) return;
+  seg.innerHTML = [`<button data-v="" aria-pressed="${state.me===""}">전체</button>`]
+    .concat(owners.map(o=>`<button data-v="${esc(o)}" aria-pressed="${state.me===o}">${esc(o)}</button>`)).join("");
+  seg.querySelectorAll("button").forEach(b=>b.addEventListener("click",()=>{
+    state.me = b.dataset.v;
+    $("#view-crumb").textContent = state.me ? `담당자 · ${state.me}` : "상단에서 담당자를 고르세요";
+    renderOwnerPicker(); render();
   }));
 }
 

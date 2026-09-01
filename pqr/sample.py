@@ -59,13 +59,20 @@ def write_samples(out_dir, layout="tree"):
     # 1. 제품 마스터 (공통)
     rows = []
     for index, (code, name, form, site, owner) in enumerate(PRODUCTS):
+        # 보고서 3항(대상 제품)이 요구하는 값들도 마스터가 들고 있어야 합니다.
         rows.append([code, name, form, site, owner, PERIOD_FROM.isoformat(),
                      PERIOD_TO.isoformat(),
                      (PERIOD_TO + _dt.timedelta(days=60 + index * 12)).isoformat(),
-                     STAGES[index % len(STAGES)]])
+                     STAGES[index % len(STAGES)],
+                     "전문의약품" if index % 3 else "일반의약품",
+                     "제 %d 호" % (4000 + index * 7),
+                     (PERIOD_FROM - _dt.timedelta(days=900 + index * 31)).isoformat(),
+                     "제조일로부터 %d개월" % (24 + (index % 3) * 12),
+                     "기밀용기, 실온(1~30℃)보관"])
     common["products_제품마스터"] = (
         ["제품코드", "제품명", "제형", "공장", "담당자",
-         "평가시작일", "평가종료일", "마감일", "단계"], rows)
+         "평가시작일", "평가종료일", "마감일", "단계",
+         "제품분류", "허가번호", "허가일자", "사용기한", "보관조건"], rows)
 
     # 2. 배치 시험성적서 · 공정관리
     batch_rows = {}

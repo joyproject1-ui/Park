@@ -18,7 +18,8 @@ DATASETS = {
     "products": {
         "label": "제품 마스터",
         "fields": ["product_code", "product_name", "form", "site", "owner",
-                   "period_from", "period_to", "due", "stage", "group", "lots"],
+                   "period_from", "period_to", "due", "stage", "group", "lots",
+                   "product_class", "license_no", "license_date", "shelf_life", "storage"],
         "required": ["product_code"],
     },
     "batches": {
@@ -71,6 +72,12 @@ _BUILTIN_ALIASES = {
     # 연간 계획서가 정해 주는 값 — 평가 그룹과 그 해 생산 Lot 수
     "group": ["그룹", "평가그룹", "pqr그룹", "group"],
     "lots": ["생산수량", "생산lot", "lot수", "생산수량lot", "lots"],
+    # 보고서 3항(대상 제품)이 요구하는 값 — 허가증에서 옮겨 적습니다.
+    "product_class": ["제품분류", "분류", "productclass"],
+    "license_no": ["허가번호", "품목허가번호", "licenseno"],
+    "license_date": ["허가일자", "허가일", "licensedate"],
+    "shelf_life": ["사용기한", "유효기간", "shelflife"],
+    "storage": ["보관조건", "저장방법", "storage"],
     "site": ["공장", "제조소", "사이트", "라인", "site", "plant", "line"],
     "owner": ["담당자", "담당", "작성자", "owner", "assignee"],
     "period_from": ["평가시작일", "평가기간시작", "기간시작", "periodfrom", "from"],
@@ -120,6 +127,30 @@ def load_aliases():
         lookup[_key(field)] = field
         for name in names:
             lookup[_key(name)] = field
+    return lookup
+
+
+def alias_lookup(dataset):
+    """그 자료 종류에 있는 필드만으로 별칭을 풉니다.
+
+    같은 낱말을 두 필드가 쓰기도 합니다 — '보관조건' 은 제품 마스터에서는 storage,
+    안정성 자료에서는 condition 입니다. 전체 별칭표 하나로 풀면 나중에 등록된 쪽이
+    이겨서, 다른 자료에서는 그 열이 통째로 버려집니다.
+    """
+    fields = set(DATASETS[dataset]["fields"])
+    aliases = {field: list(names) for field, names in _BUILTIN_ALIASES.items()}
+    path = os.path.join(_HERE, "data", "aliases.json")
+    if os.path.exists(path):
+        with open(path, encoding="utf-8") as handle:
+            for field, names in json.load(handle).items():
+                aliases.setdefault(field, []).extend(names)
+    lookup = {}
+    for field, names in aliases.items():
+        if field not in fields:
+            continue
+        lookup[_key(field)] = field
+        for name in names:
+            lookup.setdefault(_key(name), field)
     return lookup
 
 
@@ -180,7 +211,7 @@ def normalize(rows, dataset, source="", default_product_code=None):
     반환값: (정규화된 행 목록, 문제 목록)
     """
     spec = DATASETS[dataset]
-    lookup = load_aliases()
+    lookup = alias_lookup(dataset)
     known = set(spec["fields"])
     issues = []
     mapped_columns = {}
