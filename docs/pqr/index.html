@@ -226,6 +226,8 @@ td.wrap{white-space:normal;min-width:220px}
 .contact-status{font-size:12px;color:var(--ok)}
 .report-btn{margin-top:5px;color:var(--ok);border-color:var(--ok)}
 .report-btn[disabled]{opacity:.55;cursor:default}
+.bulk-btn{margin-top:5px}
+.bulk-btn[disabled]{opacity:.55;cursor:default}
 .final-btn{margin-top:5px;color:var(--accent);border-color:var(--accent);font-weight:700}
 .final-btn[disabled]{opacity:.55;cursor:default}
 
@@ -727,6 +729,7 @@ td.wrap{white-space:normal;min-width:220px}
     <div class="drop" id="up-drop" tabindex="0" role="button"
          aria-label="파일 선택 — 끌어다 놓거나 눌러서 고르세요">
       <input type="file" id="up-file" accept=".csv,.tsv,.txt,.xlsx,.xlsm" hidden>
+      <input type="file" id="bulk-file" multiple hidden>
       <b>파일을 끌어다 놓거나 눌러서 고르세요</b>
       <small>pdf · xlsx · xls · csv · 문서 파일 (최대 64 MB)</small>
       <span class="picked" id="up-filename"></span>
@@ -1143,15 +1146,47 @@ async function openFolder(code){
 /* 자료 수집 100% 가 되면 이 버튼이 생깁니다. 누르면 그 제품의 보고서 초안을 만듭니다.
    제출용 완성본 문서(이름에 '완성본'/'제출')가 제품 폴더에 올라오면 옆에 완성본 단추가 붙습니다. */
 function reportButton(d){
-  if (d.pct < 100) return "";
   const off = uploadEnabled() ? "" : `disabled title="python -m pqr serve 로 실행한 경우에만 동작합니다"`;
-  // 이미 만든 제품은 '다시 작성' 으로 보여 줍니다 — 새로고침해도 상태가 남습니다.
-  const label = d.final_report ? "다시 작성" : "보고서 작성";
-  let html = `<button class="mini report-btn" data-report="${d.code}" ${off}>${label}</button>`;
-  if (d.final_report)
-    html += ` <button class="mini final-btn" data-final="${d.code}"
-      ${off || `title="${esc(d.final_report)} 열기"`}>완성본 📄</button>`;
+  // 버튼은 두 개: 자료를 한꺼번에 올리는 버튼과 보고서 버튼.
+  // 보고서가 만들어지면 '보고서 작성' 이 '보고서 완료' 로 바뀌고, 누르면 완성본이 열립니다.
+  let html = `<button class="mini bulk-btn" data-bulk="${d.code}" ${off}>파일 한번에 올리기</button> `;
+  if (d.final_report){
+    html += `<button class="mini final-btn" data-final="${d.code}"
+      ${off || `title="${esc(d.final_report)} 열기"`}>보고서 완료 📄</button>`;
+  } else {
+    const ready = d.pct >= 100;
+    const gate = ready ? off
+      : `disabled title="자료 수집이 100% 가 되면 작성할 수 있습니다"`;
+    html += `<button class="mini report-btn" data-report="${d.code}" ${gate}>보고서 작성</button>`;
+  }
   return html;
+}
+/* 파일 한번에 올리기 — 골라 준 파일들을 원본 이름 그대로 제품 폴더에 저장합니다.
+   이름이 항 번호(7., 8.1.1 …)로 시작하면 해당 평가항목으로 자동 인식됩니다. */
+let bulkCode = null;
+async function bulkUpload(files){
+  if (!bulkCode || !files.length) return;
+  const code = bulkCode; bulkCode = null;
+  showToast(`⏳ ${files.length}개 파일을 올리는 중…`);
+  const failures = [];
+  let last = null;
+  for (let i = 0; i < files.length; i++){
+    const form = new FormData();
+    form.append("product", code);
+    form.append("bulk", "1");
+    form.append("last", i === files.length - 1 ? "1" : "0"); // 마지막에만 다시 집계
+    form.append("file", files[i], files[i].name);
+    try {
+      const response = await fetch("api/upload", { method:"POST", body: form });
+      const payload = await response.json();
+      if (!response.ok || !payload.ok) throw new Error(payload.error || "업로드 실패");
+      last = payload;
+    } catch (error) { failures.push(`${files[i].name} — ${error.message}`); }
+  }
+  if (last && last.data){ adopt(last.data); render(); }
+  const ok = files.length - failures.length;
+  showToast(`📥 ${ok}개 파일을 올렸습니다.`
+    + (failures.length ? `<br>실패 ${failures.length}건:<br>${failures.map(esc).join("<br>")}` : ""));
 }
 /* 완성본 단추 — 제품 폴더의 제출용 보고서 파일을 바로 엽니다. */
 async function openFinal(code){
@@ -1659,6 +1694,13 @@ document.addEventListener("click", e=>{
   }
   const folder = e.target.closest(".name-btn");
   if (folder){ openFolder(folder.dataset.folder); return; }
+  const bulk = e.target.closest(".bulk-btn");
+  if (bulk && !bulk.disabled){
+    bulkCode = bulk.dataset.bulk;
+    const picker = $("#bulk-file");
+    picker.value = ""; picker.click();
+    return;
+  }
   const report = e.target.closest(".report-btn");
   if (report && !report.disabled){ makeReport(report.dataset.report, report); return; }
   const final = e.target.closest(".final-btn");
@@ -1695,6 +1737,7 @@ $("#up-cancel").addEventListener("click", closeUpload);
 $("#up-submit").addEventListener("click", submitUpload);
 $("#up-dataset").addEventListener("change", updatePathHint);
 $("#up-file").addEventListener("change", e=>pickFile(e.target.files[0]));
+$("#bulk-file").addEventListener("change", e=>bulkUpload(Array.from(e.target.files)));
 $("#up-drop").addEventListener("click", ()=>$("#up-file").click());
 $("#up-drop").addEventListener("keydown", e=>{
   if (e.key === "Enter" || e.key === " "){ e.preventDefault(); $("#up-file").click(); }

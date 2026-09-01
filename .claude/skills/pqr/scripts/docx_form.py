@@ -139,6 +139,9 @@ def set_comment(table, *lines):
         target.runs[0].text = line
         for run in target.runs[1:]:
             run.text = ''
+        # 라벨은 굵게, 내용 줄은 기본 굵기로 씁니다.
+        for run in target.runs:
+            run.font.bold = False
 
 
 def clone_table(table, heading=True):
@@ -244,10 +247,13 @@ def close_out(table, row, col):
     if borders is None:
         borders = pr.makeelement(qn('w:tcBorders'), {})
         _insert_ordered(pr, borders, _TCPR_ORDER)
-    existing = borders.find(qn('w:tl2br'))
-    if existing is not None:
-        borders.remove(existing)
-    line = borders.makeelement(qn('w:tl2br'), {})
+    # 회사 문서의 마감 사선은 "/" 방향(tr2bl) 하나입니다. 반대 방향이 남아 있으면
+    # 겹쳐서 X 로 보이므로 양쪽을 지우고 다시 긋습니다.
+    for tag in ('w:tl2br', 'w:tr2bl'):
+        existing = borders.find(qn(tag))
+        if existing is not None:
+            borders.remove(existing)
+    line = borders.makeelement(qn('w:tr2bl'), {})
     line.set(qn('w:val'), 'single')
     line.set(qn('w:sz'), '4')
     line.set(qn('w:color'), '000000')

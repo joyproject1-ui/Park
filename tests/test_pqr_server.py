@@ -315,3 +315,46 @@ class ItemUploadTest(ServerTest):
         result = self.upload_item("HP-110", "9.9", "무엇.pdf")
         self.assertFalse(result.get("ok"))
         self.assertIn("평가항목", result["error"])
+
+
+class BulkUploadTest(ItemUploadTest):
+    """'파일 한번에 올리기' — 원본 이름 그대로 제품 폴더에 저장하고 항은 이름으로 인식."""
+
+    def upload_bulk(self, product, filename, last="1", payload=b"x" * 40):
+        import uuid
+        boundary = uuid.uuid4().hex
+        parts = []
+        for name, value in (("product", product), ("bulk", "1"), ("last", last)):
+            parts.append(("--%s\r\nContent-Disposition: form-data; name=\"%s\"\r\n\r\n%s\r\n"
+                          % (boundary, name, value)).encode())
+        parts.append(("--%s\r\nContent-Disposition: form-data; name=\"file\"; "
+                      "filename=\"%s\"\r\n\r\n" % (boundary, filename)).encode())
+        parts.append(payload + b"\r\n" + ("--%s--\r\n" % boundary).encode())
+        request = urllib.request.Request(
+            self.base + "/api/upload", data=b"".join(parts),
+            headers={"Content-Type": "multipart/form-data; boundary=" + boundary})
+        try:
+            with urllib.request.urlopen(request, timeout=30) as response:
+                return json.loads(response.read().decode("utf-8"))
+        except urllib.error.HTTPError as error:
+            return json.loads(error.read().decode("utf-8"))
+
+    def test_keeps_original_name_and_detects_item(self):
+        name = "7. 수율현황표 - 개인.xlsx"
+        result = self.upload_bulk("HP-110", name)
+        self.assertTrue(result["ok"], result.get("error"))
+        self.assertEqual(os.path.basename(result["saved"]), name)
+        self.assertEqual(result["item"], "7")
+        product = next(p for p in result["data"]["products"] if p["code"] == "HP-110")
+        ids = [item[0] for item in result["data"]["items"]]
+        self.assertEqual(dict(zip(ids, product["checks"]))["7"], "y")
+
+    def test_unrecognized_name_is_still_saved(self):
+        result = self.upload_bulk("HP-110", "메모.pdf")
+        self.assertTrue(result["ok"], result.get("error"))
+        self.assertEqual(result["item"], "")
+
+    def test_executable_refused_in_bulk_too(self):
+        result = self.upload_bulk("HP-110", "악성.exe")
+        self.assertFalse(result.get("ok"))
+        self.assertIn("형식", result["error"])

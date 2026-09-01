@@ -267,6 +267,31 @@ class Workspace(object):
                 "folder": os.path.abspath(folder),
                 "name": os.path.basename(target)}
 
+    def save_bulk_file(self, code, filename, payload, rebuild=True):
+        """'파일 한번에 올리기' — 원본 이름 그대로 제품 폴더에 저장합니다.
+
+        회사 원본은 이름이 항 번호로 시작하므로 저장만 하면 항 인식은 rebuild 가
+        합니다. 여러 파일을 연달아 받을 때는 마지막에 한 번만 rebuild 합니다.
+        """
+        if len(payload) > MAX_UPLOAD:
+            raise UploadError("파일이 너무 큽니다 (최대 %d MB)." % (MAX_UPLOAD // 1024 // 1024))
+        if not payload:
+            raise UploadError("빈 파일입니다: %s" % filename)
+        folder = self.product_folder(code)
+        base = safe_filename(filename, ALLOWED_ITEM_SUFFIXES)
+        if not base:
+            raise UploadError("허용되지 않는 파일 형식입니다: %s" % filename)
+        target = os.path.join(folder, base)
+        with self.lock:
+            with open(target, "wb") as handle:
+                handle.write(payload)
+        if rebuild:
+            self.rebuild()
+        matcher = build_module.item_matcher(self.data["items"])
+        return {"saved": os.path.relpath(target, self.input_dir),
+                "folder": os.path.abspath(folder),
+                "name": base, "item": matcher(base) or ""}
+
     def save_upload(self, dataset, code, filename, payload, replace=True):
         """검증한 뒤에만 제품(또는 공통) 폴더에 저장하고 다시 집계합니다.
 
@@ -558,6 +583,14 @@ class Handler(BaseHTTPRequestHandler):
         upload = fields.get("file")
         if not isinstance(upload, tuple):
             raise UploadError("파일을 선택하세요.")
+        if (fields.get("bulk") or "").strip():
+            result = self.workspace.save_bulk_file(
+                code=fields.get("product") or "",
+                filename=upload[0], payload=upload[1],
+                rebuild=fields.get("last", "1") != "0")
+            result["ok"] = True
+            result["data"] = self.workspace.dashboard_payload()
+            return result
         item_id = (fields.get("item") or "").strip()
         if item_id:
             result = self.workspace.save_item_file(
