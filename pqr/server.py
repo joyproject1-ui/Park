@@ -442,7 +442,10 @@ class Handler(BaseHTTPRequestHandler):
                     % (product.get("pct", 0), ", ".join(missing) or "-")}
         out_dir = os.path.join(self.workspace.out_dir, "reports")
         written = report_module.write_reports(self.workspace.data, out_dir, codes=[code])
-        return {"ok": True, "files": [os.path.abspath(p) for p in written]}
+        # '어디 있지?' 를 없앱니다 — 만든 보고서 폴더를 바로 열어 줍니다.
+        opened = open_in_file_manager(out_dir)
+        return {"ok": True, "files": [os.path.abspath(p) for p in written],
+                "out_dir": os.path.abspath(out_dir), "opened": opened}
 
     def _handle_upload(self):
         length = int(self.headers.get("Content-Length") or 0)

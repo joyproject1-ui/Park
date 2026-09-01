@@ -1029,7 +1029,8 @@ async function makeReport(code, button){
       headers:{ "Content-Type":"application/json" }, body: JSON.stringify({ product: code }) });
     const payload = await response.json();
     if (!payload.ok) throw new Error(payload.error || "보고서를 만들지 못했습니다");
-    showToast("보고서 초안 생성:<br>" + payload.files.map(esc).join("<br>"));
+    showToast("보고서 초안 생성 — 폴더가 열립니다:<br>" + payload.files.map(esc).join("<br>")
+      + (payload.opened ? "" : "<br>(자동으로 열리지 않으면 위 경로를 파일 탐색기에 붙여넣으세요)"));
     button.textContent = "작성됨 ✓";
   } catch (error) {
     showToast(esc(error.message)); button.textContent = original; button.disabled = false;
