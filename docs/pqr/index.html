@@ -1961,8 +1961,18 @@ function renderSourceNote(){
     $("#reload-btn").hidden = !uploadEnabled();
     const files = Object.values(SOURCE.sources || {}).reduce((sum, list)=>sum + list.length, 0);
     foot.innerHTML = `제출 파일 ${files}건으로 ${esc((SOURCE.generated_at || "").replace("T", " "))} 에 생성한 데이터입니다. `
-      + `서술 문안이 포함된 보고서는 생성형 AI가 작성한 <b>초안</b>이며, 발행 전 담당자 검토와 승인이 필요합니다.`;
+      + `서술 문안이 포함된 보고서는 생성형 AI가 작성한 <b>초안</b>이며, 발행 전 담당자 검토와 승인이 필요합니다.`
+      + versionNote();
   }
+}
+
+/* '고쳤다는데 화면이 그대로' 인 일이 반복됩니다 — PC 의 프로그램 파일이 예전 것이기
+   때문입니다. 지금 돌고 있는 프로그램이 언제 것인지 화면에 적어 둡니다. */
+function versionNote(){
+  const version = SOURCE.program_version;
+  if (!version) return "";
+  return `<br><span class="muted">프로그램 버전: ${esc(version)}`
+    + ` · 화면이 바뀌지 않으면 <code>PQR-업데이트.bat</code> 을 실행하세요.</span>`;
 }
 
 function boot(source){

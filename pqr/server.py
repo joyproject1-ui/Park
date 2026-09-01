@@ -80,6 +80,29 @@ def parse_multipart(content_type, body):
     return fields
 
 
+def program_version():
+    """지금 돌고 있는 프로그램 파일이 언제 것인지 알려 줍니다.
+
+    '고쳤다는데 화면이 그대로' 인 일이 반복됩니다 — 저장소만 바뀌고 PC 의 파일은
+    예전 것이기 때문입니다. 화면에 날짜가 보이면 그 자리에서 확인할 수 있습니다.
+    GitHub 이 만든 ZIP 은 파일 시각을 커밋 시각으로 남기므로 그 값을 씁니다.
+    """
+    import datetime
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    newest = 0
+    for base, dirs, files in os.walk(os.path.join(root, "pqr")):
+        dirs[:] = [name for name in dirs if name != "__pycache__"]
+        for name in files:
+            if name.endswith((".py", ".json")):
+                newest = max(newest, os.path.getmtime(os.path.join(base, name)))
+    page = os.path.join(root, "docs", "pqr", "index.html")
+    if os.path.isfile(page):
+        newest = max(newest, os.path.getmtime(page))
+    if not newest:
+        return ""
+    return datetime.datetime.fromtimestamp(newest).strftime("%Y-%m-%d %H:%M")
+
+
 def open_in_file_manager(path):
     """폴더를 운영체제 파일 관리자로 엽니다 (안 되면 조용히 False).
 
@@ -126,6 +149,7 @@ class Workspace(object):
                    ("generated_at", "today", "period", "stages", "items", "products",
                     "trend", "leadtime", "sources", "narrative")}
         payload["issue_count"] = len([i for i in data.get("issues", []) if i["level"] == "error"])
+        payload["program_version"] = program_version()
         payload["upload"] = {
             "enabled": True,
             "input_dir": self.input_dir,
