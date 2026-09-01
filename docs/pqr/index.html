@@ -197,6 +197,19 @@ td.wrap{white-space:normal;min-width:220px}
 .code-btn:hover{text-decoration:underline}
 .name-btn{border:0;background:none;padding:0;color:var(--ink);font:inherit;cursor:pointer;text-align:left}
 .name-btn:hover{color:var(--accent);text-decoration:underline}
+.contact-body{display:flex;flex-direction:column;gap:14px}
+.contact-lead{margin:0;font-size:13.5px;color:var(--ink-2);line-height:1.7}
+.contact-grid{display:grid;gap:12px;grid-template-columns:repeat(auto-fit,minmax(280px,1fr))}
+.contact-box{border:1px solid var(--line);border-radius:10px;padding:13px 15px;background:var(--surface-2)}
+.contact-box h3{margin:0 0 7px;font-size:13.5px;font-weight:700;color:var(--ink)}
+.contact-box p{margin:0 0 6px;font-size:12.5px;color:var(--ink-2);line-height:1.75}
+.contact-box ul{margin:0;padding-left:16px;font-size:12.5px;color:var(--ink-2);line-height:1.8}
+.contact-box li{margin-bottom:5px}
+.contact-box code{background:var(--surface-3);border-radius:4px;padding:1px 5px;font-size:11.5px}
+.contact-eg{color:var(--ink-3)!important;font-style:italic}
+.contact-link{color:var(--accent);font-weight:600;font-size:12.5px;word-break:break-all}
+.contact-note{margin:0;padding:11px 14px;border-radius:9px;font-size:12.5px;line-height:1.7;
+  background:var(--warn-soft);border:1px solid var(--warn-line);color:var(--warn)}
 .report-btn{margin-top:5px;color:var(--ok);border-color:var(--ok)}
 .report-btn[disabled]{opacity:.55;cursor:default}
 .final-btn{margin-top:5px;color:var(--accent);border-color:var(--accent);font-weight:700}
@@ -355,7 +368,7 @@ td.wrap{white-space:normal;min-width:220px}
     <div class="brand">
       <div class="brand-mark">
         <span class="brand-dot" aria-hidden="true"></span>
-        <span class="brand-name">QUALITY OPS</span>
+        <span class="brand-name">Hanlim Pharm.</span>
       </div>
       <div class="brand-sub">제품품질평가(PQR) 관리</div>
       <div class="brand-en">Product Quality Review</div>
@@ -365,14 +378,12 @@ td.wrap{white-space:normal;min-width:220px}
       <div class="nav-label"><span>내 업무</span></div>
       <button class="nav-item" data-view="dash" aria-current="page"><span class="nav-ico">📋</span>대시보드 — 오늘 할 일</button>
       <button class="nav-item" data-view="mine"><span class="nav-ico">📁</span>내 담당 PQR<span class="badge" id="b-mine">0</span></button>
-      <button class="nav-item" data-view="flow"><span class="nav-ico">🎯</span>QA 파트별 워크플로우</button>
     </nav>
 
     <nav class="nav-group" aria-label="현황">
       <div class="nav-label"><span>현황</span><span class="nav-count" id="b-status">0</span></div>
       <button class="nav-item" data-view="products"><span class="nav-ico">🏭</span>제품별 현황</button>
       <button class="nav-item" data-view="items"><span class="nav-ico">🗂️</span>평가항목 자료 수집<span class="badge" id="b-items">0</span></button>
-      <button class="nav-item" data-view="issues"><span class="nav-ico">⚠️</span>일탈 · OOS/OOT<span class="badge hot" id="b-dev">0</span></button>
       <button class="nav-item" data-view="schedule"><span class="nav-ico">🗓️</span>PQR 일정(전체)<span class="badge" id="b-sched">0</span></button>
       <button class="nav-item" data-view="approval"><span class="nav-ico">🖊️</span>검토 · 승인 현황</button>
     </nav>
@@ -387,8 +398,12 @@ td.wrap{white-space:normal;min-width:220px}
     <nav class="nav-group" aria-label="자료 · 도구">
       <div class="nav-label"><span>자료 · 도구</span></div>
       <button class="nav-item" data-view="upload"><span class="nav-ico">📤</span>자료 업로드</button>
-      <button class="nav-item" data-view="criteria"><span class="nav-ico">📏</span>평가 기준 · 규격</button>
       <button class="nav-item" data-view="report"><span class="nav-ico">📄</span>보고서 생성</button>
+    </nav>
+
+    <nav class="nav-group" aria-label="기타">
+      <div class="nav-label"><span>기타</span></div>
+      <button class="nav-item" data-view="contact"><span class="nav-ico">✉️</span>제작자 문의</button>
     </nav>
   </aside>
 
@@ -434,7 +449,7 @@ td.wrap{white-space:normal;min-width:220px}
           <div class="card-head">
             <h2>단계별 PQR 분포</h2>
             <span class="pill" id="stage-total">0건</span>
-            <button class="link" data-view="flow">워크플로우 트래킹으로 →</button>
+            <button class="link" data-view="schedule">PQR 일정으로 →</button>
           </div>
           <div class="card-body">
             <div class="stagechart" id="stagechart"></div>
@@ -579,6 +594,57 @@ td.wrap{white-space:normal;min-width:220px}
           <div class="card-body" style="display:flex;flex-direction:column;gap:10px">
             <p style="margin:0;color:var(--ink-2);font-size:13px" id="todo-desc"></p>
             <ul style="margin:0;padding-left:18px;color:var(--ink-2);font-size:13px;line-height:1.9" id="todo-list"></ul>
+          </div>
+        </div>
+      </section>
+
+      <!-- ============ 제작자 문의 ============ -->
+      <section class="view" id="v-contact" hidden>
+        <div class="card">
+          <div class="card-head"><h2>제작자 문의</h2><span class="pill">고치고 싶은 것을 말씀하세요</span></div>
+          <div class="card-body contact-body">
+            <p class="contact-lead">이 프로그램은 한림제약 QA 담당자의 PQR 업무에 맞춰 만들었습니다.
+              화면·계산·서식 어느 것이든 바꿀 수 있습니다.</p>
+
+            <div class="contact-grid">
+              <div class="contact-box">
+                <h3>고치고 싶을 때</h3>
+                <p>Claude 대화창에 바꾸고 싶은 내용을 그대로 적어 주세요.
+                  화면을 캡처해 함께 올리면 더 정확합니다.</p>
+                <p class="contact-eg">예) "제품별 현황에 생산 Lot 수를 빼줘",
+                  "보고서에 시험자 이름도 넣어줘"</p>
+              </div>
+              <div class="contact-box">
+                <h3>고친 내용을 내 PC에 반영하려면</h3>
+                <p>아래 주소에서 ZIP 을 다시 받아 프로그램 폴더를 바꿔 넣으세요.
+                  그 뒤 <code>PQR-대시보드-실행.bat</code> 을 다시 실행합니다.</p>
+                <p><a class="contact-link"
+                      href="https://github.com/joyproject1-ui/Park/archive/refs/heads/claude/pqr-dashboard-uo3dno.zip">
+                  최신 버전 ZIP 내려받기</a></p>
+              </div>
+              <div class="contact-box">
+                <h3>자주 막히는 것</h3>
+                <ul>
+                  <li><b>화면이 안 열립니다</b> — 검은 명령창을 닫으면 화면도 닫힙니다.
+                    <code>PQR-대시보드-실행.bat</code> 을 다시 실행하고 창은 켜 두세요.</li>
+                  <li><b>녹색불이 안 들어옵니다</b> — 자료 파일 이름이 보고서 항 번호로 시작해야 합니다
+                    (예: <code>9.2.1 조제 완료 후.pdf</code>). 파일은 제품 코드 폴더 <b>안</b>에 넣습니다.</li>
+                  <li><b>이력이 없는 항목</b> — 그 칸을 눌러 '이력 없음으로 마감'을 쓰면
+                    확인 기록을 남기고 녹색으로 바뀝니다.</li>
+                </ul>
+              </div>
+              <div class="contact-box">
+                <h3>이 프로그램에 대해</h3>
+                <ul>
+                  <li>제품품질평가(PQR) 자료 수집 현황과 보고서 초안 작성 도구</li>
+                  <li>자료는 <b>내 PC 안에서만</b> 처리합니다 — 밖으로 보내지 않습니다</li>
+                  <li>Claude Code 로 제작 · 유지보수</li>
+                </ul>
+              </div>
+            </div>
+
+            <p class="contact-note">보고서 초안과 집계 결과는 <b>사람이 검토하고 승인해야</b> 합니다.
+              프로그램이 만든 문서를 그대로 결재에 올리지 마세요.</p>
           </div>
         </div>
       </section>
@@ -1608,14 +1674,10 @@ $("#up-export").addEventListener("click", async ()=>{
 
 /* ---- 준비 중 화면 ---- */
 const TODO = {
-  flow:["QA 파트별 워크플로우","파트·담당자별로 진행 중인 PQR을 칸반으로 배치해 병목 단계를 바로 확인합니다.",
-    ["파트(QA 1~3파트) × 단계 칸반 보드","담당자별 진행 건수와 평균 체류일","단계 이동 시 결재선 자동 지정"]],
   capa:["CAPA 유효성 검토","전년도 PQR에서 도출된 개선조치가 실제로 효과가 있었는지 추적합니다.",
     ["CAPA 항목별 이행 상태와 종결일","조치 전후 일탈·OOS 발생률 비교","유효성 미확인 항목 자동 재기표"]],
   upload:["자료 업로드","LIMS · MES · ERP 추출 파일을 올려 평가항목에 자동 매핑합니다.",
     ["배치 시험성적서 · 공정관리 데이터 (CSV · XLSX)","일탈/변경/불만 대장 일괄 업로드","업로드 이력과 원본 파일 보관"]],
-  criteria:["평가 기준 · 규격","경향 판정에 사용할 규격과 관리 기준을 제품별로 관리합니다.",
-    ["제품별 시험항목 규격 · 관리한계 (Cp/Cpk 기준)","경향 이탈(OOT) 판정 규칙","단계별 내부 리드타임 기준일"]],
   report:["보고서 생성","확정된 데이터로 PQR 보고서 초안을 서식에 맞춰 만듭니다.",
     ["표준 서식 기반 초안 자동 작성 (DOCX · PDF)","전자결재 연동 및 승인 이력 기록","발행본 보관 및 차년도 이관"]]
 };
@@ -1640,8 +1702,8 @@ const VIEWMAP = {
   trend:{ sec:"v-trend", title:"품질 이슈 경향", crumb:"최근 12개월 일탈 · OOS/OOT · 불만 발생 추이" },
   lead:{ sec:"v-lead", title:"지연 현황 · 리드타임", crumb:"단계별 소요일과 지연 사유" },
   upload:{ sec:"v-upload", title:"자료 업로드", crumb:"제품 폴더에 자료를 올리고 즉시 다시 집계합니다" },
-  flow:{ sec:"v-todo", todo:"flow" }, capa:{ sec:"v-todo", todo:"capa" },
-  criteria:{ sec:"v-todo", todo:"criteria" },
+  contact:{ sec:"v-contact", title:"제작자 문의", crumb:"고치고 싶은 것 · 사용 중 막히는 것" },
+  capa:{ sec:"v-todo", todo:"capa" },
   report:{ sec:"v-todo", todo:"report" }
 };
 function go(view){
@@ -1683,13 +1745,21 @@ function render(){
 }
 function updateBadges(){
   const open = OPEN;
-  $("#b-mine").textContent = open.filter(d=>!state.me || d.owner===state.me).length;
-  $("#b-items").textContent = open.filter(d=>d.collected<ITEMS.length).length;
-  $("#b-dev").textContent = open.filter(d=>d.dev+d.oos>0).length;
-  $("#b-sched").textContent = DATA.length;
-  $("#b-late").textContent = open.filter(d=>d.late).length;
-  $("#b-status").textContent = open.filter(d=>d.dev+d.oos+d.cmp>0).length;
-  $("#b-analysis").textContent = open.filter(d=>d.late).length;
+  // 메뉴는 늘어나고 줄어듭니다. 없는 배지에 값을 넣으려다 화면 전체가 멈추지 않도록
+  // 있는 것만 채웁니다.
+  const counts = {
+    "b-mine": open.filter(d=>!state.me || d.owner===state.me).length,
+    "b-items": open.filter(d=>d.collected<ITEMS.length).length,
+    "b-dev": open.filter(d=>d.dev+d.oos>0).length,
+    "b-sched": DATA.length,
+    "b-late": open.filter(d=>d.late).length,
+    "b-status": open.filter(d=>d.dev+d.oos+d.cmp>0).length,
+    "b-analysis": open.filter(d=>d.late).length,
+  };
+  for (const [id, value] of Object.entries(counts)){
+    const node = document.getElementById(id);
+    if (node) node.textContent = value;
+  }
 }
 
 /* ---- 이벤트 ---- */
