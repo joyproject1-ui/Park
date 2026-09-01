@@ -90,6 +90,8 @@ button{font:inherit;color:inherit}
   padding:8px 10px;margin:1px 0;border:0;border-radius:8px;background:none;
   color:var(--ink-2);font-size:13px;cursor:pointer;
 }
+/* display:flex 같은 규칙이 hidden 속성을 이기지 못하게 — 숨긴 메뉴는 반드시 숨깁니다. */
+[hidden]{display:none !important}
 .nav-item:hover{background:var(--surface-3);color:var(--ink)}
 .nav-item[aria-current="page"]{background:var(--accent-soft);color:var(--accent);font-weight:600}
 .nav-ico{width:18px;text-align:center;font-size:13px;flex:none;opacity:.9}
