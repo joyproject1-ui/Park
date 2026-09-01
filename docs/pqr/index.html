@@ -409,7 +409,11 @@ td.wrap{white-space:normal;min-width:220px}
       <button class="nav-item" data-view="capa"><span class="nav-ico">🔁</span>Cpk 1 미만 검토보고서<span class="badge hot" id="b-cpk">0</span></button>
     </nav>
 
-    <nav class="nav-group" aria-label="자료 · 도구">
+    <!-- 자료 · 도구 — 당분간 숨깁니다.
+         자료는 '평가항목 자료 수집' 에서 칸을 눌러 올리고, 보고서는 제품 줄의
+         '보고서 작성' 단추로 만듭니다. 이 묶음은 같은 일을 한 번 더 하는 자리라
+         쓰이지 않았습니다. 다시 보이게 하려면 hidden 만 지우면 됩니다. -->
+    <nav class="nav-group" aria-label="자료 · 도구" hidden>
       <div class="nav-label"><span>자료 · 도구</span></div>
       <button class="nav-item" data-view="upload"><span class="nav-ico">📤</span>자료 업로드</button>
       <button class="nav-item" data-view="report"><span class="nav-ico">📄</span>보고서 생성</button>
@@ -886,9 +890,9 @@ function adopt(source){
   DATA = source.products.map(p=>{
     const dueD = p.due ? parse(p.due) : null;
     const dday = dueD ? Math.round((dueD - TODAY)/DAY) : null;
-    // 2단계 모델(자료 수집 → 보고서 작성)에는 '발행 완료' 단계가 없습니다.
-    // 마지막 단계에 있다 = 아직 작성 중이므로, 완료로 접어 버리면 안 됩니다.
-    const done = false;
+    // 완료의 근거는 제출용 보고서(완성본)가 제품 폴더에 있다는 사실입니다.
+    // 단계만 보고 완료로 접으면 아직 쓰지도 않은 제품이 끝난 것으로 보입니다.
+    const done = !!p.final_report;
     const checks = p.checks && p.checks.length === ITEMS.length
       ? p.checks : sampleChecks(p.code, p.stage, done, ITEMS.length);
     const collected = p.collected != null ? p.collected : checks.filter(c=>c==="y").length;
@@ -1048,7 +1052,7 @@ function renderFlow(){
 function kpiDefs(rows){
   const open = rows.filter(d=>!d.done);
   return [
-    { k:"all",    ico:"📦", cls:"",      label:"관리 중 PQR",        v:open.length, foot:`발행 완료 ${rows.length-open.length}건 제외` },
+    { k:"all",    ico:"📦", cls:"",      label:"관리 중 PQR",        v:open.length, foot:`보고서 작성 완료 ${rows.length-open.length}건 제외` },
     { k:"soon",   ico:"📅", cls:"amber", label:"마감 임박 (30일 내)", v:open.filter(d=>d.dday<=30).length, foot:"마감일 초과 포함" },
     { k:"collect",ico:"🗂️", cls:"blue",  label:"자료 수집 중",          v:open.filter(d=>d.pct<100).length, foot:"원본 자료 미완결" },
     { k:"review", ico:"📝", cls:"blue",  label:"보고서 작성",       v:open.filter(d=>d.stage===STAGES.length-1).length, foot:"자료 수집 100% 완료" },
@@ -1104,7 +1108,7 @@ function needText(d){
   return p.length ? p.join(" / ") : "확인 완료";
 }
 function stageTag(d){
-  if (d.done) return `<span class="tag g">발행 완료</span>`;
+  if (d.done) return `<span class="tag g">보고서 작성 완료</span>`;
   if (d.late) return `<span class="tag r">지연(${esc(STAGES[d.stage])})</span>`;
   if (d.dday<=14) return `<span class="tag a">${esc(STAGES[d.stage])}</span>`;
   return `<span class="tag b">${esc(STAGES[d.stage])}</span>`;
@@ -1214,7 +1218,7 @@ const MODES = {
   issues:   { title:"일탈 · OOS/OOT", crumb:"미결 이슈를 보유한 PQR", pred:d=>d.dev+d.oos>0, sort:(a,b)=>(b.dev+b.oos)-(a.dev+a.oos) },
   schedule: { title:"PQR 일정(전체)", crumb:"마감일 순 전체 일정", sort:(a,b)=>a.dueD-b.dueD, pred:()=>true },
   approval: { title:"보고서 작성 완료 현황", crumb:"자료 수집이 끝나 보고서를 작성하는 제품",
-              pred:d=>d.stage===STAGES.length-1 && !d.done },
+              pred:d=>d.stage===STAGES.length-1 },
   /* 품질 이슈 경향에서 걸린 제품(Cpk 1 미만)은 검토보고서를 따로 써야 합니다.
      두 화면이 같은 판단(cpk_low)을 쓰므로 목록이 어긋나지 않습니다. */
   cpk:      { title:"Cpk 1 미만 검토보고서", crumb:"공정능력이 부족한 제품 — 검토보고서 작성 대상",
