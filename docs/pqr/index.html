@@ -399,7 +399,9 @@ td.wrap{white-space:normal;min-width:220px}
       <button class="nav-item" data-view="products"><span class="nav-ico">🏭</span>제품별 현황</button>
       <button class="nav-item" data-view="items"><span class="nav-ico">🗂️</span>평가항목 자료 수집<span class="badge" id="b-items">0</span></button>
       <button class="nav-item" data-view="schedule"><span class="nav-ico">🗓️</span>PQR 일정(전체)<span class="badge" id="b-sched">0</span></button>
-      <button class="nav-item" data-view="approval"><span class="nav-ico">🖊️</span>보고서 작성 완료 현황</button>
+      <!-- 보고서 작성 완료 현황 — 당분간 숨깁니다. 제품별 현황의 단계 칸과
+           'PQR 완료' 필터가 같은 것을 보여 줍니다. hidden 만 지우면 다시 나옵니다. -->
+      <button class="nav-item" data-view="approval" hidden><span class="nav-ico">🖊️</span>보고서 작성 완료 현황</button>
     </nav>
 
     <nav class="nav-group" aria-label="분석">
