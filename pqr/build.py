@@ -69,7 +69,7 @@ def discover(input_dir):
     return found
 
 
-def discover_tree(root):
+def discover_tree(root, skip=None):
     """제품 폴더 구조를 훑습니다.
 
         입력루트/
@@ -93,7 +93,7 @@ def discover_tree(root):
             path = os.path.join(directory, name)
             if not os.path.isfile(path) or not _is_data_file(name):
                 continue
-            if CLOSE_MARKER in name:      # 마감 기록 — 대장이 아닙니다
+            if skip and skip(name):       # 항 번호 근거 파일·마감 기록 — 대장이 아닙니다
                 continue
             dataset = schema.detect_dataset(name)
             if dataset:
@@ -120,29 +120,40 @@ def has_product_folders(root):
     return False
 
 
-def load(input_dir=None, files=None):
+def load(input_dir=None, files=None, config=None):
     """파일을 읽어 정규화합니다.
 
     input_dir 아래에 제품 폴더가 있으면 폴더 이름을 제품코드로 삼고, 없으면
     폴더 하나에 모든 제품 자료가 섞여 있는 것으로 봅니다.
     files 로 {dataset: [경로, ...]} 를 직접 지정할 수도 있습니다.
 
+    항 번호로 시작하는 파일(회사 원본 양식·마감 기록)은 근거 자료입니다 —
+    표준 대장 표가 아니므로 표로 읽지 않습니다. 낱말이 우연히 겹쳐 읽으려 들면
+    수천 건의 적재 오류만 남고, 있지도 않은 대장이 제출된 것처럼 보입니다.
+
     반환값: (datasets, sources, issues, presence)
     presence 는 {"products": {제품코드: {데이터셋, ...}}, "common": {데이터셋, ...},
     "unknown": [인식 못 한 파일]} 로, "이 제품 폴더에 어떤 자료가 올라왔는가"를 담습니다.
     """
+    config = config or load_config()
+    matcher = item_matcher(config["items"])
+
+    def is_evidence(name):
+        return matcher(name) is not None or CLOSE_MARKER in name
+
     entries = []
     unknown = []
     if input_dir:
         if has_product_folders(input_dir):
-            entries, unknown = discover_tree(input_dir)
+            entries, unknown = discover_tree(input_dir, skip=is_evidence)
         else:
             for dataset, paths in discover(input_dir).items():
                 entries.extend({"product_code": None, "dataset": dataset, "path": path}
-                               for path in paths)
+                               for path in paths if not is_evidence(os.path.basename(path)))
             unknown = [os.path.join(input_dir, name) for name in sorted(os.listdir(input_dir))
                        if os.path.isfile(os.path.join(input_dir, name))
-                       and _is_data_file(name) and schema.detect_dataset(name) is None]
+                       and _is_data_file(name) and schema.detect_dataset(name) is None
+                       and not is_evidence(name)]
     for dataset, paths in (files or {}).items():
         entries.extend({"product_code": None, "dataset": dataset, "path": path}
                        for path in paths)
@@ -587,7 +598,7 @@ def build(input_dir=None, files=None, today=None, config=None, period=None):
     stages = config["stages"]
     classifier = Classifier(config)
 
-    datasets, sources, issues, presence = load(input_dir=input_dir, files=files)
+    datasets, sources, issues, presence = load(input_dir=input_dir, files=files, config=config)
     submitted = presence["products"]
     common_datasets = presence["common"]
 

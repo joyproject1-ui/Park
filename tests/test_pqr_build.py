@@ -254,6 +254,21 @@ class ItemFileTest(unittest.TestCase):
         self.assertFalse(any("해당없음 확인" in name for name in loaded),
                          "마감 기록 파일이 대장으로 적재됐습니다: %s" % loaded)
 
+
+    def test_numbered_company_files_are_evidence_not_tables(self):
+        """'10.2 Qualification Master File-….xlsx' 같은 회사 원본 양식은 이름의 낱말이
+        대장 키워드와 우연히 겹칩니다. 표로 읽으려 들면 적재 오류 수천 건만 남으므로,
+        항 번호 파일은 근거로만 취급하고 표로는 읽지 않아야 합니다."""
+        name = "13. 안정성 시험 결과(회사 양식).xlsx"
+        with open(os.path.join(self.folder, name), "wb") as handle:
+            handle.write(b"this is not a spreadsheet")
+        states, product, data = self.snapshot()
+        self.assertEqual(states["13"], "y")                 # 근거로는 인정
+        errors = [i for i in data["issues"] if i["level"] == "error"]
+        self.assertEqual(errors, [], "근거 파일이 표로 적재됐습니다")
+        loaded = [s2["file"] for ss in data["sources"].values() for s2 in ss]
+        self.assertNotIn(name, loaded)
+
     def test_numbered_files_are_not_reported_unknown(self):
         self.touch("7. 수율현황표.pdf")
         _, _, data = self.snapshot()
