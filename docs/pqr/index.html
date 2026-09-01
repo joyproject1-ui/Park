@@ -942,7 +942,8 @@ let FORM_RULES = {
     "카타플라스마"
   ]
 };
-const FORM_ORDER = ["정제", "캡슐제", "주사제", "점안제", "내용액제", "연고제", "기타제"];
+/* 제형 칩 차례 — 무균라인(점안제 · 주사제)을 앞에 둡니다. 담당자가 가장 자주 봅니다. */
+const FORM_ORDER = ["점안제", "주사제", "연고제", "정제", "캡슐제", "내용액제", "기타제"];
 function classifyForm(text){
   const hay = String(text||"").replace(/\s+/g,"").toLowerCase();
   if (!hay) return "";
