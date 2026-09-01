@@ -148,6 +148,26 @@ class ItemRuleTest(unittest.TestCase):
                     "%s(%s) 의 %s 은 %s 자료에서 나오는데 항목이 보는 자료는 %s 입니다"
                     % (number, label, counter, sources.get(counter), rule["datasets"]))
 
+
+    def test_dashboard_sample_items_match_config(self):
+        """대시보드 내장 샘플과 config 의 평가항목이 어긋나면 안 됩니다.
+
+        data.js 가 없을 때(아티팩트·정적 파일) 화면은 SAMPLE_ITEMS 로 돕니다.
+        config 만 고치면 그 화면은 옛 항목을 계속 보여 줍니다 — 실제로 겪은 일입니다.
+        """
+        import json
+        import re
+        page = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                            "docs", "pqr", "index.html")
+        with open(page, encoding="utf-8") as handle:
+            html = handle.read()
+        block = re.search(r"const SAMPLE_ITEMS = (\[.*?\]);", html, re.S)
+        self.assertIsNotNone(block, "index.html 에서 SAMPLE_ITEMS 를 찾지 못했습니다")
+        sample = json.loads(block.group(1))
+        expected = [list(item) for item in self.config["items"]]
+        self.assertEqual(sample, expected,
+                         "SAMPLE_ITEMS 가 config 의 items 와 다릅니다 — 둘을 함께 고치세요")
+
     def test_every_item_has_a_rule_and_every_counter_exists(self):
         numbers = [item[0] for item in self.config["items"]]
         self.assertEqual(len(numbers), len(set(numbers)), "항목 번호가 겹칩니다")
