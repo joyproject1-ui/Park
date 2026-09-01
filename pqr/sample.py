@@ -31,7 +31,7 @@ TESTS = {
 
 PERIOD_FROM = _dt.date(2025, 7, 1)
 PERIOD_TO = _dt.date(2026, 6, 30)
-STAGES = ["계획 수립", "자료 수집", "데이터 검증", "보고서 초안", "부서 검토", "QA 검토"]
+STAGES = ["자료 수집", "보고서 초안 작성"]
 
 
 def _write(path, header, rows):

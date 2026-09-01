@@ -77,9 +77,9 @@ class TreeLayoutTest(unittest.TestCase):
                          ["일탈", "OOS/OOT", "불만"])
 
     def test_leadtime_uses_stage_log(self):
-        planning = next(row for row in self.data["leadtime"] if row["stage"] == "계획 수립")
-        self.assertIsNotNone(planning["actual"])
-        self.assertGreater(planning["samples"], 0)
+        collecting = next(row for row in self.data["leadtime"] if row["stage"] == "자료 수집")
+        self.assertIsNotNone(collecting["actual"])
+        self.assertGreater(collecting["samples"], 0)
 
 
 class MissingDataTest(unittest.TestCase):

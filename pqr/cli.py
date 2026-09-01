@@ -277,6 +277,61 @@ def _free_port(host, preferred, attempts=10):
     return preferred
 
 
+# 더블클릭 실행에서 입력 폴더를 이 이름들로 찾습니다 (앞이 우선).
+INPUT_FOLDER_NAMES = ("PQR_입력폴더", "입력폴더", "PQR입력폴더")
+
+
+def _looks_like_input_dir(path):
+    """제품 폴더('QC1-1022 …' 처럼 코드로 시작)나 제품 마스터가 있으면 입력 폴더로 봅니다."""
+    try:
+        names = os.listdir(path)
+    except OSError:
+        return False
+    if any("제품마스터" in name or "products" in name.lower() for name in names):
+        return True
+    from . import build as build_module
+    return any(os.path.isdir(os.path.join(path, name))
+               and build_module._folder_product_code(name) for name in names)
+
+
+def find_input_dir():
+    """담당자가 어디에 뒀든 입력 폴더를 찾아봅니다.
+
+    cmd 에 경로를 입력하는 일이 없도록, 더블클릭 실행이 프로그램 폴더 주변과
+    바탕화면·문서·다운로드에서 이름이 맞는 폴더를 차례로 살핍니다.
+    """
+    program_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    home = os.path.expanduser("~")
+    bases = [os.getcwd(), program_dir, os.path.dirname(program_dir),
+             os.path.join(home, "Desktop"), os.path.join(home, "바탕 화면"),
+             os.path.join(home, "Documents"), os.path.join(home, "문서"),
+             os.path.join(home, "Downloads"), os.path.join(home, "다운로드")]
+    seen = set()
+    for base in bases:
+        base = os.path.abspath(base)
+        if base in seen or not os.path.isdir(base):
+            continue
+        seen.add(base)
+        for name in INPUT_FOLDER_NAMES:
+            candidate = os.path.join(base, name)
+            if os.path.isdir(candidate) and _looks_like_input_dir(candidate):
+                return candidate
+        # 한 단계 아래도 봅니다 — 예: D:\PQR\PQR_입력폴더
+        try:
+            children = sorted(os.listdir(base))
+        except OSError:
+            continue
+        for child in children:
+            child_path = os.path.join(base, child)
+            if not os.path.isdir(child_path) or child.startswith("."):
+                continue
+            for name in INPUT_FOLDER_NAMES:
+                candidate = os.path.join(child_path, name)
+                if os.path.isdir(candidate) and _looks_like_input_dir(candidate):
+                    return candidate
+    return None
+
+
 def cmd_launch(args):
     """더블클릭 실행용 — 폴더 준비 · 브라우저 열기 · 서버 실행을 한 번에.
 
@@ -286,7 +341,11 @@ def cmd_launch(args):
     import webbrowser
     from . import server as server_module
 
-    input_dir = args.input or DEFAULT_INPUT
+    input_dir = args.input
+    found = None
+    if not input_dir:
+        found = find_input_dir()
+        input_dir = found or DEFAULT_INPUT
     common = os.path.join(input_dir, "공통")
     first_time = not os.path.isdir(input_dir)
     os.makedirs(common, exist_ok=True)
@@ -294,6 +353,8 @@ def cmd_launch(args):
     _print("")
     _print("  PQR 대시보드")
     _print("  " + "-" * 56)
+    if found:
+        _print("  입력 폴더를 찾았습니다: %s" % found)
     if first_time:
         _print("  입력 폴더를 만들었습니다: %s" % os.path.abspath(input_dir))
         _print("")

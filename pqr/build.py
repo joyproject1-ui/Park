@@ -689,7 +689,10 @@ def build(input_dir=None, files=None, today=None, config=None, period=None):
 
         stage = _stage_index(meta.get("stage"), stages)
         if stage is None:
-            stage = 2 if collected == len(checks) else 1
+            stage = 0
+        # 자료가 다 모이면 다음 단계(보고서 초안 작성)로 자동으로 넘어갑니다.
+        if stage == 0 and checks and collected == len(checks) and len(stages) > 1:
+            stage = 1
 
         due = meta.get("due")
         if not due and period_to:
