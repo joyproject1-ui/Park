@@ -45,6 +45,27 @@ def cell_at(table, row, col):
     return None
 
 
+def _donor_rpr(table):
+    """표 안에서 찾은 첫 run 의 글꼴 속성(굵기 제외).
+
+    빈 칸에 add_run 으로 글을 넣으면 run 에 rPr 가 없어 문서 기본 글꼴로
+    떨어집니다(이 서식은 본문 굴림 10pt 인데 기본은 바탕). 채운 칸만 글꼴이
+    달라 보이는 원인이 이것이라, 같은 표의 기존 run 에서 서식을 빌려 옵니다.
+    머리글 run 이 걸리는 일이 많아 굵기(b · bCs)는 떼고 씁니다.
+    """
+    for tr in table._tbl.iter(qn('w:tr')):
+        for r in tr.iter(qn('w:r')):
+            rpr = r.find(qn('w:rPr'))
+            if rpr is not None:
+                donor = copy.deepcopy(rpr)
+                for tag in ('w:b', 'w:bCs'):
+                    node = donor.find(qn(tag))
+                    if node is not None:
+                        donor.remove(node)
+                return donor
+    return None
+
+
 def set_cell(table, row, col, text):
     """칸의 글을 바꿉니다. 서식(글꼴·정렬)은 첫 run 을 재사용해 유지합니다."""
     tc = cell_at(table, row, col)
@@ -55,7 +76,10 @@ def set_cell(table, row, col, text):
     for extra in cell.paragraphs[1:]:
         extra._element.getparent().remove(extra._element)
     if not para.runs:
-        para.add_run('')
+        run = para.add_run('')
+        donor = _donor_rpr(table)
+        if donor is not None and run._element.find(qn('w:rPr')) is None:
+            run._element.insert(0, donor)
     para.runs[0].text = str(text)
     for run in para.runs[1:]:
         run.text = ''
