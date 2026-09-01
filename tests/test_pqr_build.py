@@ -7,6 +7,7 @@ import unittest
 
 from pqr import build as build_module
 from pqr import build
+from pqr import schema
 from pqr.sample import write_samples
 
 ITEM_IDS = [item[0] for item in build.load_config()["items"]]
@@ -128,3 +129,37 @@ class FlatLayoutTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ItemRuleTest(unittest.TestCase):
+    """평가항목 규칙이 자료 출처와 어긋나지 않는지 봅니다."""
+
+    def setUp(self):
+        self.config = build.load_config()
+
+    def test_pending_counters_come_from_the_item_own_datasets(self):
+        """다른 자료의 카운터를 쓰면 그 자료가 없을 때 0 이 되어 '완료' 로 잘못 뜹니다."""
+        sources = self.config["counter_sources"]
+        for number, label, _hint in self.config["items"]:
+            rule = self.config["item_rules"][number]
+            for counter in rule["pending"]:
+                self.assertIn(
+                    sources.get(counter), rule["datasets"],
+                    "%s(%s) 의 %s 은 %s 자료에서 나오는데 항목이 보는 자료는 %s 입니다"
+                    % (number, label, counter, sources.get(counter), rule["datasets"]))
+
+    def test_every_item_has_a_rule_and_every_counter_exists(self):
+        numbers = [item[0] for item in self.config["items"]]
+        self.assertEqual(len(numbers), len(set(numbers)), "항목 번호가 겹칩니다")
+        for number in numbers:
+            self.assertIn(number, self.config["item_rules"])
+            self.assertIn(number, self.config["item_datasets"])
+        for number, rule in self.config["item_rules"].items():
+            if number.startswith("_"):
+                continue
+            self.assertIn(number, numbers, "쓰이지 않는 규칙: %s" % number)
+            for counter in rule["pending"]:
+                self.assertIn(counter, self.config["counter_sources"],
+                              "counter_sources 에 없는 카운터: %s" % counter)
+            for name in rule["datasets"]:
+                self.assertIn(name, schema.DATASETS, "없는 자료 이름: %s" % name)

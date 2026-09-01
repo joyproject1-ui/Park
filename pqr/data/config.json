@@ -530,8 +530,7 @@
         "batches"
       ],
       "pending": [
-        "batch_fail",
-        "oos_open"
+        "batch_fail"
       ]
     },
     "10.1": {
@@ -562,7 +561,7 @@
       ],
       "pending": [
         "deviation_open",
-        "capa_open"
+        "oos_open"
       ]
     },
     "12": {
@@ -571,7 +570,8 @@
       ],
       "pending": [
         "change_open",
-        "license_open"
+        "license_open",
+        "commitment_open"
       ]
     },
     "13": {
@@ -596,8 +596,25 @@
         "deviations"
       ],
       "pending": [
-        "commitment_open"
+        "capa_open"
       ]
     }
+  },
+  "counter_sources": {
+    "_설명": "각 미결 카운터를 만들어 내는 자료. item_rules 의 pending 은 그 항목의 datasets 안에서만 골라야 합니다 — 다른 자료의 카운터를 쓰면 그 자료가 없을 때 0 이 되어 '완료' 로 잘못 뜹니다.",
+    "material_fail": "batches",
+    "tests_without_spec": "batches",
+    "batch_fail": "batches",
+    "oos_open": "deviations",
+    "deviation_open": "deviations",
+    "capa_open": "deviations",
+    "change_open": "changes",
+    "license_open": "changes",
+    "commitment_open": "changes",
+    "complaint_open": "changes",
+    "stability_adverse": "stability",
+    "stability_oos": "stability",
+    "qualification_due": "qualification",
+    "contract_due": "qualification"
   }
 }
