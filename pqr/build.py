@@ -604,6 +604,8 @@ def build(input_dir=None, files=None, today=None, config=None, period=None):
             "name": name,
             "form": meta.get("form", ""),
             "form_group": form_group(meta.get("form", ""), config, name),
+            "group": meta.get("group", ""),
+            "lots": meta.get("lots"),
             "site": meta.get("site", ""),
             "owner": meta.get("owner", ""),
             "due": due,

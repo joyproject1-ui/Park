@@ -18,7 +18,7 @@ DATASETS = {
     "products": {
         "label": "제품 마스터",
         "fields": ["product_code", "product_name", "form", "site", "owner",
-                   "period_from", "period_to", "due", "stage"],
+                   "period_from", "period_to", "due", "stage", "group", "lots"],
         "required": ["product_code"],
     },
     "batches": {
@@ -61,13 +61,16 @@ DATE_FIELDS = frozenset([
     "mfg_date", "opened_date", "closed_date", "last_qualified", "next_due",
     "due", "period_from", "period_to", "entered_date",
 ])
-NUMBER_FIELDS = frozenset(["value", "lsl", "usl", "timepoint"])
+NUMBER_FIELDS = frozenset(["value", "lsl", "usl", "timepoint", "lots"])
 
 # 표준 필드 -> 받아들이는 열 이름들 (소문자·공백제거 후 비교)
 _BUILTIN_ALIASES = {
     "product_code": ["제품코드", "품목코드", "제품번호", "코드", "productcode", "itemcode", "code"],
     "product_name": ["제품명", "품목명", "productname", "itemname", "name"],
     "form": ["제형", "dosageform", "form"],
+    # 연간 계획서가 정해 주는 값 — 평가 그룹과 그 해 생산 Lot 수
+    "group": ["그룹", "평가그룹", "pqr그룹", "group"],
+    "lots": ["생산수량", "생산lot", "lot수", "생산수량lot", "lots"],
     "site": ["공장", "제조소", "사이트", "라인", "site", "plant", "line"],
     "owner": ["담당자", "담당", "작성자", "owner", "assignee"],
     "period_from": ["평가시작일", "평가기간시작", "기간시작", "periodfrom", "from"],
