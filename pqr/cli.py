@@ -332,6 +332,94 @@ def find_input_dir():
     return None
 
 
+UPDATE_URL = ("https://github.com/joyproject1-ui/Park/archive/refs/heads/"
+              "claude/pqr-dashboard-uo3dno.zip")
+
+# 프로그램 파일만 바꿉니다. 담당자가 모아 둔 자료와 만들어 둔 보고서는 그대로 둡니다.
+UPDATE_KEEP = ("PQR_입력폴더", "입력폴더", "PQR입력폴더", "out", ".git")
+
+
+def _program_root():
+    """프로그램 폴더(= pqr 패키지의 부모)."""
+    return os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+
+def cmd_update(args):
+    """최신 버전을 내려받아 프로그램 파일을 바꿉니다.
+
+    담당자가 매번 브라우저로 ZIP 을 받아 폴더를 통째로 바꾸는 일을 없애기 위한
+    명령입니다. 입력 폴더와 out 폴더는 손대지 않습니다 — 자료가 사라지면 안 됩니다.
+    """
+    import shutil
+    import tempfile
+    import urllib.request
+    import zipfile
+
+    root = os.path.abspath(getattr(args, "target", None) or _program_root())
+    _print("")
+    _print("  PQR 프로그램 업데이트")
+    _print("  " + "-" * 56)
+    _print("  프로그램 폴더: %s" % root)
+    _print("  내려받는 중… (사내망에서는 시간이 걸릴 수 있습니다)")
+
+    workspace = tempfile.mkdtemp(prefix="pqr_update_")
+    archive_path = os.path.join(workspace, "update.zip")
+    try:
+        try:
+            with urllib.request.urlopen(args.url, timeout=120) as response:
+                payload = response.read()
+        except Exception as error:
+            _print("")
+            _print("  [문제] 내려받지 못했습니다: %s" % error)
+            _print("")
+            _print("  인터넷이 막혀 있으면 브라우저로 아래 주소를 열어 ZIP 을 받은 뒤,")
+            _print("  압축을 풀어 이 폴더의 파일을 덮어써 주세요.")
+            _print("  %s" % args.url)
+            return 2
+        with open(archive_path, "wb") as handle:
+            handle.write(payload)
+
+        with zipfile.ZipFile(archive_path) as archive:
+            archive.extractall(workspace)
+        tops = [name for name in os.listdir(workspace)
+                if os.path.isdir(os.path.join(workspace, name))]
+        if not tops:
+            _print("  [문제] 내려받은 파일에서 프로그램을 찾지 못했습니다.")
+            return 2
+        source = os.path.join(workspace, tops[0])
+
+        changed = _copy_program(source, root)
+        _print("")
+        _print("  %d개 파일을 새 것으로 바꿨습니다." % changed)
+        _print("  입력 폴더와 out 폴더는 그대로 두었습니다.")
+        _print("")
+        _print("  화면을 다시 띄우세요:  PQR-대시보드-실행.bat")
+        return 0
+    finally:
+        shutil.rmtree(workspace, ignore_errors=True)
+
+
+def _copy_program(source, target):
+    """새 파일을 덮어씁니다. 지우지는 않습니다 — 담당자 자료가 섞여 있을 수 있습니다."""
+    import shutil
+    changed = 0
+    for base, dirs, files in os.walk(source):
+        relative = os.path.relpath(base, source)
+        relative = "" if relative == "." else relative
+        head = relative.split(os.sep)[0] if relative else ""
+        if head in UPDATE_KEEP:
+            dirs[:] = []
+            continue
+        dirs[:] = [name for name in dirs if name not in UPDATE_KEEP]
+        destination = os.path.join(target, relative) if relative else target
+        if not os.path.isdir(destination):
+            os.makedirs(destination)
+        for name in files:
+            shutil.copy2(os.path.join(base, name), os.path.join(destination, name))
+            changed += 1
+    return changed
+
+
 def cmd_launch(args):
     """더블클릭 실행용 — 폴더 준비 · 브라우저 열기 · 서버 실행을 한 번에.
 
@@ -490,6 +578,12 @@ def build_parser():
     narrate_cmd.add_argument("--dry-run", action="store_true",
                              help="전송될 내용만 출력하고 API 를 호출하지 않음")
     narrate_cmd.set_defaults(func=cmd_narrate)
+
+    update_cmd = subparsers.add_parser(
+        "update", help="프로그램을 최신 버전으로 바꿉니다 (입력 폴더는 건드리지 않습니다)")
+    update_cmd.add_argument("--url", default=UPDATE_URL, help="내려받을 ZIP 주소")
+    update_cmd.add_argument("--dir", dest="target", help="바꿀 프로그램 폴더 (기본: 지금 이 폴더)")
+    update_cmd.set_defaults(func=cmd_update)
 
     report_cmd = subparsers.add_parser("report", help="보고서만 다시 생성")
     report_cmd.add_argument("-d", "--data", required=True, help="build 가 만든 pqr.json")
