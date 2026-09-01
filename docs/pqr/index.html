@@ -1578,13 +1578,6 @@ function openDrawer(code){
           <span class="txt"><b>${i+1}. ${esc(s)}</b><small>${note}</small></span></div>`;
       }).join("")}</div>
     </div>
-    ${d.missing_datasets && d.missing_datasets.length ? `
-    <div>
-      <div class="sec-title">미제출 자료</div>
-      <div class="checklist">${d.missing_datasets.map(name=>
-        `<div class="checkrow"><span>${esc(DATASET_LABELS[name] || name)}</span>
-         <span class="st"><span class="tag r">제품 폴더에 없음</span></span></div>`).join("")}</div>
-    </div>` : ""}
     <div>
       <div class="sec-title">평가항목 자료 (보고서 항 번호)</div>
       <div class="checklist">${ITEMS.map(([k,n],i)=>{
