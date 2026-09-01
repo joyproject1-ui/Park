@@ -403,9 +403,8 @@ td.wrap{white-space:normal;min-width:220px}
       <button class="nav-item" data-view="products"><span class="nav-ico">🏭</span>제품별 현황</button>
       <button class="nav-item" data-view="items"><span class="nav-ico">🗂️</span>평가항목 자료 수집<span class="badge" id="b-items">0</span></button>
       <button class="nav-item" data-view="schedule"><span class="nav-ico">🗓️</span>PQR 일정(전체)<span class="badge" id="b-sched">0</span></button>
-      <!-- 보고서 작성 완료 현황 — 당분간 숨깁니다. 제품별 현황의 단계 칸과
-           'PQR 완료' 필터가 같은 것을 보여 줍니다. hidden 만 지우면 다시 나옵니다. -->
-      <button class="nav-item" data-view="approval" hidden><span class="nav-ico">🖊️</span>보고서 작성 완료 현황</button>
+      <!-- '보고서 작성 완료 현황' 메뉴는 담당자 요청으로 삭제했습니다.
+           같은 내용은 제품별 현황의 단계 칸과 'PQR 완료' 필터가 보여 줍니다. -->
     </nav>
 
     <nav class="nav-group" aria-label="분석">
@@ -415,15 +414,9 @@ td.wrap{white-space:normal;min-width:220px}
       <button class="nav-item" data-view="capa"><span class="nav-ico">🔁</span>Cpk 1 미만 검토보고서<span class="badge hot" id="b-cpk">0</span></button>
     </nav>
 
-    <!-- 자료 · 도구 — 당분간 숨깁니다.
-         자료는 '평가항목 자료 수집' 에서 칸을 눌러 올리고, 보고서는 제품 줄의
-         '보고서 작성' 단추로 만듭니다. 이 묶음은 같은 일을 한 번 더 하는 자리라
-         쓰이지 않았습니다. 다시 보이게 하려면 hidden 만 지우면 됩니다. -->
-    <nav class="nav-group" aria-label="자료 · 도구" hidden>
-      <div class="nav-label"><span>자료 · 도구</span></div>
-      <button class="nav-item" data-view="upload"><span class="nav-ico">📤</span>자료 업로드</button>
-      <button class="nav-item" data-view="report"><span class="nav-ico">📄</span>보고서 생성</button>
-    </nav>
+    <!-- '자료 · 도구' 메뉴는 담당자 요청으로 삭제했습니다.
+         자료는 '평가항목 자료 수집' 에서 칸을 누르거나 제품 줄의 '파일 한번에
+         올리기' 로 올리고, 보고서는 제품 줄의 '보고서 작성' 단추로 만듭니다. -->
 
     <nav class="nav-group" aria-label="기타">
       <div class="nav-label"><span>기타</span></div>
