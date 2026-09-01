@@ -353,6 +353,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(200, self._handle_close())
             if path == "/api/report":
                 return self._json(200, self._handle_report())
+            if path == "/api/final":
+                return self._json(200, self._handle_final())
         except UploadError as error:
             return self._json(400, {"ok": False, "error": str(error)})
         except Exception as error:               # 서버가 죽지 않도록 오류를 그대로 알려 줍니다.
@@ -440,12 +442,46 @@ class Handler(BaseHTTPRequestHandler):
                        if state == "n"]
             return {"ok": False, "error": "자료 수집이 %d%% 입니다. 미착수 항목: %s"
                     % (product.get("pct", 0), ", ".join(missing) or "-")}
+        from . import docx_report
         out_dir = os.path.join(self.workspace.out_dir, "reports")
         written = report_module.write_reports(self.workspace.data, out_dir, codes=[code])
-        # '어디 있지?' 를 없앱니다 — 만든 보고서 폴더를 바로 열어 줍니다.
-        opened = open_in_file_manager(out_dir)
+        # 제출용 보고서(.docx)는 제품 폴더에 둡니다 — 근거 자료 옆에 있어야 검토가 쉽고,
+        # 이름에 '제출용' 이 들어가 있어 다음 새로고침에서 '완성본' 단추가 생깁니다.
+        folder = self.workspace.product_folder(code)
+        final = docx_report.write_docx(self.workspace.data, code, folder,
+                                       config=self.workspace.config)
+        self.workspace.rebuild()
+        # '어디 있지?' 를 없앱니다 — 제출용 보고서가 있는 제품 폴더를 바로 열어 줍니다.
+        opened = open_in_file_manager(folder)
         return {"ok": True, "files": [os.path.abspath(p) for p in written],
-                "out_dir": os.path.abspath(out_dir), "opened": opened}
+                "final": os.path.abspath(final), "final_name": os.path.basename(final),
+                "folder": os.path.abspath(folder),
+                "out_dir": os.path.abspath(out_dir), "opened": opened,
+                "data": self.workspace.dashboard_payload()}
+
+    def _handle_final(self):
+        """제품 폴더의 완성본(제출용) 보고서를 찾아 엽니다.
+
+        완성본은 프로그램이 만들지 않습니다 — 실제 자료로 작성한 제출용 문서를
+        담당자가 제품 폴더에 넣으면, 파일 이름의 '완성본'/'제출' 로 알아봅니다.
+        """
+        body = self._read_json()
+        code = str(body.get("product") or "").strip()
+        product = next((item for item in self.workspace.data["products"]
+                        if item["code"] == code), None)
+        if product is None:
+            raise UploadError("제품을 찾지 못했습니다: %s" % code)
+        folder = self.workspace.product_folder(code)
+        matcher = build_module.item_matcher(self.workspace.data["items"])
+        # 화면의 목록이 오래됐을 수 있으니 폴더를 지금 다시 봅니다.
+        target = build_module.find_final_report(folder, matcher)
+        if not target:
+            return {"ok": False, "error": "완성본 파일이 없습니다. 파일 이름에 '완성본' 또는 "
+                    "'제출' 이 들어간 문서(.docx 등)를 제품 폴더에 넣으세요."}
+        opened = open_in_file_manager(target)
+        return {"ok": True, "path": os.path.abspath(target),
+                "name": os.path.basename(target), "opened": opened,
+                "hint": "" if opened else "파일을 자동으로 열지 못했습니다. 위 경로를 파일 탐색기에 붙여넣으세요."}
 
     def _handle_upload(self):
         length = int(self.headers.get("Content-Length") or 0)

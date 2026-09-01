@@ -201,6 +201,30 @@ class ServerTest(unittest.TestCase):
         self.assertTrue(payload["ok"])
         for path in payload["files"]:
             self.assertTrue(os.path.exists(path))
+
+    def test_report_writes_submission_docx_and_shows_final_button(self):
+        """보고서 작성 → 제출용 .docx 가 제품 폴더에 생기고, 그 자리에서 완성본 단추가 섭니다."""
+        status, payload = self.post_json("/api/report", {"product": "HP-110", "force": True})
+        self.assertTrue(payload["ok"])
+        self.assertTrue(os.path.isfile(payload["final"]), payload.get("final"))
+        self.assertIn("제출용", payload["final_name"])
+        # 제품 폴더에 두어야 근거 자료 옆에서 검토할 수 있습니다.
+        self.assertEqual(os.path.dirname(payload["final"]), payload["folder"])
+        product = next(p for p in payload["data"]["products"] if p["code"] == "HP-110")
+        self.assertEqual(product["final_report"], payload["final_name"])
+
+    def test_final_endpoint_opens_the_submission_report(self):
+        self.post_json("/api/report", {"product": "HP-110", "force": True})
+        status, payload = self.post_json("/api/final", {"product": "HP-110"})
+        self.assertEqual(status, 200)
+        self.assertTrue(payload["ok"], payload.get("error"))
+        self.assertTrue(os.path.isfile(payload["path"]))
+
+    def test_final_endpoint_reports_when_nothing_is_written_yet(self):
+        status, payload = self.post_json("/api/final", {"product": "HP-201"})
+        self.assertFalse(payload["ok"])
+        self.assertIn("완성본", payload["error"])
+
     def test_close_as_none_creates_record_and_marks_item(self):
         status, payload = self.post_json("/api/close", {"product": "HP-110", "item": "13"})
         self.assertEqual(status, 200)

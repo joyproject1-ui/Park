@@ -445,6 +445,54 @@ def collect_item_files(input_dir, items):
     return result
 
 
+FINAL_KEYWORDS = ("완성본", "제출")
+FINAL_SUFFIXES = (".docx", ".doc", ".hwp", ".hwpx", ".pdf")
+
+
+def find_final_report(folder, matcher=None):
+    """제품 폴더에서 완성본(제출용) 보고서 파일을 찾습니다.
+
+    파일 이름에 '완성본' 또는 '제출' 이 들어간 문서 파일(.docx/.doc/.hwp/.hwpx/.pdf)을
+    완성본으로 봅니다. 항 번호로 시작하는 파일은 근거 자료이므로 제외합니다.
+    여러 개면 가장 최근에 고친 파일 하나를 돌려줍니다.
+    """
+    if not folder or not os.path.isdir(folder):
+        return None
+    candidates = []
+    for name in sorted(os.listdir(folder)):
+        path = os.path.join(folder, name)
+        if not os.path.isfile(path) or name.startswith("~$") or name.startswith("."):
+            continue
+        if not name.lower().endswith(FINAL_SUFFIXES):
+            continue
+        if matcher and matcher(name):
+            continue
+        if any(keyword in name for keyword in FINAL_KEYWORDS):
+            candidates.append(path)
+    if not candidates:
+        return None
+    return max(candidates, key=os.path.getmtime)
+
+
+def collect_final_reports(input_dir, items):
+    """제품 폴더마다 완성본 보고서가 올라와 있는지 봅니다. {제품코드: 파일 이름}"""
+    result = {}
+    if not input_dir or not os.path.isdir(input_dir):
+        return result
+    matcher = item_matcher(items)
+    for folder in sorted(os.listdir(input_dir)):
+        folder_path = os.path.join(input_dir, folder)
+        if not os.path.isdir(folder_path) or folder.startswith("."):
+            continue
+        code = _folder_product_code(folder)
+        if not code:
+            continue
+        found = find_final_report(folder_path, matcher)
+        if found:
+            result[code] = os.path.basename(found)
+    return result
+
+
 def _checks(context, config, meta=None):
     """평가항목별 자료 상태를 config 의 item_rules 로 판정합니다.
 
@@ -604,6 +652,7 @@ def build(input_dir=None, files=None, today=None, config=None, period=None):
 
     # 항 번호가 붙은 파일·폴더 — 표로 못 읽는 자료도 수집 현황에는 보여야 합니다.
     item_files_by_product = collect_item_files(input_dir, config["items"]) if input_dir else {}
+    final_reports = collect_final_reports(input_dir, config["items"]) if input_dir else {}
     matcher = item_matcher(config["items"])
     presence["unknown"] = [path for path in presence["unknown"]
                            if not matcher(os.path.basename(path))]
@@ -732,6 +781,12 @@ def build(input_dir=None, files=None, today=None, config=None, period=None):
             "form_group": form_group(meta.get("form", ""), config, name),
             "group": meta.get("group", ""),
             "item_files": item_files_by_product.get(code, {}),
+            # 폴더에 완성본(제출용) 보고서가 올라오면 화면에 '완성본' 단추가 생깁니다.
+            "final_report": final_reports.get(code, ""),
+            # 3항(대상 제품)에 그대로 들어가는 허가 정보 — 제출용 보고서가 씁니다.
+            "license": {name: meta.get(name, "") for name in
+                        ("product_class", "license_no", "license_date",
+                         "shelf_life", "storage")},
             # 담당자는 마스터에 적힌 값이 먼저고, 없으면 제형별 담당표에서 가져옵니다.
             "owner_source": "master" if meta.get("owner") else ("form" if owner else ""),
             "lots": meta.get("lots"),
@@ -768,6 +823,8 @@ def build(input_dir=None, files=None, today=None, config=None, period=None):
                 "deviations": deviation_rows, "oos": oos_rows,
                 "changes": change_rows + license_rows, "complaints": complaint_rows,
                 "commitments": commitment_rows, "materials": material_rows,
+                # 6항 제조내역은 배치 원본 행이 그대로 필요합니다.
+                "batches": batch_rows,
             },
         })
 

@@ -199,6 +199,8 @@ td.wrap{white-space:normal;min-width:220px}
 .name-btn:hover{color:var(--accent);text-decoration:underline}
 .report-btn{margin-top:5px;color:var(--ok);border-color:var(--ok)}
 .report-btn[disabled]{opacity:.55;cursor:default}
+.final-btn{margin-top:5px;color:var(--accent);border-color:var(--accent);font-weight:700}
+.final-btn[disabled]{opacity:.55;cursor:default}
 
 /* chips */
 .tag{display:inline-flex;align-items:center;gap:5px;font-size:11.5px;font-weight:600;padding:3px 9px;border-radius:999px;border:1px solid transparent;white-space:nowrap}
@@ -753,6 +755,11 @@ function sampleSource(){
     products: SAMPLE_RAW.map(r=>({
       code:r[0], name:r[1], form:r[2], site:r[3], due:r[4], stage:r[5], owner:r[6],
       dev:r[7], oos:r[8], chg:r[9], cmp:r[10], batches:r[11], reason:r[12],
+      // 샘플에서 버튼 모양을 보여 주기 위한 것 — HP-201 은 수집 완료 + 완성본까지 있는 예입니다.
+      ...(r[0]==="HP-201" ? {
+        checks: SAMPLE_ITEMS.map(()=> "y"), stage: 1,
+        final_report: "2026 로수바틴 정 10mg 제품품질평가 완성본.docx",
+      } : {}),
     })),
   };
 }
@@ -1015,11 +1022,29 @@ async function openFolder(code){
     showToast(`📂 ${payload.path}${payload.hint ? "<br>" + esc(payload.hint) : ""}`);
   } catch (error) { showToast("폴더 열기 실패: " + esc(error.message)); }
 }
-/* 자료 수집 100% 가 되면 이 버튼이 생깁니다. 누르면 그 제품의 보고서 초안을 만듭니다. */
+/* 자료 수집 100% 가 되면 이 버튼이 생깁니다. 누르면 그 제품의 보고서 초안을 만듭니다.
+   제출용 완성본 문서(이름에 '완성본'/'제출')가 제품 폴더에 올라오면 옆에 완성본 단추가 붙습니다. */
 function reportButton(d){
   if (d.pct < 100) return "";
-  return `<button class="mini report-btn" data-report="${d.code}"
-    ${uploadEnabled() ? "" : `disabled title="python -m pqr serve 로 실행한 경우에만 동작합니다"`}>보고서 작성</button>`;
+  const off = uploadEnabled() ? "" : `disabled title="python -m pqr serve 로 실행한 경우에만 동작합니다"`;
+  // 이미 만든 제품은 '다시 작성' 으로 보여 줍니다 — 새로고침해도 상태가 남습니다.
+  const label = d.final_report ? "다시 작성" : "보고서 작성";
+  let html = `<button class="mini report-btn" data-report="${d.code}" ${off}>${label}</button>`;
+  if (d.final_report)
+    html += ` <button class="mini final-btn" data-final="${d.code}"
+      ${off || `title="${esc(d.final_report)} 열기"`}>완성본 📄</button>`;
+  return html;
+}
+/* 완성본 단추 — 제품 폴더의 제출용 보고서 파일을 바로 엽니다. */
+async function openFinal(code){
+  try {
+    const response = await fetch("api/final", { method:"POST",
+      headers:{ "Content-Type":"application/json" }, body: JSON.stringify({ product: code }) });
+    const payload = await response.json();
+    if (!payload.ok) throw new Error(payload.error || "완성본을 열지 못했습니다");
+    showToast(`📄 ${esc(payload.name)} — 파일이 열립니다<br>${esc(payload.path)}`
+      + (payload.hint ? "<br>" + esc(payload.hint) : ""));
+  } catch (error) { showToast("완성본 열기 실패: " + esc(error.message)); }
 }
 async function makeReport(code, button){
   const original = button.textContent;
@@ -1029,9 +1054,13 @@ async function makeReport(code, button){
       headers:{ "Content-Type":"application/json" }, body: JSON.stringify({ product: code }) });
     const payload = await response.json();
     if (!payload.ok) throw new Error(payload.error || "보고서를 만들지 못했습니다");
-    showToast("보고서 초안 생성 — 폴더가 열립니다:<br>" + payload.files.map(esc).join("<br>")
+    showToast("제출용 보고서를 만들었습니다 — 제품 폴더가 열립니다<br>"
+      + `📄 ${esc(payload.final_name || "")}<br>${esc(payload.folder || "")}`
       + (payload.opened ? "" : "<br>(자동으로 열리지 않으면 위 경로를 파일 탐색기에 붙여넣으세요)"));
-    button.textContent = "작성됨 ✓";
+    // 방금 만든 제출용 보고서를 바로 열 수 있게 옆에 완성본 단추를 세웁니다.
+    // (표를 다시 그리므로 이 button 은 사라집니다 — 상태는 데이터에서 옵니다.)
+    if (payload.data) { adopt(payload.data); render(); }
+    else { button.textContent = "작성됨 ✓"; }
   } catch (error) {
     showToast(esc(error.message)); button.textContent = original; button.disabled = false;
   }
@@ -1500,6 +1529,8 @@ document.addEventListener("click", e=>{
   if (folder){ openFolder(folder.dataset.folder); return; }
   const report = e.target.closest(".report-btn");
   if (report && !report.disabled){ makeReport(report.dataset.report, report); return; }
+  const final = e.target.closest(".final-btn");
+  if (final && !final.disabled){ openFinal(final.dataset.final); return; }
   const code = e.target.closest(".code-btn");
   if (code) openDrawer(code.dataset.code);
 });

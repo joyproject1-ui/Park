@@ -273,3 +273,90 @@ class ItemFileTest(unittest.TestCase):
         self.touch("7. 수율현황표.pdf")
         _, _, data = self.snapshot()
         self.assertNotIn("7. 수율현황표.pdf", data["unknown_files"])
+
+
+class FinalReportTest(unittest.TestCase):
+    """제출용 보고서(.docx) 생성과 '완성본' 인식."""
+
+    def setUp(self):
+        self.dir = tempfile.mkdtemp()
+        write_samples(self.dir, layout="tree")
+        self.folder = os.path.join(
+            self.dir, next(name for name in os.listdir(self.dir) if name.startswith("HP-110")))
+
+    def tearDown(self):
+        shutil.rmtree(self.dir, ignore_errors=True)
+
+    def build(self):
+        return build_module.build(input_dir=self.dir, today=TODAY)
+
+    def product(self, data=None):
+        data = data or self.build()
+        return next(p for p in data["products"] if p["code"] == "HP-110")
+
+    def test_no_final_report_before_writing(self):
+        self.assertEqual(self.product()["final_report"], "")
+
+    def test_written_docx_is_detected_as_final_report(self):
+        from pqr import docx_report
+        data = self.build()
+        path = docx_report.write_docx(data, "HP-110", self.folder,
+                                      config=build_module.load_config())
+        self.assertTrue(os.path.isfile(path))
+        self.assertIn("제출용", os.path.basename(path))
+        self.assertEqual(self.product()["final_report"], os.path.basename(path))
+
+    def test_final_docx_is_not_read_as_a_table(self):
+        """제출용 보고서가 제품 폴더에 있어도 대장으로 적재되면 안 됩니다."""
+        from pqr import docx_report
+        docx_report.write_docx(self.build(), "HP-110", self.folder,
+                               config=build_module.load_config())
+        data = self.build()
+        loaded = [source["file"] for sources in data["sources"].values() for source in sources]
+        self.assertFalse(any("제출용" in name for name in loaded))
+        self.assertEqual([i for i in data["issues"] if i["level"] == "error"], [])
+
+    def test_docx_is_a_readable_package(self):
+        import zipfile
+        from xml.dom import minidom
+        from pqr import docx_report
+        path = docx_report.write_docx(self.build(), "HP-110", self.dir,
+                                      config=build_module.load_config())
+        with zipfile.ZipFile(path) as archive:
+            self.assertIsNone(archive.testzip())
+            names = archive.namelist()
+            for required in ("[Content_Types].xml", "_rels/.rels", "word/document.xml"):
+                self.assertIn(required, names)
+            for name in names:                     # Word 가 열 수 있어야 합니다
+                minidom.parseString(archive.read(name))
+            text = archive.read("word/document.xml").decode("utf-8")
+        self.assertIn("제품품질평가", text)
+        self.assertIn("레보클린", text)
+
+    def test_evidence_only_product_does_not_get_a_settled_conclusion(self):
+        """근거 PDF 만 있고 수치를 읽지 못했으면 '규격에 만족' 결론을 확정하지 않습니다."""
+        import zipfile
+        from pqr import docx_report
+        # 대장 파일을 모두 치우고 항 번호 근거 파일(PDF)만 남깁니다 — 사용자의 실제 상황입니다.
+        for name in os.listdir(self.folder):
+            os.remove(os.path.join(self.folder, name))
+        for number in (item[0] for item in build_module.load_config()["items"]):
+            with open(os.path.join(self.folder, "%s. 근거자료.pdf" % number), "wb") as handle:
+                handle.write(b"x")
+        data = self.build()
+        product = self.product(data)
+        self.assertEqual(product["pct"], 100)            # 근거는 다 모였지만
+        self.assertEqual(data["quality"]["HP-110"]["tests"], [])   # 수치는 못 읽었습니다
+        path = docx_report.write_docx(data, "HP-110", self.dir,
+                                      config=build_module.load_config())
+        with zipfile.ZipFile(path) as archive:
+            text = archive.read("word/document.xml").decode("utf-8")
+        self.assertIn("결론을 확정하지 않았습니다", text)
+
+    def test_mean_keeps_the_source_decimal_places(self):
+        """평균을 원자료보다 잘게 적으면 측정하지 않은 정밀도를 쓰는 셈입니다."""
+        from pqr import docx_report
+        self.assertEqual(docx_report._decimals(6.92, 7.55), 2)
+        self.assertEqual(docx_report._fixed(7.2513, 2), "7.25")
+        # 사사오입 — 파이썬 기본 반올림은 1.0165 를 1.016 으로 적습니다.
+        self.assertEqual(docx_report._fixed(1.0165, 3), "1.017")
