@@ -6,7 +6,10 @@ import tempfile
 import unittest
 
 from pqr import build as build_module
+from pqr import build
 from pqr.sample import write_samples
+
+ITEM_IDS = [item[0] for item in build.load_config()["items"]]
 
 TODAY = "2026-08-27"
 
@@ -45,13 +48,13 @@ class TreeLayoutTest(unittest.TestCase):
 
     def test_every_product_has_twelve_checks(self):
         for product in self.data["products"]:
-            self.assertEqual(len(product["checks"]), 12)
+            self.assertEqual(len(product["checks"]), len(ITEM_IDS))
             self.assertTrue(set(product["checks"]) <= {"y", "p", "n"})
 
     def test_common_folder_data_applies_to_all_products(self):
         """설비 적격성은 공통 자료이므로 모든 제품의 (k) 항목이 채워집니다."""
         for product in self.data["products"]:
-            self.assertNotEqual(product["checks"][10], "n", product["code"])
+            self.assertNotEqual(product["checks"][ITEM_IDS.index("10.2")], "n", product["code"])
 
     def test_capability_is_computed_per_test(self):
         tests = self.data["quality"]["HP-201"]["tests"]
@@ -93,9 +96,9 @@ class MissingDataTest(unittest.TestCase):
         data = build_module.build(input_dir=self.dir, today=TODAY)
         product = next(p for p in data["products"] if p["code"] == "HP-110")
         other = next(p for p in data["products"] if p["code"] == "HP-101")
-        self.assertEqual(product["checks"][6], "n")       # (g) 안정성
+        self.assertEqual(product["checks"][ITEM_IDS.index("13")], "n")   # 13 안정성
         self.assertIn("stability", product["missing_datasets"])
-        self.assertNotEqual(other["checks"][6], "n")      # 다른 제품은 영향 없음
+        self.assertNotEqual(other["checks"][ITEM_IDS.index("13")], "n")  # 다른 제품은 영향 없음
         self.assertIn("입력 자료 1개 항목 미제출", product["reasons"])
 
 

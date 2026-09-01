@@ -29,64 +29,104 @@
   },
   "items": [
     [
-      "a",
-      "출발물질 · 포장재 검토",
-      "신규 공급원 포함 입고·시험 이력"
+      "3",
+      "허가증",
+      "EDMS"
     ],
     [
-      "b",
-      "중요 공정관리 · 완제품 시험결과",
-      "공정관리 및 완제품 시험 데이터"
+      "6",
+      "제조내역",
+      "ERP"
     ],
     [
-      "c",
-      "규격 부적합 배치 · 조사",
-      "부적합 배치와 조사 결과"
+      "7",
+      "수율현황표",
+      "개인 작성"
     ],
     [
-      "d",
-      "중대 일탈 · 부적합 · CAPA",
-      "조사 및 CAPA 유효성"
+      "8.1.1",
+      "원료 공급업체 List",
+      "Rev.26"
     ],
     [
-      "e",
-      "공정 · 분석법 변경",
-      "변경관리 이력"
+      "8.1.2",
+      "주성분 공급망 마스터파일",
+      "HLF-GR-15-25"
     ],
     [
-      "f",
-      "허가사항 변경",
-      "제출 · 승인 · 거부 현황"
+      "8.1.3",
+      "원료·자재 공급업체 List",
+      "Rev.26 · 2개 파일"
     ],
     [
-      "g",
-      "안정성 모니터링 · 부정적 경향",
-      "장기·가속 안정성 결과"
+      "8.2.1.1",
+      "주원료 시험성적",
+      "ERP"
     ],
     [
-      "h",
+      "8.2.2",
+      "1차 자재 시험성적",
+      "ERP"
+    ],
+    [
+      "9.2.1",
+      "조제 완료 후(IPC)",
+      "ERP"
+    ],
+    [
+      "9.2.2",
+      "조제 완료 후(바이오버든)",
+      "ERP"
+    ],
+    [
+      "9.2.3",
+      "충전 완료 후",
+      "ERP"
+    ],
+    [
+      "9.2.4",
+      "포장 완료 후",
+      "LIMS · 연동 없음"
+    ],
+    [
+      "10.1",
+      "PV Validation Master File",
+      "Rev.034"
+    ],
+    [
+      "10.2",
+      "제조설비 적격성 마스터",
+      "IQ·OQ 는 구버전 파일"
+    ],
+    [
+      "10.3-5",
+      "제조지원 설비 마스터",
+      "공조·용수·가스"
+    ],
+    [
+      "11",
+      "일탈 · OOS/OOT · CAPA",
+      "대장"
+    ],
+    [
+      "12",
+      "변경관리 (CC)",
+      "EDMS"
+    ],
+    [
+      "13",
+      "안정성 시험",
+      "개인 작성"
+    ],
+    [
+      "14",
       "반품 · 불만 · 회수",
-      "품질 관련 건과 조사"
+      "대장"
     ],
     [
-      "i",
-      "이전 개선조치 적절성",
-      "전년도 조치의 유효성"
-    ],
-    [
-      "j",
-      "허가 후속 확약사항",
-      "신규·변경 허가 확약 이행"
-    ],
-    [
-      "k",
-      "관련 설비 적격성 상태",
-      "HVAC · 제조용수 · 압축가스"
-    ],
-    [
-      "l",
-      "위 · 수탁 기술협약 검토",
-      "계약 제조·시험 협약 유효성"
+      "15",
+      "전년도 시정조치",
+      "전년도 PQR"
     ]
   ],
   "type_keywords": {
@@ -158,42 +198,65 @@
     "ng"
   ],
   "item_datasets": {
-    "a": [
+    "3": [
+      "products"
+    ],
+    "6": [
       "batches"
     ],
-    "b": [
+    "7": [
       "batches"
     ],
-    "c": [
-      "batches",
+    "8.1.1": [
+      "qualification"
+    ],
+    "8.1.2": [
+      "qualification"
+    ],
+    "8.1.3": [
+      "qualification"
+    ],
+    "8.2.1.1": [
+      "batches"
+    ],
+    "8.2.2": [
+      "batches"
+    ],
+    "9.2.1": [
+      "batches"
+    ],
+    "9.2.2": [
+      "batches"
+    ],
+    "9.2.3": [
+      "batches"
+    ],
+    "9.2.4": [
+      "batches"
+    ],
+    "10.1": [
+      "qualification"
+    ],
+    "10.2": [
+      "qualification"
+    ],
+    "10.3-5": [
+      "qualification"
+    ],
+    "11": [
       "deviations"
     ],
-    "d": [
-      "deviations"
-    ],
-    "e": [
+    "12": [
       "changes"
     ],
-    "f": [
-      "changes"
-    ],
-    "g": [
+    "13": [
       "stability"
     ],
-    "h": [
+    "14": [
       "changes"
     ],
-    "i": [
+    "15": [
       "deviations"
-    ],
-    "j": [
-      "changes"
-    ],
-    "k": [
-      "qualification"
-    ],
-    "l": [
-      "qualification"
     ]
   },
   "dataset_files": {
@@ -232,6 +295,74 @@
       "filename": "stagelog_단계이력",
       "scope": "common"
     }
+  },
+  "dosage_forms": {
+    "_설명": "제형 구분. 제품 마스터의 '제형' 값(없으면 제품명)을 위에서부터 대조해 처음 걸리는 군으로 넣고, 어디에도 안 걸리면 '기타제' 입니다. 점안제·주사제가 액제보다 먼저 와야 점안액·주사액이 액제로 새지 않습니다. 군 값은 키워드 목록이거나 {keywords, exclude} 입니다.",
+    "주사제": [
+      "주사",
+      "앰플",
+      "바이알",
+      "동결건조",
+      "수액",
+      "injection",
+      "inj."
+    ],
+    "점안제": [
+      "점안",
+      "점이",
+      "안액",
+      "ophthalmic",
+      "eyedrop",
+      "eye drop"
+    ],
+    "고형제": {
+      "keywords": [
+        "정제",
+        "나정",
+        "당의정",
+        "코팅정",
+        "서방정",
+        "츄어블",
+        "구강붕해",
+        "캡슐",
+        "산제",
+        "과립",
+        "환제",
+        "트로키",
+        "tablet",
+        "capsule"
+      ],
+      "exclude": [
+        "정제수"
+      ]
+    },
+    "액제": [
+      "시럽",
+      "내용액",
+      "액제",
+      "현탁",
+      "유탁",
+      "엘릭서",
+      "드링크",
+      "경구용액",
+      "syrup",
+      "suspension",
+      "solution"
+    ],
+    "기타제": [
+      "연고",
+      "크림",
+      "겔",
+      "로션",
+      "패치",
+      "첩부",
+      "좌제",
+      "흡입",
+      "분무",
+      "외용",
+      "산화",
+      "카타플라스마"
+    ]
   },
   "lines": {
     "_설명": "무균 제조 라인. key 는 support_equipment 의 key 와 같아야 하며, aliases 로 마스터파일·제품표준서의 다른 표기를 흡수합니다.",
@@ -313,6 +444,159 @@
       "10.5 질소 및 압축가스": [
         "HEA5029",
         "HEA5030"
+      ]
+    }
+  },
+  "item_rules": {
+    "_설명": "평가항목별 판정 규칙. datasets 가 하나도 없으면 '미착수(n)', 있으면 pending 카운터가 남았을 때 '진행 중(p)', 아니면 '완료(y)'. datasets 가 빈 항목은 파일을 올렸는지만 봅니다.",
+    "3": {
+      "datasets": [
+        "products"
+      ],
+      "pending": []
+    },
+    "6": {
+      "datasets": [
+        "batches"
+      ],
+      "pending": []
+    },
+    "7": {
+      "datasets": [
+        "batches"
+      ],
+      "pending": []
+    },
+    "8.1.1": {
+      "datasets": [
+        "qualification"
+      ],
+      "pending": [
+        "contract_due"
+      ]
+    },
+    "8.1.2": {
+      "datasets": [
+        "qualification"
+      ],
+      "pending": []
+    },
+    "8.1.3": {
+      "datasets": [
+        "qualification"
+      ],
+      "pending": [
+        "contract_due"
+      ]
+    },
+    "8.2.1.1": {
+      "datasets": [
+        "batches"
+      ],
+      "pending": [
+        "material_fail"
+      ]
+    },
+    "8.2.2": {
+      "datasets": [
+        "batches"
+      ],
+      "pending": [
+        "material_fail"
+      ]
+    },
+    "9.2.1": {
+      "datasets": [
+        "batches"
+      ],
+      "pending": [
+        "tests_without_spec"
+      ]
+    },
+    "9.2.2": {
+      "datasets": [
+        "batches"
+      ],
+      "pending": []
+    },
+    "9.2.3": {
+      "datasets": [
+        "batches"
+      ],
+      "pending": []
+    },
+    "9.2.4": {
+      "datasets": [
+        "batches"
+      ],
+      "pending": [
+        "batch_fail",
+        "oos_open"
+      ]
+    },
+    "10.1": {
+      "datasets": [
+        "qualification"
+      ],
+      "pending": []
+    },
+    "10.2": {
+      "datasets": [
+        "qualification"
+      ],
+      "pending": [
+        "qualification_due"
+      ]
+    },
+    "10.3-5": {
+      "datasets": [
+        "qualification"
+      ],
+      "pending": [
+        "qualification_due"
+      ]
+    },
+    "11": {
+      "datasets": [
+        "deviations"
+      ],
+      "pending": [
+        "deviation_open",
+        "capa_open"
+      ]
+    },
+    "12": {
+      "datasets": [
+        "changes"
+      ],
+      "pending": [
+        "change_open",
+        "license_open"
+      ]
+    },
+    "13": {
+      "datasets": [
+        "stability"
+      ],
+      "pending": [
+        "stability_adverse",
+        "stability_oos"
+      ]
+    },
+    "14": {
+      "datasets": [
+        "changes"
+      ],
+      "pending": [
+        "complaint_open"
+      ]
+    },
+    "15": {
+      "datasets": [
+        "deviations"
+      ],
+      "pending": [
+        "commitment_open"
       ]
     }
   }

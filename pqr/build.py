@@ -194,6 +194,30 @@ def _matches(text, keywords):
     return any(keyword.replace(" ", "").lower() in lowered for keyword in keywords)
 
 
+FORM_FALLBACK = "기타제"
+
+
+def form_group(text, config, name=""):
+    """제형 표기를 config 의 5개 군(주사제·점안제·고형제·액제·기타제) 중 하나로 옮깁니다.
+
+    위에서부터 처음 걸리는 군을 씁니다 — 점안제·주사제가 액제보다 앞에 있어야
+    '점안액' · '주사액' 이 액제로 새지 않습니다. 제형 칸이 비어 있으면 제품명으로
+    한 번 더 봅니다(마스터에 제형을 안 적는 담당자가 있습니다).
+    """
+    groups = config.get("dosage_forms") or {}
+    for candidate in (text, name):
+        if not candidate:
+            continue
+        for group, rule in groups.items():
+            if group.startswith("_"):
+                continue
+            keywords = rule.get("keywords", []) if isinstance(rule, dict) else rule
+            exclude = rule.get("exclude", []) if isinstance(rule, dict) else []
+            if _matches(candidate, keywords) and not _matches(candidate, exclude):
+                return group
+    return FORM_FALLBACK if (text or name) else ""
+
+
 class Classifier:
     """config 의 키워드로 구분값(일탈 · 변경 · 불만 …)을 판정합니다."""
 
@@ -324,39 +348,25 @@ def _qualification_summary(rows, today, config):
     return summary
 
 
-_ITEM_KEYS = ["a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l"]
+def _checks(context, config):
+    """평가항목별 자료 상태를 config 의 item_rules 로 판정합니다.
 
-
-def _checks(context):
-    """EU GMP §1.10 (a)~(l) 항목별 자료 상태.
-
-    데이터셋 파일이 아예 없으면 '미착수(n)', 있으면 미결 건이 남았을 때 '진행 중(p)',
-    모두 확인되면 '완료(y)' 로 봅니다. 건수 0 은 '해당 없음'으로 보아 완료 처리합니다.
+    항목 목록이 회사 문서 번호(3 · 8.1.1 · 9.2.4 …)로 바뀔 수 있으므로 규칙을 코드에
+    박지 않습니다. 자료가 아예 없으면 '미착수(n)', 있는데 미결 건이 남았으면 '진행 중(p)',
+    다 확인됐으면 '완료(y)' 입니다. 건수 0 은 '해당 없음'으로 보아 완료로 칩니다.
     """
     has = context["has"]
-    result = {}
+    rules = config.get("item_rules") or {}
+    states = []
+    for number, _label, _hint in config["items"]:
+        rule = rules.get(number) or {}
+        datasets = rule.get("datasets") or []
+        # datasets 를 안 적은 항목(허가증 등)은 파일을 올렸는지만 봅니다.
+        present = any(has.get(name) for name in datasets) if datasets else has.get(number, False)
+        pending = any(context.get(counter) for counter in (rule.get("pending") or []))
+        states.append("n" if not present else ("p" if pending else "y"))
+    return states
 
-    def state(dataset_present, pending):
-        if not dataset_present:
-            return "n"
-        return "p" if pending else "y"
-
-    result["a"] = state(has["batches"], not context["material_rows"] or context["material_fail"])
-    result["b"] = state(has["batches"],
-                        not context["batch_rows"] or context["tests_without_spec"] > 0)
-    result["c"] = state(has["batches"] or has["deviations"],
-                        context["oos_open"] > 0 or context["batch_fail"] > 0)
-    result["d"] = state(has["deviations"], context["deviation_open"] > 0)
-    result["e"] = state(has["changes"], context["change_open"] > 0)
-    result["f"] = state(has["changes"], context["license_open"] > 0)
-    result["g"] = state(has["stability"],
-                        context["stability_adverse"] > 0 or context["stability_oos"] > 0)
-    result["h"] = state(has["changes"], context["complaint_open"] > 0)
-    result["i"] = state(has["deviations"], context["capa_open"] > 0)
-    result["j"] = state(has["changes"], context["commitment_open"] > 0)
-    result["k"] = state(has["qualification"], context["qualification_due"] > 0)
-    result["l"] = state(has["qualification"], context["contract_due"] > 0)
-    return [result[key] for key in _ITEM_KEYS]
 
 
 def _reasons(context, checks):
@@ -570,7 +580,7 @@ def build(input_dir=None, files=None, today=None, config=None, period=None):
                                 and item["state"] in ("기한 초과", "갱신 임박")),
         }
 
-        checks = _checks(context)
+        checks = _checks(context, config)
         reasons = _reasons(context, checks)
         collected = checks.count("y")
 
@@ -593,6 +603,7 @@ def build(input_dir=None, files=None, today=None, config=None, period=None):
             "code": code,
             "name": name,
             "form": meta.get("form", ""),
+            "form_group": form_group(meta.get("form", ""), config, name),
             "site": meta.get("site", ""),
             "owner": meta.get("owner", ""),
             "due": due,
@@ -634,6 +645,7 @@ def build(input_dir=None, files=None, today=None, config=None, period=None):
         "period": {"from": period_from, "to": period_to},
         "stages": stages,
         "items": config["items"],
+        "dosage_forms": config.get("dosage_forms", {}),
         "products": products,
         "quality": quality,
         "trend": _trend(datasets.get("deviations", []), datasets.get("changes", []),

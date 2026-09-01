@@ -11,6 +11,9 @@ import urllib.request
 import uuid
 
 from pqr import server as server_module
+from pqr.build import load_config
+
+ITEM_IDS = [item[0] for item in load_config()["items"]]
 from pqr.sample import write_samples
 
 TODAY = "2026-08-27"
@@ -86,8 +89,8 @@ class ServerTest(unittest.TestCase):
         _, body = self.get("/api/data")
         payload = json.loads(body)
         self.assertTrue(payload["upload"]["enabled"])
-        self.assertIn("g", payload["upload"]["item_datasets"])
-        self.assertEqual(payload["upload"]["item_datasets"]["g"], ["stability"])
+        self.assertIn("13", payload["upload"]["item_datasets"])
+        self.assertEqual(payload["upload"]["item_datasets"]["13"], ["stability"])
 
     def test_path_traversal_is_refused(self):
         """urllib 은 경로를 정리해 버리므로 원문 그대로 보내 확인합니다."""
@@ -107,7 +110,7 @@ class ServerTest(unittest.TestCase):
     def test_upload_lands_in_product_folder_and_updates_state(self):
         before = json.loads(self.get("/api/data")[1])
         product = next(p for p in before["products"] if p["code"] == "HP-110")
-        self.assertEqual(product["checks"][6], "n")           # (g) 안정성 미착수
+        self.assertEqual(product["checks"][ITEM_IDS.index("13")], "n")   # 13 안정성 미착수
 
         status, result = self.upload("stability", "HP-110", "안정성.csv",
                                      STABILITY_CSV.encode("utf-8"))
@@ -117,7 +120,7 @@ class ServerTest(unittest.TestCase):
         self.assertTrue(os.path.exists(os.path.join(self.dir, self.folder, "안정성.csv")))
 
         product = next(p for p in result["data"]["products"] if p["code"] == "HP-110")
-        self.assertNotEqual(product["checks"][6], "n")
+        self.assertNotEqual(product["checks"][ITEM_IDS.index("13")], "n")
         self.assertNotIn("stability", product["missing_datasets"])
 
     def test_upload_without_product_code_column_uses_folder(self):

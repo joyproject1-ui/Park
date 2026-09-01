@@ -393,12 +393,13 @@ td.wrap{white-space:normal;min-width:220px}
         <div class="crumb" id="view-crumb">평가기간 2025.07 ~ 2026.06 · 기준일 2026-08-27</div>
       </div>
       <div class="spacer"></div>
-      <div class="seg" role="group" aria-label="공장 필터">
+      <div class="seg" id="site-seg" role="group" aria-label="공장 필터">
         <button data-site="all" aria-pressed="true">전체</button>
         <button data-site="무균1">무균 1공장</button>
         <button data-site="고형2">내용고형 2공장</button>
         <button data-site="주사3">주사 3공장</button>
       </div>
+      <div class="seg" id="form-seg" role="group" aria-label="제형 필터" hidden></div>
       <div class="search"><span aria-hidden="true">🔍</span><input id="q" type="search" placeholder="제품명 · 코드 · 담당자" aria-label="검색"></div>
       <span id="source-note" class="source-note"></span>
       <button class="icon-btn" id="reload-btn" hidden
@@ -477,7 +478,7 @@ td.wrap{white-space:normal;min-width:220px}
       <!-- ============ 평가항목 자료 수집 ============ -->
       <section class="view" id="v-items" hidden>
         <div class="card">
-          <div class="card-head"><h2>평가항목별 자료 수집 현황</h2><span class="pill">EU GMP §1.10 (a)~(l)</span></div>
+          <div class="card-head"><h2>평가항목별 자료 수집 현황</h2><span class="pill">PQR 보고서 항 번호</span></div>
           <div class="card-body" style="display:flex;flex-direction:column;gap:14px">
             <div class="legend">
               <span class="k"><i class="swatch" style="background:var(--ok)"></i>수집 완료</span>
@@ -640,7 +641,7 @@ td.wrap{white-space:normal;min-width:220px}
 
 const SAMPLE_STAGES = ["계획 수립","자료 수집","데이터 검증","보고서 초안","부서 검토","QA 검토","품질책임자 승인","발행 완료"];
 
-/* EU GMP Part I §1.10 (a)~(l) 평가항목 */
+/* 평가항목 — PQR 보고서 항 번호(3 · 8.1.1 · 9.2.4 …) */
 const SAMPLE_ITEMS = [
   ["a","출발물질 · 포장재 검토","신규 공급원 포함 입고·시험 이력"],
   ["b","중요 공정관리 · 완제품 시험결과","공정관리 및 완제품 시험 데이터"],
@@ -750,6 +751,7 @@ function sampleSource(){
 function adopt(source){
   SOURCE = source;
   STAGES = source.stages;
+  FORM_RULES = source.dosage_forms || FORM_RULES;
   ITEMS = source.items;
   TREND = source.trend;
   LEADTIME = source.leadtime || [];
@@ -777,14 +779,102 @@ function adopt(source){
   OPEN = DATA.filter(d=>!d.done);
 }
 
-const state = { view:"dash", site:"all", q:"", filter:"all" };
+/* 제형 구분. build 가 form_group 을 넣어 주지만, 예전 data.js 나 샘플에는 없으므로
+   같은 규칙을 여기서도 한 번 적용합니다. 규칙은 pqr/data/config.json 에서 옵니다. */
+/* 기본 규칙 — data.js 가 없을 때(내장 샘플)도 제형이 나뉘도록 넣어 둡니다.
+   pqr/data/config.json 의 dosage_forms 와 같은 내용이며, data.js 가 있으면 그쪽이 이깁니다. */
+let FORM_RULES = {
+  "주사제": [
+    "주사",
+    "앰플",
+    "바이알",
+    "동결건조",
+    "수액",
+    "injection",
+    "inj."
+  ],
+  "점안제": [
+    "점안",
+    "점이",
+    "안액",
+    "ophthalmic",
+    "eyedrop",
+    "eye drop"
+  ],
+  "고형제": {
+    "keywords": [
+      "정제",
+      "나정",
+      "당의정",
+      "코팅정",
+      "서방정",
+      "츄어블",
+      "구강붕해",
+      "캡슐",
+      "산제",
+      "과립",
+      "환제",
+      "트로키",
+      "tablet",
+      "capsule"
+    ],
+    "exclude": [
+      "정제수"
+    ]
+  },
+  "액제": [
+    "시럽",
+    "내용액",
+    "액제",
+    "현탁",
+    "유탁",
+    "엘릭서",
+    "드링크",
+    "경구용액",
+    "syrup",
+    "suspension",
+    "solution"
+  ],
+  "기타제": [
+    "연고",
+    "크림",
+    "겔",
+    "로션",
+    "패치",
+    "첩부",
+    "좌제",
+    "흡입",
+    "분무",
+    "외용",
+    "산화",
+    "카타플라스마"
+  ]
+};
+const FORM_ORDER = ["주사제","점안제","고형제","액제","기타제"];
+function classifyForm(text){
+  const hay = String(text||"").replace(/\s+/g,"").toLowerCase();
+  if (!hay) return "";
+  for (const [group, rule] of Object.entries(FORM_RULES)){
+    if (group.startsWith("_")) continue;
+    const words = Array.isArray(rule) ? rule : (rule.keywords || []);
+    const skip  = Array.isArray(rule) ? [] : (rule.exclude || []);
+    const hit  = words.some(w=>hay.includes(String(w).replace(/\s+/g,"").toLowerCase()));
+    const veto = skip.some(w=>hay.includes(String(w).replace(/\s+/g,"").toLowerCase()));
+    if (hit && !veto) return group;
+  }
+  return "기타제";
+}
+const formOf = d => d.form_group || classifyForm(d.form || d.name);
+
+const state = { view:"dash", site:"all", form:"all", q:"", filter:"all" };
 
 function visible(){
   return DATA.filter(d=>{
     if (state.site !== "all" && d.site !== state.site) return false;
+    if (state.form !== "all" && formOf(d) !== state.form) return false;
     if (state.q){
       const q = state.q.toLowerCase();
-      if (!(d.code+d.name+d.owner+d.form).toLowerCase().includes(q)) return false;
+      if (!(d.code+d.name+d.owner+d.form+formOf(d)).toLowerCase().includes(q)) return false;
     }
     return true;
   });
@@ -827,7 +917,7 @@ function kpiDefs(rows){
   return [
     { k:"all",    ico:"📦", cls:"",      label:"관리 중 PQR",        v:open.length, foot:`발행 완료 ${rows.length-open.length}건 제외` },
     { k:"soon",   ico:"📅", cls:"amber", label:"마감 임박 (30일 내)", v:open.filter(d=>d.dday<=30).length, foot:"마감일 초과 포함" },
-    { k:"collect",ico:"🗂️", cls:"blue",  label:"자료 대기 (수집 필요)", v:open.filter(d=>d.stage<=1).length, foot:"§1.10 자료 미완결" },
+    { k:"collect",ico:"🗂️", cls:"blue",  label:"자료 대기 (수집 필요)", v:open.filter(d=>d.stage<=1).length, foot:"원본 자료 미완결" },
     { k:"review", ico:"🖊️", cls:"blue",  label:"검토 대기 (승인 필요)", v:open.filter(d=>d.stage>=4).length, foot:"부서 · QA · QP 단계" },
     { k:"late",   ico:"⏰", cls:"red",   label:"지연",               v:open.filter(d=>d.late).length, foot:"마감일 초과" },
     { k:"issue",  ico:"⚠️", cls:"red",   label:"중대 이슈 확인",      v:open.filter(d=>d.dev+d.oos>0).length, foot:"일탈 · OOS/OOT 미결" }
@@ -1247,7 +1337,7 @@ let lastFocus=null;
 function openDrawer(code){
   const d = DATA.find(x=>x.code===code); if(!d) return;
   lastFocus = document.activeElement;
-  $("#dr-code").textContent = [d.code, d.site, d.form].filter(Boolean).join(" · ");
+  $("#dr-code").textContent = [d.code, d.site, formOf(d) || d.form].filter(Boolean).join(" · ");
   $("#dr-title").textContent = d.name;
   const label = { y:['tag g','수집 완료'], p:['tag a','요청 · 진행 중'], n:['tag n','미착수'] };
   $("#dr-body").innerHTML = `
@@ -1276,7 +1366,7 @@ function openDrawer(code){
          <span class="st"><span class="tag r">제품 폴더에 없음</span></span></div>`).join("")}</div>
     </div>` : ""}
     <div>
-      <div class="sec-title">평가항목 자료 (EU GMP §1.10)</div>
+      <div class="sec-title">평가항목 자료 (보고서 항 번호)</div>
       <div class="checklist">${ITEMS.map(([k,n],i)=>{
         const [cls,txt] = label[d.checks[i]];
         return `<div class="checkrow"><span class="k">(${k})</span><span>${esc(n)}</span><span class="st"><span class="${cls}">${txt}</span></span></div>`;
@@ -1381,7 +1471,7 @@ const VIEWMAP = {
   issues:{ sec:"v-products", mode:"issues" },
   schedule:{ sec:"v-products", mode:"schedule" },
   approval:{ sec:"v-products", mode:"approval" },
-  items:{ sec:"v-items", title:"평가항목 자료 수집", crumb:"EU GMP Part I §1.10 (a)~(l) 항목별 수집 상태" },
+  items:{ sec:"v-items", title:"평가항목 자료 수집", crumb:"PQR 보고서 항 번호별 원본 자료 수집 상태" },
   trend:{ sec:"v-trend", title:"품질 이슈 경향", crumb:"최근 12개월 일탈 · OOS/OOT · 불만 발생 추이" },
   lead:{ sec:"v-lead", title:"지연 현황 · 리드타임", crumb:"단계별 소요일과 지연 사유" },
   upload:{ sec:"v-upload", title:"자료 업로드", crumb:"제품 폴더에 자료를 올리고 즉시 다시 집계합니다" },
@@ -1439,17 +1529,27 @@ function updateBadges(){
 /* ---- 이벤트 ---- */
 document.querySelectorAll(".nav-item").forEach(b=>b.addEventListener("click",()=>{ state.filter="all"; go(b.dataset.view); }));
 document.querySelectorAll("[data-view].link").forEach(b=>b.addEventListener("click",()=>go(b.dataset.view)));
-function renderSiteFilter(){
-  const seg = document.querySelector(".seg");
-  const sites = [...new Set(DATA.map(d=>d.site).filter(Boolean))].sort();
-  seg.innerHTML = [`<button data-site="all" aria-pressed="true">전체</button>`]
-    .concat(sites.map(site=>`<button data-site="${esc(site)}">${esc(site)}</button>`)).join("");
-  seg.hidden = sites.length < 2;
+/* 칩 한 줄을 만듭니다. 값이 하나뿐이면 고를 게 없으므로 줄째로 숨깁니다. */
+function renderChipFilter(seg, key, values, label){
+  seg.innerHTML = [`<button data-v="all" aria-pressed="true">전체</button>`]
+    .concat(values.map(v=>`<button data-v="${esc(v)}">${esc(v)}</button>`)).join("");
+  seg.hidden = values.length < 2;
+  if (seg.hidden) state[key] = "all";
+  seg.setAttribute("aria-label", label);
   seg.querySelectorAll("button").forEach(b=>b.addEventListener("click",()=>{
-    state.site = b.dataset.site;
+    state[key] = b.dataset.v;
     seg.querySelectorAll("button").forEach(x=>x.setAttribute("aria-pressed", String(x===b)));
     render();
   }));
+}
+
+function renderSiteFilter(){
+  renderChipFilter($("#site-seg"), "site",
+    [...new Set(DATA.map(d=>d.site).filter(Boolean))].sort(), "공장 필터");
+  // 제형은 자료에 있는 순서가 아니라 정해진 순서(주사제·점안제·고형제·액제·기타제)로 둡니다.
+  const present = new Set(DATA.map(formOf).filter(Boolean));
+  renderChipFilter($("#form-seg"), "form",
+    FORM_ORDER.filter(f=>present.has(f)), "제형 필터");
 }
 document.querySelectorAll("#p-filters .chip").forEach(c=>c.addEventListener("click",()=>{ state.filter=c.dataset.f; render(); }));
 $("#q").addEventListener("input", e=>{ state.q=e.target.value.trim(); render(); });
@@ -1492,6 +1592,7 @@ function boot(source){
   renderSiteFilter();
   renderSourceNote();
   state.site = "all";
+  state.form = "all";
   go(state.view || "dash");
 }
 
