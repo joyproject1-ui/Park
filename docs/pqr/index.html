@@ -1683,7 +1683,23 @@ $("#theme-btn").addEventListener("click", ()=>{
 try{ const t=localStorage.getItem("pqr-theme"); if(t) document.documentElement.setAttribute("data-theme",t); }catch(e){}
 
 /* ---- 데이터 원본 표시와 파일 열기 ---- */
+function renderPreviewBanner(){
+  let banner = $("#preview-banner");
+  if (uploadEnabled()){ if (banner) banner.remove(); return; }
+  if (!banner){
+    banner = el("div", "", "");
+    banner.id = "preview-banner";
+    banner.style.cssText = "background:var(--warn-soft);border:1px solid var(--warn-line);"
+      + "color:var(--warn);border-radius:12px;padding:12px 16px;font-size:13px;line-height:1.6";
+    document.querySelector(".content").prepend(banner);
+  }
+  banner.innerHTML = "<b>⚠️ 읽기 전용 미리보기 화면입니다.</b> 폴더에 넣은 파일(녹색불)은 여기에 반영되지 "
+    + "않습니다. 사내 PC에서 <b>PQR-대시보드-실행.bat</b> 을 더블클릭해 열리는 "
+    + "<b>http://127.0.0.1:8787</b> 화면에서 확인하세요 — 그 화면에는 이 배너가 없습니다.";
+}
+
 function renderSourceNote(){
+  renderPreviewBanner();
   const note = $("#source-note");
   const foot = $("#footnote");
   if (SOURCE.sample){
