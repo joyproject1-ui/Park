@@ -480,10 +480,7 @@ td.wrap{white-space:normal;min-width:220px}
           <div class="filters" id="p-filters">
             <button class="chip" data-f="all" aria-pressed="true">전체</button>
             <button class="chip" data-f="late">지연</button>
-            <button class="chip" data-f="soon">30일 내 마감</button>
-            <button class="chip" data-f="review">검토·승인 대기</button>
-            <button class="chip" data-f="issue">중대 이슈 보유</button>
-            <button class="chip" data-f="done">발행 완료</button>
+            <button class="chip" data-f="done">PQR 완료</button>
             <span class="note">행을 클릭하면 평가항목 상세가 열립니다</span>
           </div>
           <div class="tablewrap">
@@ -1027,7 +1024,12 @@ function renderKpis(rows){
        <span class="label">${esc(d.label)}</span>
        <span class="value num">${d.v}</span>
        <span class="foot">${esc(d.foot)}</span>`);
-    b.addEventListener("click",()=>{ state.filter = d.k==="collect"?"all":(d.k==="soon"?"soon":d.k==="review"?"review":d.k==="late"?"late":d.k==="issue"?"issue":"all"); go("products"); });
+    // 칩에 없는 필터를 걸면 목록만 줄고 눌린 칩이 없어 혼란스럽습니다.
+    // 칩으로 고를 수 있는 것만 겁니다.
+    b.addEventListener("click",()=>{
+      state.filter = FILTERS[d.k] ? d.k : "all";
+      go("products");
+    });
     wrap.appendChild(b);
   });
 }
@@ -1173,13 +1175,13 @@ const MODES = {
   schedule: { title:"PQR 일정(전체)", crumb:"마감일 순 전체 일정", sort:(a,b)=>a.dueD-b.dueD, pred:()=>true },
   approval: { title:"검토 · 승인 현황", crumb:"보고서 초안 작성 단계 — 작성이 끝나면 부서·QA 검토로 넘어갑니다", pred:d=>d.stage===STAGES.length-1 && !d.done }
 };
+/* 화면 위의 칩은 전체 · 지연 · PQR 완료 세 가지입니다.
+   'PQR 완료' 는 제출용 보고서(완성본)가 제품 폴더에 있는 제품입니다 —
+   2단계 모델에는 '발행 완료' 단계가 없으므로 파일이 있느냐로 판단합니다. */
 const FILTERS = {
   all:()=>true,
   late:d=>d.late,
-  soon:d=>!d.done && d.dday<=30,
-  review:d=>!d.done && d.stage===STAGES.length-1,
-  issue:d=>d.dev+d.oos>0,
-  done:d=>d.done
+  done:d=>!!d.final_report
 };
 /* 자료가 아직 안 올라온 항목은 0 이 아니라 '—' 로 둡니다.
    0 으로 적으면 '일탈 없음' 으로 읽혀 사실과 달라집니다. */
