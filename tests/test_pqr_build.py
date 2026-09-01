@@ -379,3 +379,25 @@ class FinalReportTest(unittest.TestCase):
         with zipfile.ZipFile(path) as archive:
             text = archive.read("word/document.xml").decode("utf-8")
         self.assertIn("원본 확인", text)
+
+
+class LegacyXlsTest(unittest.TestCase):
+    """ERP 출력물은 구형 .xls 입니다 — 못 읽으면 8·9항 자료가 통째로 빠집니다."""
+
+    def test_read_table_accepts_xls_extension(self):
+        from pqr import tabular
+        # xlrd 가 없는 PC 에서도 '왜 못 읽는지'와 해결 방법을 알려 줘야 합니다.
+        try:
+            import xlrd                                   # noqa: F401
+        except ImportError:
+            with self.assertRaises(tabular.TableError) as caught:
+                tabular.read_table("없는파일.xls")
+            self.assertIn("xlsx", str(caught.exception))
+            return
+        with self.assertRaises(tabular.TableError):
+            tabular.read_table("없는파일.xls")
+
+    def test_unsupported_extension_still_refused(self):
+        from pqr import tabular
+        with self.assertRaises(tabular.TableError):
+            tabular.read_table("보고서.pdf")

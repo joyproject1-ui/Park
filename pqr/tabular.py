@@ -182,11 +182,43 @@ def _cell_value(cell, strings):
     return text
 
 
+def read_xls(path, sheet=None):
+    """구형 엑셀(.xls) — ERP 출력물이 이 형식입니다.
+
+    표준 라이브러리로는 읽을 수 없어 xlrd 가 있을 때만 동작합니다.
+    ERP 가 만든 .xls 에는 CODEPAGE 레코드가 없어서 xlrd 가 iso-8859-1 로 읽습니다.
+    그러면 '나조린점안액' 이 '³ªÁ¶¸°Á¡¾È¾×' 으로 나옵니다 — cp949 로 못박아 읽습니다.
+    """
+    try:
+        import xlrd
+    except ImportError:
+        raise TableError(
+            "구형 엑셀(.xls)은 xlrd 가 있어야 읽습니다. 엑셀에서 '다른 이름으로 저장 → "
+            "Excel 통합 문서(*.xlsx)' 로 바꿔 올리면 추가 설치 없이 읽습니다: %s" % path)
+    try:
+        book = xlrd.open_workbook(path, encoding_override="cp949")
+    except Exception as error:                       # xlrd 는 형식별로 예외가 제각각입니다
+        raise TableError("xls 파일을 읽지 못했습니다: %s (%s)" % (path, error))
+    names = book.sheet_names()
+    target = book.sheet_by_name(sheet) if sheet in names else book.sheet_by_index(0)
+    rows = []
+    for index in range(target.nrows):
+        rows.append(["" if value is None else str(value).strip()
+                     for value in target.row_values(index)])
+    rows = [row for row in rows if any(cell for cell in row)]
+    if not rows:
+        return []
+    header = [str(cell).strip() for cell in rows[0]]
+    return [_row_to_dict(header, row) for row in rows[1:]]
+
+
 def read_table(path, sheet=None):
-    """확장자를 보고 CSV 또는 XLSX 로 읽습니다."""
+    """확장자를 보고 CSV · XLSX · XLS 로 읽습니다."""
     lowered = str(path).lower()
     if lowered.endswith((".xlsx", ".xlsm")):
         return read_xlsx(path, sheet=sheet)
+    if lowered.endswith(".xls"):
+        return read_xls(path, sheet=sheet)
     if lowered.endswith((".csv", ".tsv", ".txt")):
         return read_csv(path)
-    raise TableError("지원하지 않는 형식입니다 (csv · xlsx 만 지원): %s" % path)
+    raise TableError("지원하지 않는 형식입니다 (csv · xlsx · xls 만 지원): %s" % path)
