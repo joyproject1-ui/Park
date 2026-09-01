@@ -189,3 +189,30 @@ class FilenameTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+    # ---------------- 폴더 열기 · 보고서 작성 ----------------
+
+    def post_json(self, path, payload):
+        request = urllib.request.Request(self.base + path, data=json.dumps(payload).encode(),
+                                         headers={"Content-Type": "application/json"})
+        with urllib.request.urlopen(request, timeout=30) as response:
+            return response.status, json.loads(response.read().decode("utf-8"))
+
+    def test_open_creates_product_folder(self):
+        status, payload = self.post_json("/api/open", {"product": "HP-201"})
+        self.assertEqual(status, 200)
+        self.assertTrue(payload["ok"])
+        self.assertTrue(os.path.isdir(payload["path"]))
+        self.assertIn("HP-201", os.path.basename(payload["path"]))
+
+    def test_report_refuses_until_collection_complete(self):
+        status, payload = self.post_json("/api/report", {"product": "HP-110"})
+        self.assertEqual(status, 200)
+        self.assertFalse(payload["ok"])          # 안정성 파일을 지워 두어 100% 가 아닙니다
+        self.assertIn("%", payload["error"])
+
+    def test_report_writes_files_when_forced(self):
+        status, payload = self.post_json("/api/report", {"product": "HP-110", "force": True})
+        self.assertTrue(payload["ok"])
+        for path in payload["files"]:
+            self.assertTrue(os.path.exists(path))
+

@@ -195,6 +195,10 @@ tbody tr:last-child td{border-bottom:0}
 td.wrap{white-space:normal;min-width:220px}
 .code-btn{border:0;background:none;padding:0;color:var(--accent);font-weight:600;cursor:pointer;font-family:"IBM Plex Mono",monospace;font-size:12.5px}
 .code-btn:hover{text-decoration:underline}
+.name-btn{border:0;background:none;padding:0;color:var(--ink);font:inherit;cursor:pointer;text-align:left}
+.name-btn:hover{color:var(--accent);text-decoration:underline}
+.report-btn{margin-top:5px;color:var(--ok);border-color:var(--ok)}
+.report-btn[disabled]{opacity:.55;cursor:default}
 
 /* chips */
 .tag{display:inline-flex;align-items:center;gap:5px;font-size:11.5px;font-weight:600;padding:3px 9px;border-radius:999px;border:1px solid transparent;white-space:nowrap}
@@ -994,6 +998,49 @@ function ddayCell(d){
 function codeCell(d){
   return `<button class="code-btn" data-code="${d.code}">${d.code}</button>`;
 }
+/* 제품명 클릭 → 서버 모드면 그 제품 폴더를 파일 탐색기로 열어 바로 올릴 수 있게 하고,
+   정적 화면이면 상세 패널을 엽니다. */
+function nameCell(d){
+  const hint = uploadEnabled() ? "제품 폴더 열기" : "상세 보기";
+  return `<td class="wrap"><button class="name-btn" data-folder="${d.code}" title="${hint}">${esc(d.name)}</button></td>`;
+}
+async function openFolder(code){
+  if (!uploadEnabled()){ openDrawer(code); return; }
+  try {
+    const response = await fetch("api/open", { method:"POST",
+      headers:{ "Content-Type":"application/json" }, body: JSON.stringify({ product: code }) });
+    const payload = await response.json();
+    if (!payload.ok) throw new Error(payload.error || "폴더를 열지 못했습니다");
+    showToast(`📂 ${payload.path}${payload.hint ? "<br>" + esc(payload.hint) : ""}`);
+  } catch (error) { showToast("폴더 열기 실패: " + esc(error.message)); }
+}
+/* 자료 수집 100% 가 되면 이 버튼이 생깁니다. 누르면 그 제품의 보고서 초안을 만듭니다. */
+function reportButton(d){
+  if (d.pct < 100) return "";
+  return `<button class="mini report-btn" data-report="${d.code}"
+    ${uploadEnabled() ? "" : `disabled title="python -m pqr serve 로 실행한 경우에만 동작합니다"`}>보고서 작성</button>`;
+}
+async function makeReport(code, button){
+  const original = button.textContent;
+  button.textContent = "작성 중…"; button.disabled = true;
+  try {
+    const response = await fetch("api/report", { method:"POST",
+      headers:{ "Content-Type":"application/json" }, body: JSON.stringify({ product: code }) });
+    const payload = await response.json();
+    if (!payload.ok) throw new Error(payload.error || "보고서를 만들지 못했습니다");
+    showToast("보고서 초안 생성:<br>" + payload.files.map(esc).join("<br>"));
+    button.textContent = "작성됨 ✓";
+  } catch (error) {
+    showToast(esc(error.message)); button.textContent = original; button.disabled = false;
+  }
+}
+let toastTimer = 0;
+function showToast(html){
+  tip.innerHTML = html; tip.classList.add("on");
+  tip.style.left = "50%"; tip.style.top = "18px"; tip.style.transform = "translateX(-50%)";
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(()=>{ tip.classList.remove("on"); tip.style.transform = ""; }, 6000);
+}
 function progCell(d){
   return `<div class="prog"><span class="track"><span class="fill" style="width:${d.pct}%"></span></span><span class="pct num">${d.pct}%</span></div>`;
 }
@@ -1061,7 +1108,7 @@ function renderProducts(rows, mode){
   $("#p-body").innerHTML = list.map(d=>`
     <tr>
       <td>${codeCell(d)}</td>
-      <td class="wrap">${esc(d.name)}</td>
+      ${nameCell(d)}
       <td class="muted">${esc(d.form)}</td>
       <td class="muted">${esc(d.group || d.site || "—")}</td>
       <td>${esc(d.owner || "—")}</td>
@@ -1070,7 +1117,7 @@ function renderProducts(rows, mode){
                    + metricCell(d, d.oos, "deviations")
                    + metricCell(d, d.chg, "changes")
                    + metricCell(d, d.cmp, "changes") : ""}
-      <td>${progCell(d)}</td>
+      <td>${progCell(d)}${reportButton(d)}</td>
       <td>${stageTag(d)}</td>
       <td class="mono">${d.due} ${d.done?"":`<span style="margin-left:6px">${ddayCell(d)}</span>`}</td>
     </tr>`).join("") || `<tr><td colspan="${span}" class="muted" style="padding:22px">조건에 맞는 PQR이 없습니다.</td></tr>`;
@@ -1089,11 +1136,11 @@ function renderMatrix(rows){
   $("#matrix-body").innerHTML = list.map(d=>`
     <tr>
       <td>${codeCell(d)}</td>
-      <td class="wrap">${esc(d.name)}</td>
+      ${nameCell(d)}
       ${d.checks.map((c,i)=>`<td class="cell"><button class="cell-btn" data-upload="${d.code}|${ITEMS[i][0]}"
           data-tip="${d.code}|${i}" ${uploadEnabled()?"":"disabled"}
           aria-label="${esc(d.name)} (${ITEMS[i][0]}) ${esc(ITEMS[i][1])} 자료 올리기"><span class="dot ${c}"></span></button>`).join("")}
-      <td>${progCell(d)}</td>
+      <td>${progCell(d)}${reportButton(d)}</td>
       <td>${stageTag(d)}</td>
     </tr>`).join("");
   $("#matrix-body").querySelectorAll(".cell-btn").forEach(n=>{
@@ -1344,13 +1391,13 @@ function renderUpload(rows){
   $("#upload-body").innerHTML = list.map(d=>`
     <tr>
       <td>${codeCell(d)}</td>
-      <td class="wrap">${esc(d.name)}</td>
+      ${nameCell(d)}
       ${d.checks.map((c,i)=>`<td class="cell"><button class="cell-btn"
           data-upload="${d.code}|${esc(ITEMS[i][0])}" data-uptip="${d.code}|${i}"
           ${uploadEnabled()?"":"disabled"}
           aria-label="${esc(d.name)} (${esc(ITEMS[i][0])}) ${esc(ITEMS[i][1])} 자료 올리기"
           ><span class="dot ${c}"></span></button></td>`).join("")}
-      <td>${progCell(d)}</td>
+      <td>${progCell(d)}${reportButton(d)}</td>
     </tr>`).join("");
   $("#upload-body").querySelectorAll(".cell-btn").forEach(n=>{
     const [code,i] = n.dataset.uptip.split("|");
@@ -1390,6 +1437,10 @@ function openDrawer(code){
   $("#dr-title").textContent = d.name;
   const label = { y:['tag g','수집 완료'], p:['tag a','요청 · 진행 중'], n:['tag n','미착수'] };
   $("#dr-body").innerHTML = `
+    <div style="display:flex;gap:8px;flex-wrap:wrap">
+      <button class="mini" data-folder="${d.code}">📂 제품 폴더 열기</button>
+      ${reportButton(d)}
+    </div>
     <dl class="kv">
       <dt>평가기간</dt><dd class="mono">${PERIOD}</dd>
       <dt>마감일</dt><dd class="mono">${d.due} ${d.done?'':`&nbsp;${ddayCell(d)}`}</dd>
@@ -1441,6 +1492,10 @@ document.addEventListener("click", e=>{
     openUpload(code, item);
     return;
   }
+  const folder = e.target.closest(".name-btn");
+  if (folder){ openFolder(folder.dataset.folder); return; }
+  const report = e.target.closest(".report-btn");
+  if (report && !report.disabled){ makeReport(report.dataset.report, report); return; }
   const code = e.target.closest(".code-btn");
   if (code) openDrawer(code.dataset.code);
 });

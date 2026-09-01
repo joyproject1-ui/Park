@@ -10,6 +10,8 @@ import json
 import os
 import posixpath
 import re
+import subprocess
+import sys
 import shutil
 import tempfile
 import threading
@@ -70,6 +72,22 @@ def parse_multipart(content_type, body):
         else:
             fields[name.group(1)] = payload.decode("utf-8", "replace").strip()
     return fields
+
+
+def open_in_file_manager(path):
+    """폴더를 운영체제 파일 관리자로 엽니다 (안 되면 조용히 False).
+
+    브라우저는 로컬 폴더를 열 수 없으므로, 담당자 PC 에서 도는 이 서버가 대신 엽니다.
+    """
+    try:
+        if sys.platform == "win32":
+            os.startfile(path)                                  # noqa: S606 — 로컬 도구
+            return True
+        command = ["open", path] if sys.platform == "darwin" else ["xdg-open", path]
+        subprocess.Popen(command, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        return True
+    except Exception:
+        return False
 
 
 class Workspace(object):
@@ -329,12 +347,52 @@ class Handler(BaseHTTPRequestHandler):
                 written = self.workspace.write_outputs()
                 return self._json(200, {"ok": True, "files": [os.path.basename(p) for p in written],
                                         "out_dir": self.workspace.out_dir})
+            if path == "/api/open":
+                return self._json(200, self._handle_open())
+            if path == "/api/report":
+                return self._json(200, self._handle_report())
         except UploadError as error:
             return self._json(400, {"ok": False, "error": str(error)})
         except Exception as error:               # 서버가 죽지 않도록 오류를 그대로 알려 줍니다.
             return self._json(500, {"ok": False, "error": "%s: %s"
                                     % (type(error).__name__, error)})
         return self._send(404, "찾을 수 없습니다", "text/plain; charset=utf-8")
+
+    def _read_json(self):
+        length = int(self.headers.get("Content-Length") or 0)
+        if length <= 0 or length > 65536:
+            raise UploadError("요청 내용이 없습니다.")
+        try:
+            return json.loads(self.rfile.read(length).decode("utf-8"))
+        except ValueError:
+            raise UploadError("요청을 해석하지 못했습니다.")
+
+    def _handle_open(self):
+        """제품 폴더를 만들고(없으면) 파일 관리자로 엽니다 — 담당자가 바로 파일을 끌어다 놓게."""
+        body = self._read_json()
+        folder = self.workspace.product_folder(str(body.get("product") or "").strip())
+        opened = open_in_file_manager(folder)
+        return {"ok": True, "path": folder, "opened": opened,
+                "hint": "" if opened else "폴더를 자동으로 열지 못했습니다. 위 경로를 파일 탐색기에 붙여넣으세요."}
+
+    def _handle_report(self):
+        """한 제품의 보고서 초안을 만듭니다. 자료 수집이 덜 됐으면 만들지 않고 알려 줍니다."""
+        from . import report as report_module
+        body = self._read_json()
+        code = str(body.get("product") or "").strip()
+        product = next((item for item in self.workspace.data["products"]
+                        if item["code"] == code), None)
+        if product is None:
+            raise UploadError("제품을 찾지 못했습니다: %s" % code)
+        if product.get("pct", 0) < 100 and not body.get("force"):
+            missing = [item_id for item_id, state
+                       in zip((row[0] for row in self.workspace.data["items"]), product["checks"])
+                       if state == "n"]
+            return {"ok": False, "error": "자료 수집이 %d%% 입니다. 미착수 항목: %s"
+                    % (product.get("pct", 0), ", ".join(missing) or "-")}
+        out_dir = os.path.join(self.workspace.out_dir, "reports")
+        written = report_module.write_reports(self.workspace.data, out_dir, codes=[code])
+        return {"ok": True, "files": [os.path.abspath(p) for p in written]}
 
     def _handle_upload(self):
         length = int(self.headers.get("Content-Length") or 0)

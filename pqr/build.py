@@ -9,6 +9,7 @@ import datetime as _dt
 import hashlib
 import json
 import os
+import re
 
 from . import metrics, schema
 from .tabular import TableError, read_table
@@ -348,6 +349,84 @@ def _qualification_summary(rows, today, config):
     return summary
 
 
+# 파일 이름 맨 앞의 항 번호 — "9.2.1 조제 완료 후", "3. 허가증 ..." 의 숫자 부분
+_ITEM_TOKEN = re.compile(r"^\s*(\d+(?:\.\d+)*)")
+_ITEM_SEPARATORS = ". _-()[]·"
+
+
+def item_matcher(items):
+    """평가항목 번호로 파일 이름을 항목에 잇는 함수를 만듭니다.
+
+    담당자가 폴더에 올리는 파일은 보고서 항 번호로 시작합니다 —
+    "3. 허가증 ...pdf", "9.2.1 조제 완료 후" 폴더, "10.3, 10.4, 10.5 제조지원 ...xlsx".
+    표 형식이 아니어서 적재하지 못하는 파일(PDF·스캔)도 '자료가 왔다'는 사실은
+    수집 현황에 보여야 하므로, 이름만으로 항목을 알아봅니다.
+    """
+    ids = [row[0] for row in items]
+    exact = set(ids)
+    ranged = {}
+    for item_id in ids:
+        span = re.match(r"^(\d+(?:\.\d+)*)\.(\d+)-(\d+)$", item_id)
+        if span:
+            prefix, start, end = span.group(1), int(span.group(2)), int(span.group(3))
+            for k in range(start, end + 1):
+                ranged["%s.%d" % (prefix, k)] = item_id
+
+    def match(name):
+        found = _ITEM_TOKEN.match(name)
+        if not found:
+            return None
+        token = found.group(1)
+        rest = name[found.end():]
+        # "3M필름" 같은 오인을 막습니다: 영숫자가 바로 붙으면 번호가 아닙니다.
+        if rest and rest[0].isascii() and rest[0].isalnum():
+            return None
+        # 한 자리 번호("3", "13")는 "3분기"류 오인이 잦아 구분자를 요구합니다.
+        if "." not in token and rest and rest[0] not in _ITEM_SEPARATORS:
+            return None
+        if token in exact:
+            return token
+        if token in ranged:
+            return ranged[token]
+        deeper = [item_id for item_id in exact if item_id.startswith(token + ".")]
+        return deeper[0] if len(deeper) == 1 else None
+
+    return match
+
+
+def collect_item_files(input_dir, items):
+    """제품 폴더에서 항 번호로 시작하는 파일·폴더를 찾습니다.
+
+    반환값: {제품코드: {항목번호: [이름, ...]}}. 번호가 붙은 폴더는 안에 파일이
+    하나라도 있어야 셉니다 — 빈 폴더는 자료가 아닙니다.
+    """
+    match = item_matcher(items)
+    result = {}
+    if not input_dir or not os.path.isdir(input_dir):
+        return result
+    for folder in sorted(os.listdir(input_dir)):
+        folder_path = os.path.join(input_dir, folder)
+        if not os.path.isdir(folder_path) or folder.startswith("."):
+            continue
+        code = _folder_product_code(folder)   # 공통 폴더는 여기서 None 이 됩니다
+        if not code:
+            continue
+        found = {}
+        for name in sorted(os.listdir(folder_path)):
+            item_id = match(name)
+            if not item_id:
+                continue
+            path = os.path.join(folder_path, name)
+            if os.path.isdir(path):
+                has_content = any(files for _, _, files in os.walk(path))
+                if not has_content:
+                    continue
+            found.setdefault(item_id, []).append(name)
+        if found:
+            result[code] = found
+    return result
+
+
 def _checks(context, config, meta=None):
     """평가항목별 자료 상태를 config 의 item_rules 로 판정합니다.
 
@@ -361,18 +440,25 @@ def _checks(context, config, meta=None):
     """
     has = context["has"]
     meta = meta or {}
+    item_files = context.get("item_files") or {}
     rules = config.get("item_rules") or {}
     states = []
     for number, _label, _hint in config["items"]:
         rule = rules.get(number) or {}
         datasets = rule.get("datasets") or []
         fields = rule.get("fields") or []
+        # 항 번호가 붙은 파일이 폴더에 있으면 그 항목의 자료는 온 것입니다.
+        # 표로 못 읽는 파일(PDF·스캔)이어도 수집 자체는 됐다고 보여 줍니다.
+        has_file = number in item_files
         if fields:
             filled = sum(1 for name in fields if str(meta.get(name) or "").strip())
-            states.append("y" if filled == len(fields) else ("p" if filled else "n"))
+            if has_file or filled == len(fields):
+                states.append("y")
+            else:
+                states.append("p" if filled else "n")
             continue
-        # datasets 를 안 적은 항목은 그 이름의 파일을 올렸는지만 봅니다.
-        present = any(has.get(name) for name in datasets) if datasets else has.get(number, False)
+        present = has_file or (any(has.get(name) for name in datasets)
+                               if datasets else has.get(number, False))
         pending = any(context.get(counter) for counter in (rule.get("pending") or []))
         states.append("n" if not present else ("p" if pending else "y"))
     return states
@@ -498,6 +584,12 @@ def build(input_dir=None, files=None, today=None, config=None, period=None):
     submitted = presence["products"]
     common_datasets = presence["common"]
 
+    # 항 번호가 붙은 파일·폴더 — 표로 못 읽는 자료도 수집 현황에는 보여야 합니다.
+    item_files_by_product = collect_item_files(input_dir, config["items"]) if input_dir else {}
+    matcher = item_matcher(config["items"])
+    presence["unknown"] = [path for path in presence["unknown"]
+                           if not matcher(os.path.basename(path))]
+
     products_meta = {row["product_code"]: row for row in datasets.get("products", [])}
     batches = _group(datasets.get("batches", []))
     deviations = _group(datasets.get("deviations", []))
@@ -568,6 +660,7 @@ def build(input_dir=None, files=None, today=None, config=None, period=None):
         }
         context = {
             "has": product_has,
+            "item_files": item_files_by_product.get(code, {}),
             "material_rows": len(material_rows),
             "material_fail": sum(1 for row in material_rows if classifier.failed(row)),
             "batch_rows": len(batch_rows),
@@ -617,6 +710,7 @@ def build(input_dir=None, files=None, today=None, config=None, period=None):
             "form": meta.get("form", ""),
             "form_group": form_group(meta.get("form", ""), config, name),
             "group": meta.get("group", ""),
+            "item_files": item_files_by_product.get(code, {}),
             # 담당자는 마스터에 적힌 값이 먼저고, 없으면 제형별 담당표에서 가져옵니다.
             "owner_source": "master" if meta.get("owner") else ("form" if owner else ""),
             "lots": meta.get("lots"),
@@ -647,7 +741,8 @@ def build(input_dir=None, files=None, today=None, config=None, period=None):
             "tests": tests,
             "stability": stability_tests,
             "qualification": qualification_state,
-            "counts": {key: value for key, value in context.items() if key != "has"},
+            "counts": {key: value for key, value in context.items()
+                       if key not in ("has", "item_files")},
             "records": {
                 "deviations": deviation_rows, "oos": oos_rows,
                 "changes": change_rows + license_rows, "complaints": complaint_rows,

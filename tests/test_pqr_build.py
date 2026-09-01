@@ -183,3 +183,65 @@ class ItemRuleTest(unittest.TestCase):
                               "counter_sources 에 없는 카운터: %s" % counter)
             for name in rule["datasets"]:
                 self.assertIn(name, schema.DATASETS, "없는 자료 이름: %s" % name)
+
+class ItemFileTest(unittest.TestCase):
+    """항 번호가 붙은 파일·폴더가 수집 현황에 잡히는지 봅니다.
+
+    예시 자료가 여러 항목을 이미 채우므로, 안정성 파일을 지워 13항을
+    미착수로 만들어 놓고 파일 인식만으로 상태가 바뀌는지 확인합니다.
+    """
+
+    def setUp(self):
+        self.dir = tempfile.mkdtemp()
+        write_samples(self.dir, layout="tree")
+        self.folder = os.path.join(
+            self.dir, next(name for name in os.listdir(self.dir) if name.startswith("HP-110")))
+        os.remove(os.path.join(self.folder, "안정성.csv"))
+
+    def tearDown(self):
+        shutil.rmtree(self.dir, ignore_errors=True)
+
+    def snapshot(self):
+        data = build.build(input_dir=self.dir, today=TODAY)
+        ids = [item[0] for item in data["items"]]
+        product = next(p for p in data["products"] if p["code"] == "HP-110")
+        return dict(zip(ids, product["checks"])), product, data
+
+    def touch(self, name):
+        with open(os.path.join(self.folder, name), "wb") as handle:
+            handle.write(b"x")
+
+    def test_numbered_pdf_turns_item_green(self):
+        states, _, _ = self.snapshot()
+        self.assertEqual(states["13"], "n")
+        self.touch("13. 안정성 시험 보고서.pdf")
+        states, product, _ = self.snapshot()
+        self.assertEqual(states["13"], "y")
+        self.assertIn("13", product["item_files"])
+
+    def test_numbered_folder_counts_only_with_content(self):
+        folder = os.path.join(self.folder, "13. 안정성 시험")
+        os.makedirs(folder)
+        states, _, _ = self.snapshot()
+        self.assertEqual(states["13"], "n", "빈 폴더는 자료가 아닙니다")
+        with open(os.path.join(folder, "보고서.pdf"), "wb") as handle:
+            handle.write(b"x")
+        states, _, _ = self.snapshot()
+        self.assertEqual(states["13"], "y")
+
+    def test_range_and_prefix_ids_map_to_items(self):
+        self.touch("10.3, 10.4, 10.5 제조지원 설비.pdf")
+        _, product, _ = self.snapshot()
+        self.assertIn("10.3-5", product["item_files"])
+
+    def test_lookalike_names_are_not_items(self):
+        self.touch("13주년 행사 안내.pdf")   # 구분자 없는 한글 — 항목 아님
+        self.touch("13M 자료.pdf")           # 영숫자가 바로 붙음 — 항목 아님
+        states, product, _ = self.snapshot()
+        self.assertEqual(states["13"], "n")
+        self.assertNotIn("13", product["item_files"])
+
+    def test_numbered_files_are_not_reported_unknown(self):
+        self.touch("7. 수율현황표.pdf")
+        _, _, data = self.snapshot()
+        self.assertNotIn("7. 수율현황표.pdf", data["unknown_files"])
