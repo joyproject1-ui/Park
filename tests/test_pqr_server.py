@@ -255,3 +255,63 @@ class FilenameTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ItemUploadTest(ServerTest):
+    """평가항목 자료는 제품 폴더에 항 번호 이름으로 저장됩니다.
+
+    표준 대장으로 읽으려 들면 '원료 공급업체 List' 가 '설비 적격성' 으로 저장되는
+    일이 생깁니다 — 실제로 그렇게 보였습니다.
+    """
+
+    def upload_item(self, product, item, filename, payload=b"x" * 40):
+        import uuid
+        boundary = uuid.uuid4().hex
+        parts = []
+        for name, value in (("product", product), ("item", item)):
+            parts.append(("--%s\r\nContent-Disposition: form-data; name=\"%s\"\r\n\r\n%s\r\n"
+                          % (boundary, name, value)).encode())
+        parts.append(("--%s\r\nContent-Disposition: form-data; name=\"file\"; "
+                      "filename=\"%s\"\r\n\r\n" % (boundary, filename)).encode())
+        parts.append(payload + b"\r\n" + ("--%s--\r\n" % boundary).encode())
+        request = urllib.request.Request(
+            self.base + "/api/upload", data=b"".join(parts),
+            headers={"Content-Type": "multipart/form-data; boundary=" + boundary})
+        try:
+            with urllib.request.urlopen(request, timeout=30) as response:
+                return json.loads(response.read().decode("utf-8"))
+        except urllib.error.HTTPError as error:
+            return json.loads(error.read().decode("utf-8"))
+
+    def test_saved_into_the_product_folder_with_the_item_number(self):
+        result = self.upload_item("HP-110", "13", "안정성 결과표.xlsx")
+        self.assertTrue(result["ok"], result.get("error"))
+        self.assertIn("HP-110", result["saved"])
+        self.assertTrue(os.path.basename(result["saved"]).startswith("13 "),
+                        result["saved"])
+        product = next(p for p in result["data"]["products"] if p["code"] == "HP-110")
+        ids = [item[0] for item in result["data"]["items"]]
+        self.assertEqual(dict(zip(ids, product["checks"]))["13"], "y")
+
+    def test_company_original_keeps_its_own_name(self):
+        """이미 항 번호로 시작하면 번호를 또 붙이지 않습니다."""
+        name = "8.1.1 원료 공급업체 List_(Rev.26).xlsx"
+        result = self.upload_item("HP-110", "8.1.1", name)
+        self.assertTrue(result["ok"], result.get("error"))
+        self.assertEqual(os.path.basename(result["saved"]), name)
+
+    def test_pdf_and_legacy_xls_are_accepted(self):
+        """근거 자료는 성적서 PDF 와 ERP 의 구형 .xls 로 옵니다."""
+        for filename in ("6. 제조내역 - ERP.pdf", "RSN101 주원료.xls", "안정성.docx"):
+            result = self.upload_item("HP-110", "6", filename)
+            self.assertTrue(result["ok"], "%s: %s" % (filename, result.get("error")))
+
+    def test_executable_is_refused(self):
+        result = self.upload_item("HP-110", "6", "악성.exe")
+        self.assertFalse(result.get("ok"))
+        self.assertIn("형식", result["error"])
+
+    def test_unknown_item_is_refused(self):
+        result = self.upload_item("HP-110", "9.9", "무엇.pdf")
+        self.assertFalse(result.get("ok"))
+        self.assertIn("평가항목", result["error"])

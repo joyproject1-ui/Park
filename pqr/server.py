@@ -22,6 +22,11 @@ from . import report as report_module
 
 MAX_UPLOAD = 64 * 1024 * 1024          # 파일 하나당 64 MB
 ALLOWED_SUFFIXES = (".csv", ".tsv", ".txt", ".xlsx", ".xlsm")
+# 평가항목 근거 자료는 회사 원본 그대로 들어옵니다 — 성적서 PDF, ERP 가 뽑은 구형 .xls,
+# 한글 문서 등. 표로 읽지 않고 '자료가 왔다' 는 근거로 두므로 형식을 넓게 받습니다.
+ALLOWED_ITEM_SUFFIXES = ALLOWED_SUFFIXES + (
+    ".pdf", ".xls", ".doc", ".docx", ".hwp", ".hwpx", ".ppt", ".pptx",
+    ".png", ".jpg", ".jpeg", ".zip")
 _UNSAFE = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
 
 
@@ -29,14 +34,15 @@ class UploadError(Exception):
     """사용자에게 그대로 보여줄 수 있는 업로드 오류."""
 
 
-def safe_filename(name):
+def safe_filename(name, allowed=None):
     """경로 요소를 제거하고 확장자를 확인합니다."""
+    allowed = allowed or ALLOWED_SUFFIXES
     base = os.path.basename(str(name or "").replace("\\", "/")).strip()
     base = _UNSAFE.sub("_", base).lstrip(".")
     if not base:
         raise UploadError("파일 이름이 비어 있습니다.")
-    if not base.lower().endswith(ALLOWED_SUFFIXES):
-        raise UploadError("올릴 수 있는 형식은 %s 입니다." % ", ".join(ALLOWED_SUFFIXES))
+    if not base.lower().endswith(allowed):
+        raise UploadError("올릴 수 있는 형식은 %s 입니다." % ", ".join(allowed))
     return base
 
 
@@ -202,6 +208,40 @@ class Workspace(object):
             if score > best_score:
                 best, best_score = name, score
         return best
+
+    def save_item_file(self, code, item_id, filename, payload):
+        """평가항목 자료를 제품 폴더에 '항 번호로 시작하는 이름' 으로 저장합니다.
+
+        담당자가 올리는 것은 표준 대장이 아니라 회사 원본(공급업체 List · 성적서 PDF …)
+        입니다. 이것을 대장으로 읽으려 들면 맞지도 않는 자료 종류가 붙고 저장 위치도
+        엉뚱해집니다 — '원료 공급업체 List' 를 '설비 적격성' 으로 저장하던 문제입니다.
+        파일 이름 앞의 항 번호가 곧 인식 규칙이므로 그대로 따릅니다.
+        """
+        if len(payload) > MAX_UPLOAD:
+            raise UploadError("파일이 너무 큽니다 (최대 %d MB)." % (MAX_UPLOAD // 1024 // 1024))
+        if not payload:
+            raise UploadError("빈 파일입니다.")
+        labels = {row[0]: row[1] for row in self.data["items"]}
+        if item_id not in labels:
+            raise UploadError("평가항목을 찾지 못했습니다: %s" % item_id)
+        folder = self.product_folder(code)
+        base = safe_filename(filename, ALLOWED_ITEM_SUFFIXES) or "자료"
+        # 회사 원본은 이미 항 번호로 시작하는 일이 많습니다. 그럴 때는 이름을 그대로 둡니다 —
+        # 앞에 번호를 또 붙이면 '8.1.1 … - 8.1.1 …' 처럼 됩니다.
+        matcher = build_module.item_matcher(self.data["items"])
+        if matcher(base) == item_id:
+            target = os.path.join(folder, base)
+        else:
+            stem, suffix = os.path.splitext(base)
+            label = " ".join(_UNSAFE.sub(" ", labels[item_id]).split())
+            target = os.path.join(folder, "%s %s - %s%s" % (item_id, label, stem, suffix))
+        with self.lock:
+            with open(target, "wb") as handle:
+                handle.write(payload)
+        self.rebuild()
+        return {"saved": os.path.relpath(target, self.input_dir),
+                "folder": os.path.abspath(folder),
+                "name": os.path.basename(target)}
 
     def save_upload(self, dataset, code, filename, payload, replace=True):
         """검증한 뒤에만 제품(또는 공통) 폴더에 저장하고 다시 집계합니다.
@@ -494,6 +534,14 @@ class Handler(BaseHTTPRequestHandler):
         upload = fields.get("file")
         if not isinstance(upload, tuple):
             raise UploadError("파일을 선택하세요.")
+        item_id = (fields.get("item") or "").strip()
+        if item_id:
+            result = self.workspace.save_item_file(
+                code=fields.get("product") or "", item_id=item_id,
+                filename=upload[0], payload=upload[1])
+            result["ok"] = True
+            result["data"] = self.workspace.dashboard_payload()
+            return result
         result = self.workspace.save_upload(
             dataset=fields.get("dataset") or "",
             code=fields.get("product") or "",

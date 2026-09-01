@@ -210,6 +210,20 @@ td.wrap{white-space:normal;min-width:220px}
 .contact-link{color:var(--accent);font-weight:600;font-size:12.5px;word-break:break-all}
 .contact-note{margin:0;padding:11px 14px;border-radius:9px;font-size:12.5px;line-height:1.7;
   background:var(--warn-soft);border:1px solid var(--warn-line);color:var(--warn)}
+.contact-form{border:1px solid var(--accent-line);border-radius:10px;padding:14px 16px;
+  background:var(--accent-soft)}
+.contact-form h3{margin:0 0 6px;font-size:13.5px;font-weight:700;color:var(--ink)}
+.contact-formnote{margin:0 0 11px;font-size:12.5px;color:var(--ink-2);line-height:1.75}
+.contact-fields{display:flex;flex-direction:column;gap:9px}
+.contact-fields label{display:flex;flex-direction:column;gap:4px;font-size:12px;
+  font-weight:600;color:var(--ink-2)}
+.contact-fields input,.contact-fields textarea{font:inherit;font-size:12.5px;font-weight:400;
+  padding:8px 10px;border:1px solid var(--line-2);border-radius:8px;
+  background:var(--surface);color:var(--ink);resize:vertical}
+.contact-fields input:focus,.contact-fields textarea:focus{outline:2px solid var(--accent);
+  outline-offset:-1px;border-color:var(--accent)}
+.contact-actions{display:flex;align-items:center;gap:9px;margin-top:11px;flex-wrap:wrap}
+.contact-status{font-size:12px;color:var(--ok)}
 .report-btn{margin-top:5px;color:var(--ok);border-color:var(--ok)}
 .report-btn[disabled]{opacity:.55;cursor:default}
 .final-btn{margin-top:5px;color:var(--accent);border-color:var(--accent);font-weight:700}
@@ -645,6 +659,29 @@ td.wrap{white-space:normal;min-width:220px}
               </div>
             </div>
 
+            <div class="contact-form">
+              <h3>문의하기</h3>
+              <p class="contact-formnote">쓰시다가 불편한 점이나 고쳤으면 하는 것을 적어 주세요.
+                <b>보내기</b>를 누르면 메일 프로그램(Outlook 등)이 열리고
+                <b>jhp5408@hanlim.com</b> 앞으로 내용이 채워집니다. 확인한 뒤 보내시면 됩니다.</p>
+              <div class="contact-fields">
+                <label>보내는 사람
+                  <input id="ct-from" type="text" placeholder="이름 · 소속 (예: 홍길동 / QC1팀)" maxlength="60">
+                </label>
+                <label>제목
+                  <input id="ct-subject" type="text" placeholder="무엇에 대한 문의인가요?" maxlength="120">
+                </label>
+                <label>내용
+                  <textarea id="ct-body" rows="6" placeholder="어떤 화면에서 무엇을 하려다가 무엇이 안 되었는지 적어 주세요.&#10;예) 평가항목 자료 수집에서 9.2.1 칸에 성적서를 올렸는데 녹색으로 바뀌지 않습니다."></textarea>
+                </label>
+              </div>
+              <div class="contact-actions">
+                <button class="mini" id="ct-send">✉️ 보내기</button>
+                <button class="mini" id="ct-copy">내용 복사</button>
+                <span class="contact-status" id="ct-status"></span>
+              </div>
+            </div>
+
             <p class="contact-note">보고서 초안과 집계 결과는 <b>사람이 검토하고 승인해야</b> 합니다.
               프로그램이 만든 문서를 그대로 결재에 올리지 마세요.</p>
           </div>
@@ -685,7 +722,7 @@ td.wrap{white-space:normal;min-width:220px}
          aria-label="파일 선택 — 끌어다 놓거나 눌러서 고르세요">
       <input type="file" id="up-file" accept=".csv,.tsv,.txt,.xlsx,.xlsm" hidden>
       <b>파일을 끌어다 놓거나 눌러서 고르세요</b>
-      <small>xlsx · xlsm · csv · tsv (최대 64 MB)</small>
+      <small>pdf · xlsx · xls · csv · 문서 파일 (최대 64 MB)</small>
       <span class="picked" id="up-filename"></span>
     </div>
     <div class="up-path" id="up-path"></div>
@@ -1407,11 +1444,10 @@ function openUpload(code, itemKey){
     $("#up-submit").hidden = true;
     $("#up-none").hidden = true;
   } else {
-    const datasets = datasetsForItem(itemKey);
     refreshUploadState();
-    $("#up-dataset-field").hidden = datasets.length === 0;
-    $("#up-dataset").innerHTML = datasets
-      .map(name=>`<option value="${esc(name)}">${esc(datasetLabel(name))}</option>`).join("");
+    // 평가항목 자료는 회사 원본 그대로 제품 폴더에 들어갑니다. 표준 대장이 아니므로
+    // '자료 종류' 를 고르게 하면 맞지도 않는 종류가 붙습니다.
+    $("#up-dataset-field").hidden = true;
     $("#up-drop").hidden = false;
     $("#up-path").hidden = false;
     $("#up-submit").hidden = false;
@@ -1438,15 +1474,24 @@ function refreshUploadState(){
     + `${esc(item[2])}<br>이 항목은 아래 자료로 채워집니다.`;
 }
 
+/* 파일이 실제로 어디에 어떤 이름으로 저장되는지 그대로 보여 줍니다.
+   서버의 save_item_file 과 같은 규칙입니다 — 이름이 이미 항 번호로 시작하면 그대로. */
 function updatePathHint(){
   if (!uploadTarget || !uploadEnabled()) return;
-  const dataset = $("#up-dataset").value;
-  const spec = (uploadConfig().datasets || {})[dataset] || {};
   const product = DATA.find(d=>d.code===uploadTarget.code);
-  const folder = spec.scope === "common" ? "공통"
-    : `${uploadTarget.code} ${product ? product.name : ""}`.trim();
-  const name = pickedFile ? pickedFile.name : `${spec.filename || dataset}.xlsx`;
-  $("#up-path").textContent = `저장 위치:  ${folder}/${name}`;
+  const item = ITEMS.find(row=>row[0]===uploadTarget.item);
+  const folder = `${uploadTarget.code} ${product ? product.name : ""}`.trim();
+  if (!pickedFile){
+    $("#up-path").textContent = `저장 위치:  ${folder}/  (파일을 고르면 이름이 정해집니다)`;
+    return;
+  }
+  const name = pickedFile.name;
+  const alreadyNumbered = name.trim().startsWith(uploadTarget.item);
+  const dot = name.lastIndexOf(".");
+  const stem = dot > 0 ? name.slice(0, dot) : name;
+  const suffix = dot > 0 ? name.slice(dot) : "";
+  const saved = alreadyNumbered ? name : `${item[0]} ${item[1]} - ${stem}${suffix}`;
+  $("#up-path").textContent = `저장 위치:  ${folder}/${saved}`;
 }
 
 function closeUpload(){
@@ -1471,7 +1516,7 @@ async function submitUpload(){
   result.className = "up-result"; result.textContent = "";
   const form = new FormData();
   form.append("product", uploadTarget.code);
-  form.append("dataset", $("#up-dataset").value);
+  form.append("item", uploadTarget.item);      // 항 번호 파일로 제품 폴더에 저장합니다
   form.append("file", pickedFile, pickedFile.name);
   try {
     const response = await fetch("api/upload", { method:"POST", body: form });
@@ -1483,8 +1528,10 @@ async function submitUpload(){
     refreshUploadState();
     result.className = "up-result ok";
     const errors = payload.errors || [], warnings = payload.warnings || [];
-    result.innerHTML = `<div><b>${esc(payload.saved)}</b> 에 저장했습니다 · `
-      + `${payload.rows}행 적재${payload.skipped ? ` · ${payload.skipped}행 건너뜀` : ""}</div>`
+    result.innerHTML = payload.rows === undefined
+      ? `<div><b>${esc(payload.saved)}</b> 에 저장했습니다.</div>`
+      : `<div><b>${esc(payload.saved)}</b> 에 저장했습니다 · `
+        + `${payload.rows}행 적재${payload.skipped ? ` · ${payload.skipped}행 건너뜀` : ""}</div>`
       + (errors.length ? `<ul>${errors.map(e=>`<li>${esc(e.row)}행 ${esc(e.field)} — ${esc(e.message)}</li>`).join("")}</ul>` : "")
       + (warnings.length ? `<ul>${warnings.map(e=>`<li>${esc(e.row)}행 ${esc(e.field)} — ${esc(e.message)}</li>`).join("")}</ul>` : "");
     if (errors.length){ result.className = "up-result bad"; }
@@ -1685,6 +1732,56 @@ $("#up-export").addEventListener("click", async ()=>{
   setTimeout(()=>{ button.textContent = "보고서 다시 만들기 →"; }, 4000);
 });
 
+/* ---- 제작자 문의 메일 ----
+   사내망에서는 이 프로그램이 메일을 직접 보낼 수 없습니다(서버·계정이 없습니다).
+   대신 쓰는 사람의 메일 프로그램을 열어 내용을 채워 줍니다 — 보내는 사람이
+   자기 계정으로 보내므로 발신자가 분명하고 사본도 본인 보낸메일함에 남습니다. */
+const CONTACT_TO = "jhp5408@hanlim.com";
+function contactText(){
+  const from = ($("#ct-from") || {}).value || "";
+  const body = ($("#ct-body") || {}).value || "";
+  const lines = [];
+  if (from.trim()) lines.push(`보내는 사람: ${from.trim()}`);
+  lines.push(`화면: ${(VIEWMAP[state.view] && (VIEWMAP[state.view].title
+    || (MODES[VIEWMAP[state.view].mode] || {}).title)) || state.view}`);
+  lines.push(`프로그램 기준일: ${SOURCE && SOURCE.today ? SOURCE.today : "—"}`);
+  lines.push("");
+  lines.push(body.trim() || "(내용을 적어 주세요)");
+  return lines.join("\n");
+}
+function sendContact(){
+  const subject = (($("#ct-subject") || {}).value || "").trim() || "PQR 프로그램 문의";
+  const url = `mailto:${CONTACT_TO}?subject=${encodeURIComponent("[PQR] " + subject)}`
+    + `&body=${encodeURIComponent(contactText())}`;
+  // mailto 는 길이 제한이 있어 아주 긴 글은 잘릴 수 있습니다. 그때는 복사해서 붙이도록 안내합니다.
+  if (url.length > 1900){
+    setContactStatus("내용이 길어 메일에 다 담기지 않습니다. '내용 복사'를 눌러 붙여넣어 주세요.", false);
+    return;
+  }
+  window.location.href = url;
+  setContactStatus("메일 프로그램을 열었습니다. 내용을 확인하고 보내 주세요.", true);
+}
+async function copyContact(){
+  const text = `받는 사람: ${CONTACT_TO}\n제목: [PQR] `
+    + ((($("#ct-subject") || {}).value || "").trim() || "PQR 프로그램 문의")
+    + `\n\n${contactText()}`;
+  try {
+    await navigator.clipboard.writeText(text);
+    setContactStatus("복사했습니다. 메일에 붙여넣어 주세요.", true);
+  } catch (error) {
+    setContactStatus("복사하지 못했습니다. 내용을 직접 선택해 복사해 주세요.", false);
+  }
+}
+let contactTimer = 0;
+function setContactStatus(message, ok){
+  const node = $("#ct-status");
+  if (!node) return;
+  node.textContent = message;
+  node.style.color = ok ? "var(--ok)" : "var(--crit)";
+  clearTimeout(contactTimer);
+  contactTimer = setTimeout(()=>{ node.textContent = ""; }, 8000);
+}
+
 /* ---- 준비 중 화면 ---- */
 const TODO = {
   capa:["CAPA 유효성 검토","전년도 PQR에서 도출된 개선조치가 실제로 효과가 있었는지 추적합니다.",
@@ -1816,6 +1913,8 @@ function renderSiteFilter(){
     FORM_ORDER.filter(f=>present.has(f)), "제형 필터");
 }
 document.querySelectorAll("#p-filters .chip").forEach(c=>c.addEventListener("click",()=>{ state.filter=c.dataset.f; render(); }));
+$("#ct-send").addEventListener("click", sendContact);
+$("#ct-copy").addEventListener("click", copyContact);
 $("#q").addEventListener("input", e=>{ state.q=e.target.value.trim(); render(); });
 $("#theme-btn").addEventListener("click", ()=>{
   const cur = document.documentElement.getAttribute("data-theme");
