@@ -466,9 +466,7 @@ td.wrap{white-space:normal;min-width:220px}
           </div>
           <div class="tablewrap">
             <table>
-              <thead><tr>
-                <th>코드</th><th>제품명</th><th>제형</th><th>그룹</th><th>생산 Lot</th><th>일탈</th><th>OOS/OOT</th><th>변경</th><th>불만</th><th>자료 수집</th><th>단계</th><th>마감일</th>
-              </tr></thead>
+              <thead><tr id="p-head"></tr></thead>
               <tbody id="p-body"></tbody>
             </table>
           </div>
@@ -792,73 +790,80 @@ function adopt(source){
 /* 기본 규칙 — data.js 가 없을 때(내장 샘플)도 제형이 나뉘도록 넣어 둡니다.
    pqr/data/config.json 의 dosage_forms 와 같은 내용이며, data.js 가 있으면 그쪽이 이깁니다. */
 let FORM_RULES = {
-  "주사제": [
-    "주사",
-    "앰플",
-    "바이알",
-    "동결건조",
-    "수액",
-    "injection",
-    "inj."
-  ],
-  "점안제": [
-    "점안",
-    "점이",
-    "안액",
-    "ophthalmic",
-    "eyedrop",
-    "eye drop"
-  ],
-  "고형제": {
+  "정제": {
     "keywords": [
       "정제",
       "나정",
       "당의정",
       "코팅정",
       "서방정",
+      "장용정",
       "츄어블",
       "구강붕해",
-      "캡슐",
-      "산제",
-      "과립",
-      "환제",
       "트로키",
-      "tablet",
-      "capsule"
+      "tablet"
     ],
     "exclude": [
       "정제수"
     ]
   },
-  "액제": [
-    "시럽",
+  "캡슐제": [
+    "캡슐제",
+    "캡슐",
+    "capsule"
+  ],
+  "주사제": [
+    "주사제",
+    "주사",
+    "앰플",
+    "바이알",
+    "수액",
+    "동결건조",
+    "injection"
+  ],
+  "점안제": [
+    "점안제",
+    "점안",
+    "점이",
+    "안액",
+    "ophthalmic"
+  ],
+  "내용액제": [
+    "내용액제",
     "내용액",
-    "액제",
+    "내복액",
+    "시럽",
     "현탁",
     "유탁",
-    "엘릭서",
-    "드링크",
     "경구용액",
-    "syrup",
-    "suspension",
-    "solution"
+    "syrup"
   ],
-  "기타제": [
+  "연고제": [
+    "연고제",
     "연고",
+    "젤리",
     "크림",
     "겔",
-    "로션",
+    "로션"
+  ],
+  "기타제": [
+    "기타제",
+    "엘릭서",
+    "비액",
+    "이용액",
+    "스프레이",
+    "나잘",
+    "패취",
     "패치",
-    "첩부",
     "좌제",
     "흡입",
     "분무",
+    "첩부",
     "외용",
-    "산화",
     "카타플라스마"
   ]
 };
-const FORM_ORDER = ["주사제","점안제","고형제","액제","기타제"];
+const FORM_ORDER = ["정제", "캡슐제", "주사제", "점안제", "내용액제", "연고제", "기타제"];
 function classifyForm(text){
   const hay = String(text||"").replace(/\s+/g,"").toLowerCase();
   if (!hay) return "";
@@ -1038,11 +1043,18 @@ function lotCell(d){
   return `<td class="num">${d.batches}</td>`;
 }
 
+/* 일탈·OOS·변경·불만 칸은 그 숫자를 보러 오는 '일탈 · OOS/OOT' 화면에서만 씁니다.
+   제품 목록에서는 자리만 차지해 빼 두었습니다. */
 function renderProducts(rows, mode){
   const m = MODES[mode] || MODES.products;
+  const withIssues = mode === "issues";
   let list = rows.filter(m.pred).filter(FILTERS[state.filter]);
   if (m.sort) list = list.slice().sort(m.sort); else list = list.slice().sort((a,b)=>a.dueD-b.dueD);
   $("#p-count").textContent = list.length + "건";
+  $("#p-head").innerHTML = `<th>코드</th><th>제품명</th><th>제형</th><th>그룹</th><th>생산 Lot</th>`
+    + (withIssues ? `<th>일탈</th><th>OOS/OOT</th><th>변경</th><th>불만</th>` : "")
+    + `<th>자료 수집</th><th>단계</th><th>마감일</th>`;
+  const span = withIssues ? 12 : 8;
   $("#p-body").innerHTML = list.map(d=>`
     <tr>
       <td>${codeCell(d)}</td>
@@ -1050,14 +1062,14 @@ function renderProducts(rows, mode){
       <td class="muted">${esc(d.form)}</td>
       <td class="muted">${esc(d.group || d.site || "—")}</td>
       ${lotCell(d)}
-      ${metricCell(d, d.dev, "deviations")}
-      ${metricCell(d, d.oos, "deviations")}
-      ${metricCell(d, d.chg, "changes")}
-      ${metricCell(d, d.cmp, "changes")}
+      ${withIssues ? metricCell(d, d.dev, "deviations")
+                   + metricCell(d, d.oos, "deviations")
+                   + metricCell(d, d.chg, "changes")
+                   + metricCell(d, d.cmp, "changes") : ""}
       <td>${progCell(d)}</td>
       <td>${stageTag(d)}</td>
       <td class="mono">${d.due} ${d.done?"":`<span style="margin-left:6px">${ddayCell(d)}</span>`}</td>
-    </tr>`).join("") || `<tr><td colspan="12" class="muted" style="padding:22px">조건에 맞는 PQR이 없습니다.</td></tr>`;
+    </tr>`).join("") || `<tr><td colspan="${span}" class="muted" style="padding:22px">조건에 맞는 PQR이 없습니다.</td></tr>`;
 }
 
 /* ---- 평가항목 매트릭스 ---- */
@@ -1316,35 +1328,47 @@ async function submitUpload(){
 }
 
 /* ---- 자료 업로드 화면 ---- */
+/* 자료 업로드 — 평가항목 자료 수집과 같은 항목(보고서 항 번호)을 씁니다.
+   담당자가 폴더에서 보는 파일 이름 · 수집 현황 · 올리는 자리가 모두 같은 번호를 쓰게 하려는 것입니다. */
 function renderUpload(rows){
-  const specs = uploadConfig().datasets || {};
-  const names = Object.keys(specs).filter(name=>specs[name].scope === "product");
-  const columns = names.length ? names : ["batches","deviations","changes","stability"];
+  const label = { y:"수집 완료", p:"요청 · 진행 중", n:"미착수" };
   $("#up-count").textContent = rows.length + "품목";
   $("#upload-head").innerHTML = `<th>코드</th><th>제품명</th>`
-    + columns.map(name=>`<th>${esc(datasetLabel(name))}</th>`).join("")
+    + ITEMS.map(([k])=>`<th class="rot mono">${esc(k)}</th>`).join("")
     + `<th>자료 수집</th>`;
-  $("#upload-body").innerHTML = rows.map(d=>`
+  const list = rows.slice().sort((a,b)=>a.collected-b.collected);
+  $("#upload-body").innerHTML = list.map(d=>`
     <tr>
       <td>${codeCell(d)}</td>
       <td class="wrap">${esc(d.name)}</td>
-      ${columns.map(name=>{
-        const has = !(d.missing_datasets || []).includes(name);
-        const item = Object.entries(uploadConfig().item_datasets || {})
-          .find(([, list])=>list[0] === name);
-        const key = item ? item[0] : ITEMS[0][0];
-        return `<td><button class="mini ${has?"done":""}" data-upload="${d.code}|${key}"
-          ${uploadEnabled()?"":"disabled"}>${has?"제출됨 · 교체":"올리기"}</button></td>`;
-      }).join("")}
+      ${d.checks.map((c,i)=>`<td class="cell"><button class="cell-btn"
+          data-upload="${d.code}|${esc(ITEMS[i][0])}" data-uptip="${d.code}|${i}"
+          ${uploadEnabled()?"":"disabled"}
+          aria-label="${esc(d.name)} (${esc(ITEMS[i][0])}) ${esc(ITEMS[i][1])} 자료 올리기"
+          ><span class="dot ${c}"></span></button></td>`).join("")}
       <td>${progCell(d)}</td>
     </tr>`).join("");
+  $("#upload-body").querySelectorAll(".cell-btn").forEach(n=>{
+    const [code,i] = n.dataset.uptip.split("|");
+    const d = DATA.find(x=>x.code===code), it = ITEMS[+i];
+    const hint = uploadEnabled() ? "<br><b>눌러서 자료 올리기</b>"
+      : "<br>자료를 올리려면 <b>python -m pqr serve</b> 로 실행하세요";
+    bindTip(n, `<b>(${esc(it[0])}) ${esc(it[1])}</b><br>${esc(d.name)}<br>${label[d.checks[+i]]}${hint}`);
+  });
 
-  $("#upload-note").innerHTML = uploadEnabled()
-    ? `<p class="up-note" style="margin:0">담당자가 올린 파일은 <code>${esc(uploadConfig().input_dir || "")}</code> 아래
-       제품 폴더에 저장되고, 저장 즉시 다시 집계됩니다. 같은 종류의 자료를 다시 올리면 이전 파일을 대체합니다.</p>`
+  $("#upload-note").innerHTML =
+    `<div class="legend" style="margin-bottom:10px">
+       <span class="k"><i class="swatch" style="background:var(--ok)"></i>수집 완료</span>
+       <span class="k"><i class="swatch" style="background:var(--warn)"></i>요청 · 진행 중</span>
+       <span class="k"><i class="swatch" style="background:var(--line-2)"></i>미착수</span>
+     </div>`
+    + (uploadEnabled()
+    ? `<p class="up-note" style="margin:0">칸을 누르면 그 항목의 자료를 올릴 수 있습니다. 올린 파일은
+       <code>${esc(uploadConfig().input_dir || "")}</code> 아래 제품 폴더에 저장되고, 저장 즉시 다시
+       집계됩니다. 같은 종류의 자료를 다시 올리면 이전 파일을 대체합니다.</p>`
     : `<p class="up-note" style="margin:0">이 화면은 정적 파일로 열려 있어 자료를 올릴 수 없습니다.
        <code>python -m pqr serve --in &lt;입력폴더&gt;</code> 로 실행한 뒤 브라우저에서 열면
-       칸을 눌러 그 자리에서 올릴 수 있습니다.</p>`;
+       칸을 눌러 그 자리에서 올릴 수 있습니다.</p>`);
 }
 
 /* ---- 상세 패널 ---- */
