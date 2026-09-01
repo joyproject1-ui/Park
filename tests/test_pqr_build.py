@@ -241,6 +241,19 @@ class ItemFileTest(unittest.TestCase):
         self.assertEqual(states["13"], "n")
         self.assertNotIn("13", product["item_files"])
 
+
+    def test_close_marker_does_not_pollute_other_items(self):
+        """'14 반품 · 불만 · 회수 - 해당없음 확인.txt' 이름에는 '불만' 이 들어 있어
+        변경·불만 대장으로 오인되면 12항(변경관리)이 근거 없이 초록이 됩니다."""
+        os.remove(os.path.join(self.folder, "변경불만대장.csv"))
+        self.touch("14 반품 · 불만 · 회수 - 해당없음 확인.txt")
+        states, product, data = self.snapshot()
+        self.assertEqual(states["14"], "y")
+        self.assertEqual(states["12"], "n", "마감 기록이 변경 대장으로 오인됐습니다")
+        loaded = [source["file"] for sources in data["sources"].values() for source in sources]
+        self.assertFalse(any("해당없음 확인" in name for name in loaded),
+                         "마감 기록 파일이 대장으로 적재됐습니다: %s" % loaded)
+
     def test_numbered_files_are_not_reported_unknown(self):
         self.touch("7. 수율현황표.pdf")
         _, _, data = self.snapshot()

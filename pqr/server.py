@@ -349,6 +349,8 @@ class Handler(BaseHTTPRequestHandler):
                                         "out_dir": self.workspace.out_dir})
             if path == "/api/open":
                 return self._json(200, self._handle_open())
+            if path == "/api/close":
+                return self._json(200, self._handle_close())
             if path == "/api/report":
                 return self._json(200, self._handle_report())
         except UploadError as error:
@@ -374,6 +376,54 @@ class Handler(BaseHTTPRequestHandler):
         opened = open_in_file_manager(folder)
         return {"ok": True, "path": folder, "opened": opened,
                 "hint": "" if opened else "폴더를 자동으로 열지 못했습니다. 위 경로를 파일 탐색기에 붙여넣으세요."}
+
+    def _handle_close(self):
+        """평가항목을 '확인 결과 이력 없음' 으로 마감합니다.
+
+        그냥 초록으로 칠하지 않고 제품 폴더에 확인 기록 파일을 남깁니다 —
+        공란과 '확인했더니 없음' 은 다른 것이고, 근거는 폴더에 남아야 합니다.
+        파일 이름이 항 번호로 시작하므로 기존 인식 규칙이 그대로 녹색불을 켭니다.
+        잘못 눌렀다면 폴더에서 그 파일을 지우면 됩니다.
+        """
+        import datetime
+        body = self._read_json()
+        code = str(body.get("product") or "").strip()
+        item_id = str(body.get("item") or "").strip()
+        labels = {row[0]: row[1] for row in self.workspace.data["items"]}
+        if item_id not in labels:
+            raise UploadError("평가항목을 찾지 못했습니다: %s" % item_id)
+        product = next((item for item in self.workspace.data["products"]
+                        if item["code"] == code), None)
+        if product is None:
+            raise UploadError("제품을 찾지 못했습니다: %s" % code)
+        folder = self.workspace.product_folder(code)
+        label = _UNSAFE.sub(" ", labels[item_id])
+        label = " ".join(label.split())
+        filename = "%s %s - %s.txt" % (item_id, label, build_module.CLOSE_MARKER)
+        target = os.path.join(folder, _UNSAFE.sub("_", filename))
+        stamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
+        note = str(body.get("note") or "").strip()
+        lines = [
+            "평가항목 마감 기록",
+            "==================",
+            "제품      : [%s] %s" % (code, product["name"]),
+            "평가항목  : (%s) %s" % (item_id, labels[item_id]),
+            "확인 결과 : 평가 년도 내 해당 이력 없음",
+            "확인 일시 : %s" % stamp,
+        ]
+        if note:
+            lines.append("비고      : %s" % note)
+        lines += [
+            "확인자    : (서명 또는 이름 기입)",
+            "",
+            "이 파일은 대시보드의 '이력 없음으로 마감' 단추가 만들었습니다.",
+            "마감을 취소하려면 이 파일을 지우고 화면의 새로고침(↻)을 누르세요.",
+        ]
+        with open(target, "w", encoding="utf-8") as handle:
+            handle.write("\n".join(lines) + "\n")
+        self.workspace.rebuild()
+        return {"ok": True, "saved": os.path.relpath(target, self.workspace.input_dir),
+                "data": self.workspace.dashboard_payload()}
 
     def _handle_report(self):
         """한 제품의 보고서 초안을 만듭니다. 자료 수집이 덜 됐으면 만들지 않고 알려 줍니다."""

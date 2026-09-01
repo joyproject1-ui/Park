@@ -33,6 +33,11 @@ def _sha256(path):
 # 제품 공통 자료(설비 적격성, 위수탁 협약 등)를 두는 폴더 이름
 COMMON_FOLDERS = ("공통", "_공통", "common", "shared", "전사", "site")
 
+# '이력 없음으로 마감' 단추가 남기는 확인 기록 파일의 표식.
+# 이름에 '일탈'·'불만' 같은 낱말이 들어가므로, 표 자료(대장)로 오인해 읽으면
+# 있지도 않은 대장이 제출된 것처럼 보입니다. 표 인식에서는 반드시 건너뜁니다.
+CLOSE_MARKER = "해당없음 확인"
+
 DATA_SUFFIXES = (".csv", ".tsv", ".txt", ".xlsx", ".xlsm")
 
 
@@ -87,6 +92,8 @@ def discover_tree(root):
         for name in sorted(os.listdir(directory)):
             path = os.path.join(directory, name)
             if not os.path.isfile(path) or not _is_data_file(name):
+                continue
+            if CLOSE_MARKER in name:      # 마감 기록 — 대장이 아닙니다
                 continue
             dataset = schema.detect_dataset(name)
             if dataset:

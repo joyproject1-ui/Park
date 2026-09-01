@@ -175,20 +175,6 @@ class ServerTest(unittest.TestCase):
         self.assertIn("PQR_요약.md", payload["files"])
 
 
-class FilenameTest(unittest.TestCase):
-    def test_strips_path_and_checks_extension(self):
-        self.assertEqual(server_module.safe_filename("../../etc/passwd.csv"), "passwd.csv")
-        with self.assertRaises(server_module.UploadError):
-            server_module.safe_filename("보고서.exe")
-        with self.assertRaises(server_module.UploadError):
-            server_module.safe_filename("")
-
-    def test_removes_unsafe_characters(self):
-        self.assertEqual(server_module.safe_filename('a<b>c:"d.csv'), "a_b_c__d.csv")
-
-
-if __name__ == "__main__":
-    unittest.main()
     # ---------------- 폴더 열기 · 보고서 작성 ----------------
 
     def post_json(self, path, payload):
@@ -215,4 +201,33 @@ if __name__ == "__main__":
         self.assertTrue(payload["ok"])
         for path in payload["files"]:
             self.assertTrue(os.path.exists(path))
+    def test_close_as_none_creates_record_and_marks_item(self):
+        status, payload = self.post_json("/api/close", {"product": "HP-110", "item": "13"})
+        self.assertEqual(status, 200)
+        self.assertTrue(payload["ok"])
+        record = os.path.join(self.dir, payload["saved"])
+        self.assertTrue(os.path.exists(record))
+        with open(record, encoding="utf-8") as handle:
+            body = handle.read()
+        self.assertIn("해당 이력 없음", body)
+        product = next(p for p in payload["data"]["products"] if p["code"] == "HP-110")
+        ids = [item[0] for item in payload["data"]["items"]]
+        self.assertEqual(dict(zip(ids, product["checks"]))["13"], "y")
 
+
+
+
+class FilenameTest(unittest.TestCase):
+    def test_strips_path_and_checks_extension(self):
+        self.assertEqual(server_module.safe_filename("../../etc/passwd.csv"), "passwd.csv")
+        with self.assertRaises(server_module.UploadError):
+            server_module.safe_filename("보고서.exe")
+        with self.assertRaises(server_module.UploadError):
+            server_module.safe_filename("")
+
+    def test_removes_unsafe_characters(self):
+        self.assertEqual(server_module.safe_filename('a<b>c:"d.csv'), "a_b_c__d.csv")
+
+
+if __name__ == "__main__":
+    unittest.main()
