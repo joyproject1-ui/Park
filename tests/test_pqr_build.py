@@ -360,3 +360,22 @@ class FinalReportTest(unittest.TestCase):
         self.assertEqual(docx_report._fixed(7.2513, 2), "7.25")
         # 사사오입 — 파이썬 기본 반올림은 1.0165 를 1.016 으로 적습니다.
         self.assertEqual(docx_report._fixed(1.0165, 3), "1.017")
+
+    def test_cover_prints_lot_count_without_a_decimal_point(self):
+        """제조 Lot 수가 '20.0' 으로 나오면 없는 단위를 읽게 됩니다."""
+        from pqr import docx_report
+        self.assertEqual(docx_report._text(20.0), "20")
+        self.assertEqual(docx_report._text(20.5), "20.5")
+        self.assertEqual(docx_report._text(None), "—")
+
+    def test_missing_license_fields_say_what_to_do_when_evidence_exists(self):
+        """허가증 PDF 는 있는데 마스터가 비었으면 '—'(해당 없음)이 아니라 '원본 확인'."""
+        import zipfile
+        from pqr import docx_report
+        with open(os.path.join(self.folder, "3. 허가증.pdf"), "wb") as handle:
+            handle.write(b"x")
+        path = docx_report.write_docx(self.build(), "HP-110", self.dir,
+                                      config=build_module.load_config())
+        with zipfile.ZipFile(path) as archive:
+            text = archive.read("word/document.xml").decode("utf-8")
+        self.assertIn("원본 확인", text)

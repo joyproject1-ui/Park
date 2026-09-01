@@ -126,6 +126,10 @@ def _table(header, rows, weights=None, note=None):
 # ---------------- 값 다듬기 ----------------
 
 def _text(value, dash="—"):
+    # Lot 수 같은 정수는 20.0 이 아니라 20 으로 적습니다 — 표에 소수점이 붙으면
+    # "20.0 로트" 라는 없는 단위를 읽게 됩니다.
+    if isinstance(value, float) and value == int(value):
+        value = int(value)
     value = "" if value is None else str(value).strip()
     return value or dash
 
@@ -338,13 +342,18 @@ def _body_for(number, product, quality, records, config):
 
 # ---------------- 문서 조립 ----------------
 
-def _cover(product, data, period_text):
+def _cover(product, data, period_text, license_evidence=False):
     meta = product.get("license") or {}
+    # 허가증 PDF 는 폴더에 있는데 제품 마스터에 값이 없는 흔한 경우입니다.
+    # 빈칸을 '—' 로 두면 "해당 없음" 으로 읽히므로, 무엇을 해야 하는지 적어 둡니다.
+    blank = "원본 확인" if license_evidence else "—"
     rows = [
         ["제품코드", _text(product.get("code")), "제형", _text(product.get("form"))],
         ["제품명", _text(product.get("name")), "제품 분류", _text(product.get("form_group"))],
-        ["허가번호", _text(meta.get("license_no")), "허가일자", _text(meta.get("license_date"))],
-        ["사용기한", _text(meta.get("shelf_life")), "보관조건", _text(meta.get("storage"))],
+        ["허가번호", _text(meta.get("license_no"), blank),
+         "허가일자", _text(meta.get("license_date"), blank)],
+        ["사용기한", _text(meta.get("shelf_life"), blank),
+         "보관조건", _text(meta.get("storage"), blank)],
         ["평가 기간", period_text, "평가 그룹", _text(product.get("group"))],
         ["제조 Lot 수", _text(product.get("lots") or product.get("batches")),
          "작성 담당자", _text(product.get("owner"))],
@@ -398,7 +407,7 @@ def build_document_xml(data, code, config=None):
     body = [_para("제품품질평가 보고서", bold=True, size=18, align="center", space_after=40),
             _para(_text(product.get("name")), bold=True, size=13, align="center",
                   space_after=200),
-            _cover(product, data, period_text),
+            _cover(product, data, period_text, license_evidence=bool(item_files.get("3"))),
             _para(DRAFT_NOTE, size=9, color="7A5900", space_after=160)]
 
     body.append(_section_heading("4", "평가 일정"))
