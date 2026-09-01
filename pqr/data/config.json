@@ -13,7 +13,7 @@
     "due_soon_days": 30,
     "cpk_sufficient": 1.0,
     "cpk_min_lots": 10,
-    "cpk_two_sided_only": true
+    "cpk_two_sided_only": false
   },
   "items": [
     [
