@@ -358,3 +358,11 @@ class BulkUploadTest(ItemUploadTest):
         result = self.upload_bulk("HP-110", "악성.exe")
         self.assertFalse(result.get("ok"))
         self.assertIn("형식", result["error"])
+
+    def test_submitted_report_becomes_the_final_report(self):
+        """작성해 준 제출본을 한번에 올리기로 넣으면 완성본 버튼이 그 파일을 엽니다."""
+        name = "[HP-110] 히알루론점안액 2025년 제품품질평가 (제출용).docx"
+        result = self.upload_bulk("HP-110", name)
+        self.assertTrue(result["ok"], result.get("error"))
+        product = next(p for p in result["data"]["products"] if p["code"] == "HP-110")
+        self.assertEqual(product["final_report"], name)
