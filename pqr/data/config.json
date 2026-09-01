@@ -233,6 +233,70 @@
       "scope": "common"
     }
   },
+  "lines": {
+    "_설명": "무균 제조 라인. key 는 support_equipment 의 key 와 같아야 하며, aliases 로 마스터파일·제품표준서의 다른 표기를 흡수합니다.",
+    "앰플": {
+      "category": "주사제",
+      "aliases": [
+        "앰플라인",
+        "AMP"
+      ]
+    },
+    "바이알": {
+      "category": "주사제",
+      "aliases": [
+        "바이알라인",
+        "VIAL"
+      ]
+    },
+    "MAR-1": {
+      "category": "다회용 점안제",
+      "aliases": [
+        "MAR1",
+        "MAR 1",
+        "마르1"
+      ]
+    },
+    "MAR-2": {
+      "category": "다회용 점안제",
+      "aliases": [
+        "MAR2",
+        "MAR 2",
+        "마르2"
+      ]
+    },
+    "마케지니": {
+      "category": "다회용 점안제",
+      "aliases": [
+        "마케지니라인",
+        "MACHINE"
+      ]
+    },
+    "BFS1": {
+      "category": "1회용 점안제",
+      "aliases": [
+        "BFS1호",
+        "BFS 1호",
+        "BFS-1"
+      ]
+    },
+    "BFS2": {
+      "category": "1회용 점안제",
+      "aliases": [
+        "BFS2호",
+        "BFS 2호",
+        "BFS-2"
+      ]
+    },
+    "BFS3": {
+      "category": "1회용 점안제",
+      "aliases": [
+        "BFS3호",
+        "BFS 3호",
+        "BFS-3"
+      ]
+    }
+  },
   "support_equipment": {
     "_설명": "제조 라인별 제조지원 설비 관리번호. 여기에 적힌 것만 씁니다. 비워 두면 설비명의 라인 표기·층으로 찾습니다.",
     "BFS2": {

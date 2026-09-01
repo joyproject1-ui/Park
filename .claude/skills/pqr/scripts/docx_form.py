@@ -10,6 +10,7 @@ python-docx 의 ``table.cell(r, c)`` 는 모든 행이 그리드 열을 가득 �
 병합 이어짐 칸에는 쓰지 않습니다.
 """
 import copy
+from decimal import Decimal, ROUND_HALF_UP
 
 from docx.oxml.ns import qn
 from docx.table import Table, _Cell
@@ -251,3 +252,26 @@ def colliding_columns(table, row, columns):
             if held[keys[first]] is held[keys[second]]:
                 pairs.append((keys[first], keys[second]))
     return pairs
+
+
+def round_half_up(value, places):
+    """사사오입으로 자릿수를 맞춘 문자열.
+
+    파이썬 기본 서식('%.3f')은 짝수 반올림이라 1.0165 를 '1.016' 으로 냅니다.
+    보고서 최종본은 '1.017' 이므로 사사오입이 사내 관행입니다.
+    """
+    quantum = Decimal(1).scaleb(-places)
+    return str(Decimal(repr(float(value))).quantize(quantum, rounding=ROUND_HALF_UP))
+
+
+def summarize(values, places):
+    """최댓값·최솟값·평균을 자료와 같은 자릿수로 돌려줍니다.
+
+    평균에 자릿수를 하나 더 쓰고 싶어지지만, 최종본은 자료와 같은 자릿수를 씁니다
+    (삼투압 303.67 → '304'). 표 안에서 자릿수가 들쭉날쭉해 보이지 않게 하려는 것입니다.
+    """
+    numbers = [v for v in values if isinstance(v, (int, float))]
+    if not numbers:
+        return None
+    return tuple(round_half_up(v, places)
+                 for v in (max(numbers), min(numbers), sum(numbers) / len(numbers)))

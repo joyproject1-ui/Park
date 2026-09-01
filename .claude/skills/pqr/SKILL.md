@@ -59,6 +59,9 @@ python -m pqr launch                        # 폴더 준비 + 브라우저 열�
 절차서.docx(18항·표 32개)와 안정성 서식을 채울 때는 각각:
 
 - `references/report-form.md` — 항·표 대응, 표마다의 병합 구조, 통일문구 표준 문안
+- `references/house-style.md` — **승인된 최종본에서 확인한 작성 관행.** 숫자 자릿수·반올림,
+  허용기준의 `자가)`/`허가)` 구분, 결과 열에 범위를 쓰는 방식 등 서식만 봐서는 알 수 없고
+  틀리기 쉬운 것들이라 표를 채우기 전에 먼저 읽으세요.
 - `references/stability-workbook.md` — HLF-QC-126-06 좌표, 차트 보존, 공란 마감처리
 
 python-docx 로 이 서식을 다루면 `table.cell(r, c)` 가 **틀린 칸을 짚습니다**. 서식의 행마다
@@ -67,7 +70,8 @@ python-docx 로 이 서식을 다루면 `table.cell(r, c)` 가 **틀린 칸을 �
 지워집니다. `scripts/docx_form.py` 에 이 문제를 피하는 헬퍼가 있으니 그대로 쓰세요:
 
 ```python
-from docx_form import set_cell, fill, clone_row, set_comment, drop_last_row, close_out, colliding_columns, renumber_bookmarks
+from docx_form import (set_cell, fill, clone_row, set_comment, drop_last_row,
+                       close_out, colliding_columns, summarize, renumber_bookmarks)
 ```
 
 문단이나 표를 복사(`copy.deepcopy`)했다면 저장 전에 `renumber_bookmarks(document)` 를 부르세요 —
