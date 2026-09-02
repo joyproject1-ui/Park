@@ -471,6 +471,22 @@ def mark_auto_draft(folder, path):
     return marker
 
 
+def unmark_auto_draft(folder, path):
+    """프로그램이 같은 이름으로 완성본(엔진)을 다시 쓰면 초안 표시를 지운다 — 그래야 완성본 단추가 선다."""
+    marker = os.path.join(folder, AUTO_DRAFT_MARKER)
+    try:
+        with open(marker, encoding="utf-8") as handle:
+            drafts = json.load(handle)
+    except Exception:
+        return
+    if isinstance(drafts, dict) and drafts.pop(os.path.basename(path), None) is not None:
+        try:
+            with open(marker, "w", encoding="utf-8") as handle:
+                json.dump(drafts, handle, ensure_ascii=False, indent=1)
+        except OSError:
+            pass
+
+
 def _auto_drafts(folder):
     try:
         with open(os.path.join(folder, AUTO_DRAFT_MARKER), encoding="utf-8") as handle:

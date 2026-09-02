@@ -760,6 +760,7 @@ class Handler(BaseHTTPRequestHandler):
                     log=None, vision=_vision_hook())
                 issues = engine_result.get("issues") or []
                 final = target
+                build_module.unmark_auto_draft(folder, target)   # 예전 초안 표시가 남아 있으면 완성본으로 안 보인다
                 based_on = {"previous": os.path.basename(previous), "previous_year": year,
                             "changed": 0, "engine": True, "log": engine_result.get("log") or []}
                 write_issue_list(folder, product, issues)

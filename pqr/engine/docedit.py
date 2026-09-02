@@ -238,6 +238,25 @@ def page_break_before(para):
     get_or_add(pr, "pageBreakBefore")
 
 
+def is_blank_para(el):
+    """글자·줄바꿈·그림·구역 나누기가 없는 '진짜 빈' 문단인지.
+
+    Word 가 변환한 결재본은 표지 끝의 쪽 나눔이 문단 속성(sectPr)으로 들어 있어, 글자가 없다고
+    지우면 표지와 결재표가 한 쪽에 붙어 버린다(담당자 PC 에서 실제로 생김). 그래서 구역 나누기·
+    쪽 나눔·그리기 개체·'앞에서 쪽 나눔' 이 있는 문단은 빈 문단으로 보지 않는다.
+    """
+    if not el.tag.endswith("}p"):
+        return False
+    if "".join(t.text or "" for t in el.iter(qn("w:t"))).strip():
+        return False
+    if el.find(".//" + qn("w:br")) is not None:
+        return False
+    for tag in ("w:pict", "w:drawing", "w:sectPr", "w:pageBreakBefore", "w:object"):
+        if el.find(".//" + qn(tag)) is not None:
+            return False
+    return True
+
+
 def drop_blank_paras_between(document, table, para):
     """표와 문단 사이의 빈 문단(하드 나눔이 없는 것)을 지운다."""
     body = document.element.body
@@ -246,11 +265,7 @@ def drop_blank_paras_between(document, table, para):
     end = kids.index(getattr(para, "_p", para))
     removed = 0
     for el in kids[start:end]:
-        if not el.tag.endswith("}p"):
-            continue
-        if "".join(t.text or "" for t in el.iter(qn("w:t"))).strip():
-            continue
-        if el.find(".//" + qn("w:br")) is not None:
+        if not is_blank_para(el):
             continue
         body.remove(el)
         removed += 1
@@ -266,11 +281,7 @@ def drop_blank_paras_after(document, needle, count):
     removed = 0
     while i < len(kids) and removed < count:
         el = kids[i]
-        if not el.tag.endswith("}p"):
-            break
-        if "".join(t.text or "" for t in el.iter(qn("w:t"))).strip():
-            break
-        if el.find(".//" + qn("w:br")) is not None:
+        if not is_blank_para(el):
             break
         body.remove(el)
         removed += 1
@@ -431,11 +442,7 @@ def strip_blanks_before_page_breaks(document):
             continue
         prev = el.getprevious()
         while prev is not None and prev.tag.endswith("}p"):
-            if "".join(t.text or "" for t in prev.iter(qn("w:t"))).strip():
-                break
-            if prev.find(".//" + qn("w:br")) is not None:
-                break
-            if prev.find(".//" + qn("w:pict")) is not None or prev.find(".//" + qn("w:drawing")) is not None:
+            if not is_blank_para(prev):
                 break
             gone = prev
             prev = prev.getprevious()
@@ -925,10 +932,7 @@ def collapse_blank_runs(document, keep=1, min_run=2, protect_before=()):
         return "".join(t.text or "" for t in el.iter(qn("w:t"))).strip()
 
     def blank(el):
-        return (el.tag.endswith("}p") and not txt(el)
-                and el.find(".//" + qn("w:br")) is None
-                and el.find(".//" + qn("w:pict")) is None
-                and el.find(".//" + qn("w:drawing")) is None)
+        return is_blank_para(el)
 
     removed, i = 0, 0
     while i < len(kids):
