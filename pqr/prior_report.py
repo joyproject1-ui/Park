@@ -17,7 +17,7 @@ import zipfile
 import xml.etree.ElementTree as ET
 
 W = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
-PREVIOUS_ITEM = "0"                      # 평가항목 (0) 전년도 PQR word & excel
+PREVIOUS_ITEM = "16"                     # 평가항목 16. 전년도 PQR word & excel (결재본)
 DOC_SUFFIXES = (".docx", ".zip")   # 담당자가 압축으로 올리는 일이 잦습니다
 _OUTPUT_KEYWORDS = ("완성본", "제출")     # 우리가 만든 결과물은 기준 본이 아닙니다
 
@@ -36,7 +36,7 @@ def find_previous_report(folder, matcher=None):
         if any(keyword in name for keyword in _OUTPUT_KEYWORDS):
             continue
         item = matcher(name) if matcher else None
-        if item == PREVIOUS_ITEM or (matcher is None and name.strip().startswith("0")):
+        if item == PREVIOUS_ITEM or (matcher is None and name.strip().startswith("16")):
             found.append(path)
     if not found:
         return None

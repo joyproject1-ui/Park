@@ -782,7 +782,6 @@ const SAMPLE_STAGES = ["자료 수집","보고서 작성"];
 
 /* 평가항목 — PQR 보고서 항 번호(3 · 8.1.1 · 9.2.4 …) */
 const SAMPLE_ITEMS = [
-  ["0","전년도 PQR word & excel","기준 본 · 첨부 엑셀"],
   ["3","허가증","EDMS"],
   ["6","제조내역","ERP"],
   ["7","수율현황표","개인 작성"],
@@ -802,7 +801,8 @@ const SAMPLE_ITEMS = [
   ["12","변경관리 (CC)","EDMS"],
   ["13","안정성 시험","개인 작성"],
   ["14","반품 · 불만 · 회수","대장"],
-  ["15","전년도 시정조치","전년도 PQR"]
+  ["15","전년도 시정조치",""],
+  ["16","전년도 PQR word & excel","결재본"]
 ];
 
 /* [코드, 제품명, 제형, 공장, 마감일, 단계, 담당자, 일탈, OOS/OOT, 변경, 불만, 배치수, 지연사유] */
@@ -1368,7 +1368,8 @@ function renderMatrix(rows){
     ? "· 칸을 누르면 그 항목의 자료를 바로 올릴 수 있습니다"
     : "· 셀에 마우스를 올리면 항목명과 상태가 표시됩니다";
   $("#itemkey").innerHTML = ITEMS.map(([k,n,hint],i)=>
-    `<div><b>(${itemLetter(i)})</b> ${esc(k)}. ${esc(n)} <span class="muted">· ${esc(hint)}</span></div>`).join("");
+    `<div><b>(${itemLetter(i)})</b> ${esc(k)}. ${esc(n)}`
+    + (hint ? ` <span class="muted">· ${esc(hint)}</span>` : "") + `</div>`).join("");
   const head = $("#matrix-head");
   head.innerHTML = `<th>코드</th><th>제품명</th>`
     + ITEMS.map((item,i)=>`<th class="rot mono" title="${esc(item[0])}. ${esc(item[1])}">${itemLetter(i)}</th>`).join("")

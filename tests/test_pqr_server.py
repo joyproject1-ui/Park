@@ -325,7 +325,7 @@ class PriorReportTest(ServerTest):
         import zipfile
         from pqr import prior_report
         folder = os.path.join(self.dir, self.folder)
-        path = os.path.join(folder, "0. 전년도 PQR 히알루론점안액.docx")
+        path = os.path.join(folder, "16. 전년도 PQR 히알루론점안액.docx")
         document = (
             '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
             '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'
@@ -380,7 +380,7 @@ class PriorReportTest(ServerTest):
         with zipfile.ZipFile(inner, "w") as docx:
             docx.writestr("word/document.xml", document)
             docx.writestr("[Content_Types].xml", "<Types/>")
-        bundle = os.path.join(folder, "0. 전년도 PQR 자료.zip")
+        bundle = os.path.join(folder, "16. 전년도 PQR 자료.zip")
         with zipfile.ZipFile(bundle, "w") as archive:
             archive.writestr("PQR24 히알루론점안액.docx", inner.getvalue())
             archive.writestr("HLF-QC-126-06 안정성 경향 2024.xlsx", b"excel")
@@ -533,7 +533,7 @@ class ReferenceDocTest(ServerTest):
 
     def test_reference_files_are_not_counted_as_product_data(self):
         """참고 폴더는 제품 폴더가 아니므로 수집 현황에 섞이지 않습니다."""
-        result = self.upload_reference("0. 전년도 PQR 참고.docx")
+        result = self.upload_reference("16. 전년도 PQR 참고.docx")
         codes = [p["code"] for p in result["data"]["products"]]
         self.assertNotIn("PQR", codes)
 

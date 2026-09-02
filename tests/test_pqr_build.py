@@ -115,7 +115,7 @@ class MissingDataTest(unittest.TestCase):
         self.assertEqual(product["checks"][ITEM_IDS.index("13")], "n")   # 13 안정성
         self.assertIn("stability", product["missing_datasets"])
         self.assertNotEqual(other["checks"][ITEM_IDS.index("13")], "n")  # 다른 제품은 영향 없음
-        # 0(전년도 PQR)·13(안정성) 두 항목이 비어 있는 샘플입니다.
+        # 13(안정성)·16(전년도 PQR) 두 항목이 비어 있는 샘플입니다.
         self.assertIn("입력 자료 2개 항목 미제출", product["reasons"])
 
 
