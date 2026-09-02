@@ -1313,14 +1313,26 @@ function renderProducts(rows, mode){
     </tr>`).join("") || `<tr><td colspan="${span}" class="muted" style="padding:22px">조건에 맞는 PQR이 없습니다.</td></tr>`;
 }
 
+/* 표의 열 머리는 a·b·c… 로 짧게 쓰고, 어느 항인지는 위 목록에서 봅니다.
+   항 번호(8.2.1.1 처럼 긴 것)를 머리에 그대로 쓰면 열이 넓어져 한 화면에 안 들어옵니다. */
+function itemLetter(index){
+  let letter = "", n = index;
+  do { letter = String.fromCharCode(97 + (n % 26)) + letter; n = Math.floor(n / 26) - 1; }
+  while (n >= 0);
+  return letter;
+}
+
 /* ---- 평가항목 매트릭스 ---- */
 function renderMatrix(rows){
   $("#matrix-hint").textContent = uploadEnabled()
     ? "· 칸을 누르면 그 항목의 자료를 바로 올릴 수 있습니다"
     : "· 셀에 마우스를 올리면 항목명과 상태가 표시됩니다";
-  $("#itemkey").innerHTML = ITEMS.map(([k,n,s])=>`<div><b>(${k})</b>${esc(n)} <span class="muted">· ${esc(s)}</span></div>`).join("");
+  $("#itemkey").innerHTML = ITEMS.map(([k,n,hint],i)=>
+    `<div><b>(${itemLetter(i)})</b> ${esc(k)}. ${esc(n)} <span class="muted">· ${esc(hint)}</span></div>`).join("");
   const head = $("#matrix-head");
-  head.innerHTML = `<th>코드</th><th>제품명</th>` + ITEMS.map(([k])=>`<th class="rot mono">${k}</th>`).join("") + `<th>수집률</th><th>단계</th>`;
+  head.innerHTML = `<th>코드</th><th>제품명</th>`
+    + ITEMS.map((item,i)=>`<th class="rot mono" title="${esc(item[0])}. ${esc(item[1])}">${itemLetter(i)}</th>`).join("")
+    + `<th>수집률</th><th>단계</th>`;
   const label = { y:"수집 완료", p:"요청 · 진행 중", n:"미착수" };
   const list = rows.slice().sort((a,b)=>a.collected-b.collected);
   $("#matrix-body").innerHTML = list.map(d=>`
@@ -1329,7 +1341,7 @@ function renderMatrix(rows){
       ${nameCell(d)}
       ${d.checks.map((c,i)=>`<td class="cell"><button class="cell-btn" data-upload="${d.code}|${ITEMS[i][0]}"
           data-tip="${d.code}|${i}" ${uploadEnabled()?"":"disabled"}
-          aria-label="${esc(d.name)} (${ITEMS[i][0]}) ${esc(ITEMS[i][1])} 자료 올리기"><span class="dot ${c}"></span></button>`).join("")}
+          aria-label="${esc(d.name)} ${esc(ITEMS[i][0])}. ${esc(ITEMS[i][1])} 자료 올리기"><span class="dot ${c}"></span></button>`).join("")}
       <td>${progCell(d)}${reportButton(d)}</td>
       <td>${stageTag(d)}</td>
     </tr>`).join("");
@@ -1338,7 +1350,8 @@ function renderMatrix(rows){
     const d = DATA.find(x=>x.code===code), it = ITEMS[+i];
     const hint = uploadEnabled() ? "<br><b>눌러서 자료 올리기</b>"
       : "<br>자료를 올리려면 <b>python -m pqr serve</b> 로 실행하세요";
-    bindTip(n, `<b>(${it[0]}) ${esc(it[1])}</b><br>${esc(d.name)}<br>${label[d.checks[+i]]}${hint}`);
+    bindTip(n, `<b>(${itemLetter(+i)}) ${esc(it[0])}. ${esc(it[1])}</b><br>${esc(d.name)}`
+      + `<br>${label[d.checks[+i]]}${hint}`);
   });
 }
 
