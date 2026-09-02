@@ -114,3 +114,19 @@ LibreOffice 렌더링이 되는 환경이면 PDF 로 변환해 눈으로도 확�
 `pqr check` 와 `build` 의 `presence`/`issues` 가 무엇이 없는지 알려줍니다. 사용자에게 요청할 때는
 **항 번호 · 문서 이름 · 왜 필요한지**를 같이 적으세요. "일탈 자료 주세요"보다 "11항 작성에 2025년
 일탈·OOS/OOT 대장이 필요합니다 (해당 없으면 '없음'으로 회신 주세요)" 가 훨씬 빨리 돌아옵니다.
+
+## 자동 완성 엔진 (`pqr/engine`) — '보고서 작성' 단추가 부르는 것
+
+담당자 대시보드의 **보고서 작성** 단추는 `pqr.engine.writer.write_report` 를 부른다.
+전년도 결재본(평가항목 16, .doc 도 됨) → .docx 변환(Windows 는 Word, 아니면 LibreOffice)
+→ 제품 폴더 판독(`collect`: 성적서 PDF·ERP xls·수율 xlsx·PV/설비 마스터·일탈/변경 PDF·
+공급업체 목록) → 항별 채움(`recipe_ointment`) → 조판(`layout` = report-format.md 규칙)
+→ `polish` → OOXML 순서 0건 검사 → 첨부 엑셀(Cpk 4종·HLF-QC-126-06) 까지 한 번에.
+
+- 헷갈린 값은 `issues` 로 돌아와 화면과 제품 폴더의 `PQR 문의 목록 - <코드>.txt` 에 쌓인다.
+- 손글씨 안정성시험일지는 `ANTHROPIC_API_KEY` 가 있을 때만 Claude 비전(`vision_claude`)으로
+  읽는다. 없으면 13항은 '확인 필요' 로 둔다.
+- 새 제형(점안액 등)은 `recipe_*.py` 를 하나 더 두고 `writer.write_report(recipe=...)` 로 고른다.
+  표는 반드시 항 제목·머리행(`locate.find_tables`)으로 찾고 번호로 찾지 않는다.
+- 퀴노비드안연고 2026 폴더가 기준 검증 자료다: 엔진 결과와 담당자 확정 완성본을 표 단위로
+  대조해 같아야 한다.
