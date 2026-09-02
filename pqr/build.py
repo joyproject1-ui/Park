@@ -480,18 +480,40 @@ def _auto_drafts(folder):
     return drafts if isinstance(drafts, dict) else {}
 
 
+# 프로그램이 만든 초안에는 이 문장이 들어 있습니다 (docx_report.DRAFT_NOTE 의 앞부분).
+# 표시 파일이 없어도 문서를 열어 보면 초안인지 알 수 있습니다 — 담당자 폴더에는
+# 표시가 생기기 전에 만든 초안이 이미 들어 있기 때문입니다.
+AUTO_DRAFT_SIGNATURE = "프로그램이 자동 작성한 제출용 초안입니다"
+
+
+def _looks_like_auto_draft(path):
+    """문서 안에 초안 문구가 있으면 프로그램이 만든 초안으로 봅니다."""
+    if not path.lower().endswith(".docx"):
+        return False
+    try:
+        import zipfile
+        with zipfile.ZipFile(path) as archive:
+            body = archive.read("word/document.xml").decode("utf-8", "replace")
+    except Exception:
+        return False
+    # Word 는 한 문장을 여러 run 으로 쪼개 두므로 태그를 걷어내고 봅니다.
+    return AUTO_DRAFT_SIGNATURE in re.sub(r"<[^>]+>", "", body)
+
+
 def _is_auto_draft(path, drafts):
     """기록된 초안이고 그 뒤로 손대지 않았으면 자동 초안으로 봅니다.
 
     담당자가 같은 이름으로 덮어썼다면 수정 시각이 달라지므로 '작성본' 으로 칩니다.
+    기록이 없어도 문서 안의 초안 문구로 다시 확인합니다.
     """
     recorded = drafts.get(os.path.basename(path))
-    if recorded is None:
-        return False
-    try:
-        return abs(os.path.getmtime(path) - float(recorded)) < 5
-    except (OSError, TypeError, ValueError):
-        return False
+    if recorded is not None:
+        try:
+            if abs(os.path.getmtime(path) - float(recorded)) < 5:
+                return True
+        except (OSError, TypeError, ValueError):
+            pass
+    return _looks_like_auto_draft(path)
 
 
 def find_final_report(folder, matcher=None):

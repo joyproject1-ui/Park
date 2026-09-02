@@ -427,6 +427,32 @@ class BulkUploadTest(ItemUploadTest):
         found = build_module.find_final_report(folder)
         self.assertEqual(os.path.basename(found), os.path.basename(authored))
 
+    def test_generated_draft_is_recognized_by_its_own_wording(self):
+        """표시 파일이 없어도(예전에 만든 초안) 문서 안 문구로 초안임을 알아봅니다."""
+        import os
+        from pqr import build as build_module, docx_report
+        folder = os.path.join(self.dir, self.folder)
+        data = build_module.build(input_dir=self.dir, today=TODAY)
+        draft = docx_report.write_docx(data, "HP-110", folder)
+        os.remove(os.path.join(folder, build_module.AUTO_DRAFT_MARKER))   # 표시 파일 삭제
+        self.assertTrue(build_module._looks_like_auto_draft(draft))
+        authored = os.path.join(folder, "[HP-110] 히알루론점안액 2025년 제품품질평가 (제출용) v4.docx")
+        with open(draft, "rb") as source:
+            payload = source.read()
+        import zipfile, io, re
+        buffer = io.BytesIO()
+        with zipfile.ZipFile(io.BytesIO(payload)) as src, zipfile.ZipFile(buffer, "w") as dst:
+            for info in src.infolist():                    # 초안 문구만 지운 사본 = 담당자 작성본
+                blob = src.read(info.filename)
+                if info.filename == "word/document.xml":
+                    blob = blob.replace(build_module.AUTO_DRAFT_SIGNATURE.encode("utf-8"), b"")
+                dst.writestr(info, blob)
+        with open(authored, "wb") as handle:
+            handle.write(buffer.getvalue())
+        os.utime(authored, (1, 1))                         # 초안보다 오래된 파일이어도
+        found = build_module.find_final_report(folder)
+        self.assertEqual(os.path.basename(found), os.path.basename(authored))
+
     def test_submitted_report_becomes_the_final_report(self):
         """작성해 준 제출본을 한번에 올리기로 넣으면 완성본 버튼이 그 파일을 엽니다."""
         name = "[HP-110] 히알루론점안액 2025년 제품품질평가 (제출용).docx"
