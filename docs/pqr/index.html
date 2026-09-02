@@ -1207,13 +1207,30 @@ async function bulkUpload(files){
     + (failures.length ? `<br>실패 ${failures.length}건:<br>${failures.map(esc).join("<br>")}` : ""));
 }
 /* 완성본 단추 — 제품 폴더의 제출용 보고서 파일을 바로 엽니다. */
+/* 완성본 옆의 첨부 엑셀(경향분석 Sheet 등)을 엽니다. */
+async function openProductFile(code, name){
+  try {
+    const response = await fetch("api/file-open", { method:"POST",
+      headers:{ "Content-Type":"application/json" }, body: JSON.stringify({ product: code, name }) });
+    const payload = await response.json();
+    if (!payload.ok) throw new Error(payload.error || "파일을 열지 못했습니다");
+    showToast(`📊 ${esc(payload.name)} — 파일이 열립니다`
+      + (payload.hint ? "<br>" + esc(payload.hint) : ""));
+  } catch (error) { showToast("열기 실패: " + esc(error.message)); }
+}
 async function openFinal(code){
   try {
     const response = await fetch("api/final", { method:"POST",
       headers:{ "Content-Type":"application/json" }, body: JSON.stringify({ product: code }) });
     const payload = await response.json();
     if (!payload.ok) throw new Error(payload.error || "완성본을 열지 못했습니다");
-    showToast(`📄 ${esc(payload.name)} — 파일이 열립니다<br>${esc(payload.path)}`
+    const files = payload.attachments || [];
+    showToast(`📄 <b>${esc(payload.name)}</b> — 파일이 열립니다`
+      + (files.length
+          ? `<br>첨부 엑셀 ${files.length}개 — 눌러서 여세요<br>`
+            + files.map(f=>`<button class="mini attach-open" data-attach="${esc(f.name)}"
+                 data-code="${esc(code)}">📊 ${esc(f.name)}</button>`).join(" ")
+          : `<br><span class="muted">첨부 엑셀이 제품 폴더에 없습니다 — 경향분석 Sheet 를 함께 두세요.</span>`)
       + (payload.hint ? "<br>" + esc(payload.hint) : ""));
   } catch (error) { showToast("완성본 열기 실패: " + esc(error.message)); }
 }
@@ -1247,7 +1264,9 @@ function showToast(html){
   tip.innerHTML = html; tip.classList.add("on");
   tip.style.left = "50%"; tip.style.top = "18px"; tip.style.transform = "translateX(-50%)";
   clearTimeout(toastTimer);
-  toastTimer = setTimeout(()=>{ tip.classList.remove("on"); tip.style.transform = ""; }, 6000);
+  const hasButtons = /class="mini /.test(html);
+  toastTimer = setTimeout(()=>{ tip.classList.remove("on"); tip.style.transform = ""; },
+                          hasButtons ? 20000 : 6000);
 }
 function progCell(d){
   return `<div class="prog"><span class="track"><span class="fill" style="width:${d.pct}%"></span></span><span class="pct num">${d.pct}%</span></div>`;
@@ -1771,6 +1790,8 @@ document.addEventListener("click", e=>{
   }
   const folder = e.target.closest(".name-btn");
   if (folder){ openFolder(folder.dataset.folder); return; }
+  const attach = e.target.closest(".attach-open");
+  if (attach){ openProductFile(attach.dataset.code, attach.dataset.attach); return; }
   const del = e.target.closest(".item-del");
   if (del){ deleteItemFile(del.dataset.del); return; }
   const ref = e.target.closest(".ref-open");

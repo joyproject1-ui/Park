@@ -447,6 +447,44 @@ class ItemFileListTest(ItemUploadTest):
         self.assertFalse(result.get("ok"))
 
 
+class FinalAttachmentTest(ItemUploadTest):
+    """보고서 완료 — 워드와 함께 첨부 엑셀(경향분석 Sheet)도 확인합니다."""
+
+    def call(self, path, body):
+        request = urllib.request.Request(
+            self.base + path, data=json.dumps(body).encode("utf-8"),
+            headers={"Content-Type": "application/json"})
+        try:
+            with urllib.request.urlopen(request, timeout=20) as response:
+                return json.loads(response.read().decode("utf-8"))
+        except urllib.error.HTTPError as error:
+            return json.loads(error.read().decode("utf-8"))
+
+    def prepare(self):
+        folder = os.path.join(self.dir, self.folder)
+        final = os.path.join(folder, "[HP-110] 히알루론점안액 2025년 제품품질평가 (제출용).docx")
+        with open(final, "wb") as handle:
+            handle.write(b"final")
+        sheet = os.path.join(folder, "HLF-QC-126-09 경향평가 Sheet - 히알루론점안액.xlsx")
+        with open(sheet, "wb") as handle:
+            handle.write(b"excel")
+        return folder, os.path.basename(final), os.path.basename(sheet)
+
+    def test_final_lists_the_excel_attachments(self):
+        _, final_name, sheet_name = self.prepare()
+        result = self.call("/api/final", {"product": "HP-110"})
+        self.assertTrue(result["ok"], result.get("error"))
+        self.assertEqual(result["name"], final_name)
+        self.assertIn(sheet_name, [row["name"] for row in result["attachments"]])
+
+    def test_attachment_can_be_opened_but_not_outside_the_folder(self):
+        _, _, sheet_name = self.prepare()
+        good = self.call("/api/file-open", {"product": "HP-110", "name": sheet_name})
+        self.assertTrue(good["ok"], good.get("error"))
+        bad = self.call("/api/file-open", {"product": "HP-110", "name": "../config.json"})
+        self.assertFalse(bad.get("ok"))
+
+
 class ReferenceDocTest(ServerTest):
     """'PQR 작성 시 참고 사항' — 올린 문서를 목록에서 눌러 읽습니다."""
 

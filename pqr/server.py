@@ -325,6 +325,39 @@ class Workspace(object):
                 "folder": os.path.abspath(folder),
                 "name": os.path.basename(target)}
 
+    ATTACHMENT_HINTS = ("HLF-QC-126", "경향", "Sheet", "안정성")
+
+    def final_attachments(self, code):
+        """완성본과 함께 보는 첨부 엑셀 목록 (경향분석 Sheet 등)."""
+        folder = self.product_folder(code)
+        matcher = build_module.item_matcher(self.data["items"])
+        rows = []
+        for name in sorted(os.listdir(folder)):
+            path = os.path.join(folder, name)
+            if not os.path.isfile(path) or name.startswith("~$") or name.startswith("."):
+                continue
+            if not name.lower().endswith((".xlsx", ".xlsm", ".xls")):
+                continue
+            if matcher(name):                 # 항 번호로 시작하면 근거 자료입니다
+                continue
+            if not any(hint in name for hint in self.ATTACHMENT_HINTS):
+                continue
+            stat = os.stat(path)
+            rows.append({"name": name, "size": stat.st_size,
+                         "modified": _dt.datetime.fromtimestamp(stat.st_mtime)
+                                     .strftime("%Y-%m-%d %H:%M")})
+        return rows
+
+    def product_file(self, code, name):
+        """제품 폴더 안의 파일 경로 — 폴더 밖으로 나가지 못하게 막습니다."""
+        base = os.path.basename(name or "")
+        if not base or base != name or _UNSAFE.search(base):
+            raise UploadError("파일 이름이 올바르지 않습니다.")
+        path = os.path.join(self.product_folder(code), base)
+        if not os.path.isfile(path):
+            raise UploadError("파일을 찾지 못했습니다: %s" % base)
+        return path
+
     def item_files(self, code, item_id):
         """그 제품·그 평가항목에 올라와 있는 파일 목록입니다."""
         folder = self.product_folder(code)
@@ -536,6 +569,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(200, self._handle_report())
             if path == "/api/final":
                 return self._json(200, self._handle_final())
+            if path == "/api/file-open":
+                return self._json(200, self._handle_file_open())
             if path == "/api/item-files":
                 return self._json(200, self._handle_item_files())
             if path == "/api/item-delete":
@@ -694,6 +729,9 @@ class Handler(BaseHTTPRequestHandler):
         opened = open_in_file_manager(target)
         return {"ok": True, "path": os.path.abspath(target),
                 "name": os.path.basename(target), "opened": opened,
+                "folder": os.path.abspath(folder),
+                # 워드만 열면 경향분석 Sheet 를 다시 찾아야 합니다 — 같이 알려 줍니다.
+                "attachments": self.workspace.final_attachments(code),
                 "hint": "" if opened else "파일을 자동으로 열지 못했습니다. 위 경로를 파일 탐색기에 붙여넣으세요."}
 
     def _handle_item_files(self):
@@ -725,6 +763,16 @@ class Handler(BaseHTTPRequestHandler):
                     "opened": opened, "folder": True,
                     "hint": "" if opened else "폴더를 자동으로 열지 못했습니다. 위 경로를 파일 탐색기에 붙여넣으세요."}
         target = self.workspace.reference_path(name)
+        opened = open_in_file_manager(target)
+        return {"ok": True, "path": os.path.abspath(target),
+                "name": os.path.basename(target), "opened": opened,
+                "hint": "" if opened else "파일을 자동으로 열지 못했습니다. 위 경로를 파일 탐색기에 붙여넣으세요."}
+
+    def _handle_file_open(self):
+        """제품 폴더 안의 파일(첨부 엑셀 등)을 엽니다."""
+        body = self._read_json()
+        target = self.workspace.product_file(str(body.get("product") or "").strip(),
+                                             str(body.get("name") or "").strip())
         opened = open_in_file_manager(target)
         return {"ok": True, "path": os.path.abspath(target),
                 "name": os.path.basename(target), "opened": opened,
