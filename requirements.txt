@@ -1,0 +1,7 @@
+# PQR 프로그램이 쓰는 외부 라이브러리 — PQR-대시보드-실행.bat 이 자동으로 설치합니다.
+python-docx>=1.1      # 결재본 워드 파일 편집 (자동 완성 엔진)
+lxml>=4.9             # OOXML 순서 검사
+openpyxl>=3.1         # 수율표·마스터파일·경향분석 엑셀
+xlrd>=2.0             # ERP 에서 내려받은 옛 엑셀(.xls)
+pdfplumber>=0.11      # PDF 글자를 표 배치 그대로 읽기 (pdftotext -layout 과 같은 결과)
+pdfminer.six>=20221105   # pdfplumber 가 쓰는 PDF 엔진

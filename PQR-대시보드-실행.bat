@@ -36,5 +36,7 @@ if not defined PY (
   exit /b 1
 )
 
+rem Install or refresh the libraries the auto-report engine needs (quiet).
+%PY% -m pip install -q -r requirements.txt --disable-pip-version-check >nul 2>&1
 %PY% -m pqr launch
 if errorlevel 1 pause

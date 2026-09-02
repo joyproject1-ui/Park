@@ -516,7 +516,7 @@ def _is_auto_draft(path, drafts):
     return _looks_like_auto_draft(path)
 
 
-def find_final_report(folder, matcher=None):
+def find_final_report(folder, matcher=None, include_drafts=False):
     """제품 폴더에서 완성본(제출용) 보고서 파일을 찾습니다.
 
     파일 이름에 '완성본' 또는 '제출' 이 들어간 문서 파일(.docx/.doc/.hwp/.hwpx/.pdf)을
@@ -540,7 +540,9 @@ def find_final_report(folder, matcher=None):
             continue
         if any(keyword in name for keyword in FINAL_KEYWORDS):
             (generated if _is_auto_draft(path, drafts) else authored).append(path)
-    candidates = authored or generated
+    # 프로그램이 만든 요약 초안은 '완성본' 이 아닙니다 — 담당자가 그 단추를 누르면
+    # 결재본 양식의 제출용 보고서가 열려야 합니다. 초안만 있으면 없는 것으로 칩니다.
+    candidates = authored or (generated if include_drafts else [])
     if not candidates:
         return None
     return max(candidates, key=os.path.getmtime)

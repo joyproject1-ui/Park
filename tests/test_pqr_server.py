@@ -211,14 +211,15 @@ class ServerTest(unittest.TestCase):
         # 제품 폴더에 두어야 근거 자료 옆에서 검토할 수 있습니다.
         self.assertEqual(os.path.dirname(payload["final"]), payload["folder"])
         product = next(p for p in payload["data"]["products"] if p["code"] == "HP-110")
-        self.assertEqual(product["final_report"], payload["final_name"])
+        # 결재본(평가항목 16)이 없어 요약 초안만 만들어진 경우, 그 초안은 완성본이 아닙니다.
+        self.assertEqual(product["final_report"], "")
 
-    def test_final_endpoint_opens_the_submission_report(self):
+    def test_final_endpoint_does_not_open_the_summary_draft(self):
         self.post_json("/api/report", {"product": "HP-110", "force": True})
         status, payload = self.post_json("/api/final", {"product": "HP-110"})
         self.assertEqual(status, 200)
-        self.assertTrue(payload["ok"], payload.get("error"))
-        self.assertTrue(os.path.isfile(payload["path"]))
+        self.assertFalse(payload["ok"])
+        self.assertIn("완성본", payload["error"])
 
     def test_final_endpoint_reports_when_nothing_is_written_yet(self):
         status, payload = self.post_json("/api/final", {"product": "HP-201"})

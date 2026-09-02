@@ -313,14 +313,18 @@ class FinalReportTest(unittest.TestCase):
     def test_no_final_report_before_writing(self):
         self.assertEqual(self.product()["final_report"], "")
 
-    def test_written_docx_is_detected_as_final_report(self):
+    def test_written_summary_draft_is_not_the_final_report(self):
+        """프로그램이 만든 요약 초안은 완성본이 아닙니다 — 담당자가 '보고서 완료' 를
+        누르면 결재본 양식의 제출용 보고서가 열려야 하지, 요약 초안이 열리면 안 됩니다."""
         from pqr import docx_report
         data = self.build()
         path = docx_report.write_docx(data, "HP-110", self.folder,
                                       config=build_module.load_config())
         self.assertTrue(os.path.isfile(path))
         self.assertIn("제출용", os.path.basename(path))
-        self.assertEqual(self.product()["final_report"], os.path.basename(path))
+        self.assertEqual(self.product()["final_report"], "")
+        self.assertEqual(os.path.basename(build_module.find_final_report(
+            self.folder, include_drafts=True)), os.path.basename(path))
 
     def test_final_docx_is_not_read_as_a_table(self):
         """제출용 보고서가 제품 폴더에 있어도 대장으로 적재되면 안 됩니다."""
