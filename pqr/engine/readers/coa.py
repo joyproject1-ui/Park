@@ -21,6 +21,16 @@ def _first(pattern, text, group=1, flags=0):
     return norm(m.group(group)) if m else None
 
 
+def _appearance(text):
+    """'성상  무취의 담황색 안연고제  무취의 담황색 안연고제  시험자 …' — 기준과 결과가 같은 글이므로
+    되풀이되는 구절을 성상으로 본다."""
+    m = re.search(r"성상\s+(\S+(?: \S+){0,8}?)\s+\1(?:\s|$)", text)
+    if m:
+        return m.group(1)
+    m = re.search(r"성상\s+(.+?)\s+\S+\s+\d{4}\.\d{2}\.\d{2}", text)
+    return norm(m.group(1)) if m else None
+
+
 def read_ipc(path):
     """공정 시험성적서(조제·충전 등) 한 장."""
     text = squash(read_text(path))
@@ -33,7 +43,7 @@ def read_ipc(path):
     out["lot_size"] = _first(r"L\s*O\s*T\s*_?\s*수\s*량\s+([\d,]+)", text)
     out["done"] = _first(r"시험완료일자\s+(\d{4}/\s*\d{2}/\s*\d{2})", text)
     out["verdict"] = _first(r"판\s*정\s*결\s*과\s+(\S+)", text)
-    out["appearance"] = _first(r"성상\s+(.+?)\s{2,}", text)
+    out["appearance"] = _appearance(text)
     m = re.search(r"생균수\s+(\S+)\s*이하\s+(\S+(?:\s*\S+)?)\s+\S+\s+\d{4}\.\d{2}\.\d{2}", text)
     if m:
         out["bioburden_spec"], out["bioburden"] = m.group(1) + " 이하", norm(m.group(2))
@@ -56,7 +66,7 @@ def read_fp(path):
     out = {"file": os.path.basename(path)}
     out["lot"] = _first(r"\b(O[A-Z]{2}[A-Z0-9]{3})\b", text) or _first(LOT.pattern, text)
     out["expiry"] = _first(r"\b(\d{4}\.\d{2}\.\d{2})\s+한림제약", text)
-    out["appearance"] = _first(r"성상\s+(.+?)\s{2,}", text)
+    out["appearance"] = _appearance(text)
     out["metal_total"] = _first(r"합계는\s*(\d+)\s*개\s*,\s*개개는 8개를 초과하는 것", text)
     out["metal_each"] = _first(r"이\s*(\d+)\s*매\s*$", text, flags=re.M)
     out["particle"] = _first(r"입자도.*?(\d+)\s*um\s*이하", text, flags=re.S)
@@ -72,6 +82,13 @@ def read_fp(path):
         out["leak"] = "메틸렌블루시액 침투 없이 양호"
     elif "누출 발생 없이 양호함" in text:
         out["leak"] = "누출 발생 없이 양호함"
+    m = re.search(r"액은\s*(\S+?)(?:을|를)\s*나타(?:냄|낸다)", text)
+    if m:
+        out["ident_color"] = "액은 %s을 나타냄" % m.group(1)
+    flat = re.sub(r"\s+", " ", text)
+    if "침전이 생김" in flat:
+        mm = re.search(r"((?:[가-힣]+ ){0,2}침전이 생김)", flat)
+        out["ident_precip"] = mm.group(1).strip() if mm else "침전이 생김"
     m = re.search(r"(\d{2,3})\s*nm\s*,\s*(\d{2,3})\s*nm\s*에서\s*흡수극대", text)
     if m:
         out["uv_max"] = "%snm, %snm에서 흡수극대를 나타냄" % (m.group(1), m.group(2))

@@ -32,6 +32,7 @@ class ProductData(object):
         self.equipment = {}
         self.support = {}
         self.pv = None
+        self.pv_exp = None
         self.suppliers_raw = []
         self.suppliers_mat = []
         self.api_chain = {}
@@ -195,6 +196,10 @@ def collect(folder, product_name=None, log=None):
                 data.pv = master_module.read_pv_master(p, product_name or "")
             except Exception as e:
                 note("10.1", p, "PV 마스터 판독 실패: %s" % e)
+            try:                                   # 수출용은 마스터에 '(수출용)' 이름으로 따로 있다
+                data.pv_exp = master_module.read_pv_master(p, (product_name or "") + "(수출용)")
+            except Exception:
+                data.pv_exp = None
     for p in got.get("10.2", []):
         if p.lower().endswith(".xlsx"):
             try:

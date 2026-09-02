@@ -38,9 +38,7 @@ def read_deviation(path):
     text = squash("\n".join(pages))
     out = {}
     out["doc_no"] = _grab(r"(DR-\d{6}-\d{2})", text)
-    out["title"] = _grab(r"일탈명\s*\n?\s*(?:Title\s*)?\n?\s*(.+?)\n", text)
-    if out["title"] and "Title" in out["title"]:
-        out["title"] = _grab(r"Title\s*\n\s*(.+?)\n", text)
+    out["title"] = None
     out["lot"] = _grab(r"\(([A-Z]{2}[A-Z0-9]{4})\)", text)
     out["occurred"] = _grab(r"Occurred \(Expected\)\s+(\d{4}-\d{2}-\d{2})", text) \
         or _grab(r"발생\(예정\)일시.*?(\d{4}-\d{2}-\d{2})", text, re.S)
@@ -49,6 +47,12 @@ def read_deviation(path):
     with pdfplumber.open(path) as pdf:
         rows1 = form_rows(pdf.pages[0])
         rows2 = form_rows(pdf.pages[1]) if len(pdf.pages) > 1 else []
+    title = pick(rows1, ("일탈명",))
+    out["title"] = title[0] if title else None
+    if out["title"]:
+        m = re.search(r"\(([A-Z]{2}[A-Z0-9]{4})\)", out["title"])
+        if m:
+            out["lot"] = m.group(1)
     out["description"] = "\n".join(pick(rows1, ("계획된일탈내용",)))
     out["correction"] = "\n".join(pick(rows1, ("필요한시정사항",)))
     out["cause"] = "\n".join(pick(rows1, ("일탈의(예상)",)))

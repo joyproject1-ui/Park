@@ -94,3 +94,40 @@ def support_docs(path, sheet="제조지원 설비 & IT 시스템"):
                            for i in range(max(len(docs), len(dates)))]
         out[key] = entry
     return out
+
+
+def pv_by_code(path, code, sheet=None):
+    """PV 마스터에서 문서 코드(QUIO3 · QUIO2 …)가 든 계획/보고서 묶음을 제품명과 상관없이 찾는다.
+
+    [{plan, reason, kind, report, report_date, lots:[(seq, lot, mfg)], revalidation}] — 계획 행 뒤에
+    Lot 행(1st·2nd·3rd)이 이어진다.
+    """
+    wb = load_workbook(path, data_only=True, read_only=True)
+    ws = wb[sheet] if sheet else wb.worksheets[0]
+    rows = [[_cell(v) for v in r] for r in ws.iter_rows(values_only=True)]
+    header = None
+    for i, r in enumerate(rows[:15]):
+        if any("Lot" in c or "제조번호" in c for c in r) and any("계획" in c or "PV" in c or "Plan" in c for c in r):
+            header = i; break
+    out, current = [], None
+    for r in rows[(header + 1) if header is not None else 0:]:
+        r = r + [""] * 14
+        plan_col = next((i for i, c in enumerate(r) if re.match(r"^PV\d{2}-.*-P", c)), None)
+        if plan_col is not None:
+            plan = r[plan_col]
+            if code not in plan.upper().replace("0", "O"):
+                current = None; continue
+            rep_col = next((i for i in range(plan_col + 1, len(r)) if re.match(r"^PV\d{2}-.*-R", r[i])), None)
+            rep = r[rep_col] if rep_col is not None else ""
+            m = re.search(r"(\d{4}\.\d{2}\.\d{2})", rep)
+            current = {"plan": plan.split("(")[0].strip(), "reason": r[plan_col + 1], "kind": r[plan_col + 2],
+                       "report": re.sub(r"\s*\(\d{4}\.\d{2}\.\d{2}\)?\s*$", "", rep).strip(),
+                       "report_date": m.group(1) if m else "", "lots": [],
+                       "revalidation": r[rep_col + 1] if rep_col is not None else ""}
+            out.append(current)
+        if current is None:
+            continue
+        seq_col = next((i for i, c in enumerate(r) if re.match(r"^\d(st|nd|rd|th)$", c)), None)
+        if seq_col is not None and r[seq_col + 1]:
+            current["lots"].append((r[seq_col], r[seq_col + 1], r[seq_col + 2]))
+    return out

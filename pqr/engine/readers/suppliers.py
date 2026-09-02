@@ -11,6 +11,9 @@ def _cell(v):
 def _latest_sheet(wb):
     """시트 이름이 '202106(Rev.5)' 처럼 개정별이면 가장 최근 것."""
     names = wb.sheetnames
+    live = [n for n in names if n.strip().startswith("실시간")]   # 담당자가 계속 고치는 현재 시트
+    if live:
+        return live[0]
     revs = []
     for n in names:
         m = re.search(r"Rev\.?\s*(\d+)", n)

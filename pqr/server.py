@@ -104,6 +104,35 @@ def program_version():
     return datetime.datetime.fromtimestamp(newest).strftime("%Y-%m-%d %H:%M")
 
 
+def _vision_hook():
+    """손글씨 시험일지 판독기 — Claude API 키가 있을 때만 켜집니다."""
+    try:
+        from .engine import vision
+        return vision.hook() if vision.available() else None
+    except Exception:
+        return None
+
+
+ISSUE_LIST_NAME = "PQR 문의 목록 - %s.txt"
+
+
+def write_issue_list(folder, product, issues):
+    """엔진이 헷갈린 항목을 제품 폴더에 글로 남깁니다 — 담당자가 보고서 옆에서 바로 봅니다."""
+    path = os.path.join(folder, ISSUE_LIST_NAME % product.get("code", ""))
+    lines = ["[%s] %s — 자동 작성 중 확인이 필요한 항목" % (product.get("code", ""), product.get("name", "")),
+             "만든 때: %s" % _dt.datetime.now().strftime("%Y-%m-%d %H:%M"), ""]
+    if not issues:
+        lines.append("확인이 필요한 항목이 없습니다.")
+    for i, (item, where, why) in enumerate(issues, 1):
+        lines.append("%d. [%s항] %s%s" % (i, item, ("%s — " % where) if where else "", why))
+    try:
+        with open(path, "w", encoding="utf-8") as handle:
+            handle.write("\n".join(lines) + "\n")
+    except OSError:
+        return None
+    return path
+
+
 def open_in_file_manager(path):
     """폴더를 운영체제 파일 관리자로 엽니다 (안 되면 조용히 False).
 
@@ -711,6 +740,8 @@ class Handler(BaseHTTPRequestHandler):
         matcher = build_module.item_matcher(self.workspace.data["items"])
         previous = prior_report.find_previous_report(folder, matcher)
         based_on = None
+        engine_result = None
+        issues = []
         if previous:
             period = self.workspace.data.get("period") or {}
             year = None
@@ -721,15 +752,29 @@ class Handler(BaseHTTPRequestHandler):
                     break
             target = os.path.join(
                 folder, docx_report.report_filename(product, self.workspace.data.get("period")))
-            based_on = prior_report.write_from_previous(previous, target, year)
-            if based_on is not None:
-                based_on["attachments"] = prior_report.copy_attachments(
-                    previous, folder, based_on.get("previous_year"), year)
-                build_module.mark_auto_draft(folder, target)
+            # 1) 자동 완성 엔진 — 결재본을 열어 올린 자료 값으로 채우고 회사 조판 규칙을 적용합니다.
+            try:
+                from .engine import writer as engine_writer
+                engine_result = engine_writer.write_report(
+                    folder, product, period, target, today=self.workspace.data.get("today"),
+                    log=None, vision=_vision_hook())
+                issues = engine_result.get("issues") or []
                 final = target
-            else:                              # 압축 안에 워드가 없으면 요약본으로
-                final = docx_report.write_docx(self.workspace.data, code, folder,
-                                               config=self.workspace.config)
+                based_on = {"previous": os.path.basename(previous), "previous_year": year,
+                            "changed": 0, "engine": True, "log": engine_result.get("log") or []}
+                write_issue_list(folder, product, issues)
+            except Exception as error:                     # 엔진이 못 돌면 예전 방식(연도만 바꾼 사본)
+                based_on = prior_report.write_from_previous(previous, target, year)
+                if based_on is not None:
+                    based_on["engine"] = False
+                    based_on["engine_error"] = str(error)
+                    based_on["attachments"] = prior_report.copy_attachments(
+                        previous, folder, based_on.get("previous_year"), year)
+                    build_module.mark_auto_draft(folder, target)
+                    final = target
+                else:                              # 압축 안에 워드가 없으면 요약본으로
+                    final = docx_report.write_docx(self.workspace.data, code, folder,
+                                                   config=self.workspace.config)
         else:
             final = docx_report.write_docx(self.workspace.data, code, folder,
                                            config=self.workspace.config)
@@ -738,7 +783,8 @@ class Handler(BaseHTTPRequestHandler):
         opened = open_in_file_manager(folder)
         return {"ok": True, "files": [os.path.abspath(p) for p in written],
                 "final": os.path.abspath(final), "final_name": os.path.basename(final),
-                "based_on": based_on,
+                "based_on": based_on, "issues": issues,
+                "engine": bool(engine_result),
                 "folder": os.path.abspath(folder),
                 "out_dir": os.path.abspath(out_dir), "opened": opened,
                 "data": self.workspace.dashboard_payload()}
