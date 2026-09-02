@@ -56,6 +56,7 @@ def write_report(folder, product, period, out_path, today=None, recipe=None, log
 
     data = collect_module.collect(folder, product_name=product.get("name"), log=log_)
     data.previous_report = previous
+    data.period = period
     if vision is not None:
         try:
             vision(data, log_)
@@ -77,6 +78,19 @@ def write_report(folder, product, period, out_path, today=None, recipe=None, log
     if bad:
         raise EngineError("OOXML 순서 검사에 실패했습니다 (%d 곳)" % bad)
     log_("순서 검사 0 건 · 저장: %s" % os.path.basename(out_path))
+    # 첨부 엑셀 — Cpk 계산 파일 4종(결재본 것을 물려받아 값 갱신) + 안정성 경향 분석
+    attachments = []
+    try:
+        from . import excel_attach
+        day = today.strftime("%Y.%m.%d") if hasattr(today, "strftime") else re.sub(r"-", ".", str(today or ""))[:10]
+        attachments += excel_attach.write_cpk_files(os.path.dirname(out_path), data, previous, day)
+        made = excel_attach.write_stability_workbook(os.path.dirname(out_path), data, product, day,
+                                                     input_dir=os.path.dirname(os.path.abspath(folder)))
+        if made:
+            attachments.append(made)
+        log_("첨부 엑셀: %s" % ", ".join(n for n, _ in attachments))
+    except Exception as error:
+        data.issues.append(("첨부", "", "첨부 엑셀 생성 실패: %s" % error))
     shutil.rmtree(work, ignore_errors=True)
     return {"path": out_path, "issues": data.issues + list((ctx or {}).get("issues", [])), "log": lines,
-            "data": data}
+            "data": data, "attachments": attachments}
