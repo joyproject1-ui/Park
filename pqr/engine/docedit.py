@@ -325,9 +325,11 @@ def blank_para_before(document, needle, template_needle=None):
         new.remove(b)
     pr = new.find(qn("w:pPr"))
     if pr is not None:
-        pbb = pr.find(qn("w:pageBreakBefore"))
-        if pbb is not None:
-            pr.remove(pbb)
+        # 자동 번호(글머리 기호)를 물려받으면 빈 문단에 점만 찍혀 남는다.
+        for tag in ("w:pageBreakBefore", "w:numPr"):
+            got = pr.find(qn(tag))
+            if got is not None:
+                pr.remove(got)
     target.addprevious(new)
     return new
 
@@ -1080,3 +1082,39 @@ def draw_block_line(table, first, last, weight="0.5pt"):
                 t.text = ""
             clear_diag(_Cell(tc, table))
     return 1
+
+
+def keep_paras_before_tables(document):
+    """표 바로 앞의 글 있는 문단들에 '다음과 함께' 를 건다.
+
+    '검토 및 승인' 처럼 번호가 없는 제목도 표와 갈라지지 않게 한다(담당자 PC 에서 표지 다음
+    쪽의 제목만 앞 쪽에 남는 일이 있었다). 표 앞에 이어진 문단 묶음을 통째로 붙인다.
+    """
+    body = document.element.body
+    kids = list(body)
+    n = 0
+    for i, el in enumerate(kids):
+        if el.tag != qn("w:tbl"):
+            continue
+        j = i - 1
+        while j >= 0 and kids[j].tag == qn("w:p"):
+            para = kids[j]
+            if para.find(".//" + qn("w:br")) is not None:
+                break
+            pr = para.find(qn("w:pPr"))
+            if pr is not None and pr.find(qn("w:pageBreakBefore")) is not None:
+                _keep_next_para(para); n += 1
+                break
+            _keep_next_para(para); n += 1
+            if not "".join(t.text or "" for t in para.iter(qn("w:t"))).strip():
+                break                     # 빈 문단까지만 (그 위는 다른 덩어리)
+            j -= 1
+    return n
+
+
+def _keep_next_para(para):
+    pr = para.find(qn("w:pPr"))
+    if pr is None:
+        pr = para.makeelement(qn("w:pPr"), {})
+        para.insert(0, pr)
+    get_or_add(pr, "keepNext")

@@ -554,7 +554,6 @@ tbody tr:hover{background:var(--accent-soft)}
     <nav class="nav-group" aria-label="내 업무">
       <div class="nav-label"><span>내 업무</span></div>
       <button class="nav-item" data-view="dash" aria-current="page"><span class="nav-ico">📋</span>대시보드 — 오늘 할 일</button>
-      <button class="nav-item" data-view="mine"><span class="nav-ico">📁</span>내 담당 PQR<span class="badge" id="b-mine">0</span></button>
     </nav>
 
     <nav class="nav-group" aria-label="현황">
@@ -1179,6 +1178,7 @@ const state = { view:"dash", site:"all", form:"all", me:"", q:"", filter:"all" }
 
 function visible(){
   return DATA.filter(d=>{
+    if (state.me && d.owner !== state.me) return false;
     if (state.site !== "all" && d.site !== state.site) return false;
     if (state.form !== "all" && formOf(d) !== state.form) return false;
     if (state.q){
@@ -1395,7 +1395,9 @@ async function openFinal(code){
     const payload = await response.json();
     if (!payload.ok) throw new Error(payload.error || "완성본을 열지 못했습니다");
     const files = payload.attachments || [];
-    showToast(`📄 <b>${esc(payload.name)}</b> — 파일이 열립니다`
+    // 보고서를 화면에 띄웁니다 — 서버가 워드를 PDF 로 바꿔 새 창에 보여 줍니다.
+    window.open(`api/final-view?product=${encodeURIComponent(code)}`, "_blank", "noopener");
+    showToast(`📄 <b>${esc(payload.name)}</b> — 새 창에 보고서를 띄웠습니다 (워드 파일도 함께 열립니다)`
       + (files.length
           ? `<br>첨부 엑셀 ${files.length}개 — 눌러서 여세요<br>`
             + files.map(f=>`<button class="mini attach-open" data-attach="${esc(f.name)}"
@@ -1474,9 +1476,6 @@ function renderDue(rows){
 
 /* ---- 제품별 현황 (여러 메뉴가 이 표를 공유) ---- */
 const MODES = {
-  mine:     { title:"내 담당 PQR",
-              crumb:()=>state.me ? `담당자 · ${state.me}` : "상단에서 담당자를 고르세요",
-              pred:d=>!state.me || d.owner===state.me },
   issues:   { title:"일탈 · OOS/OOT", crumb:"미결 이슈를 보유한 PQR", pred:d=>d.dev+d.oos>0, sort:(a,b)=>(b.dev+b.oos)-(a.dev+a.oos) },
   schedule: { title:"PQR 일정(전체)", crumb:"마감일 순 전체 일정", sort:(a,b)=>a.dueD-b.dueD, pred:()=>true },
   /* 품질 이슈 경향에서 걸린 제품(Cpk 1 미만)은 검토보고서를 따로 써야 합니다.
@@ -1530,7 +1529,7 @@ function renderProducts(rows, mode){
                    + metricCell(d, d.oos, "deviations")
                    + metricCell(d, d.chg, "changes")
                    + metricCell(d, d.cmp, "changes") : ""}
-      <td>${progCell(d)}${reportButton(d)}</td>
+      <td>${progCell(d)}</td>
       <td>${stageTag(d)}</td>
       <td class="mono">${d.due} ${d.done?"":`<span style="margin-left:6px">${ddayCell(d)}</span>`}</td>
     </tr>`).join("") || `<tr><td colspan="${span}" class="muted" style="padding:22px">조건에 맞는 PQR이 없습니다.</td></tr>`;
@@ -2141,7 +2140,6 @@ const VIEWMAP = {
   /* crumb 은 데이터가 실린 뒤에 계산해야 하므로 함수로 둡니다. */
   dash:{ sec:"v-dash", title:"대시보드 — 오늘 할 일",
          crumb:()=>`평가기간 ${PERIOD} · 기준일 ${fmt(TODAY)}` },
-  mine:{ sec:"v-products", mode:"mine" },
   issues:{ sec:"v-products", mode:"issues" },
   schedule:{ sec:"v-products", mode:"schedule" },
   items:{ sec:"v-items", title:"평가항목 자료 수집", crumb:"PQR 보고서 항 번호별 원본 자료 수집 상태" },
@@ -2194,7 +2192,6 @@ function updateBadges(){
   // 메뉴는 늘어나고 줄어듭니다. 없는 배지에 값을 넣으려다 화면 전체가 멈추지 않도록
   // 있는 것만 채웁니다.
   const counts = {
-    "b-mine": open.filter(d=>!state.me || d.owner===state.me).length,
     "b-items": open.filter(d=>d.collected<ITEMS.length).length,
     "b-dev": open.filter(d=>d.dev+d.oos>0).length,
     "b-sched": DATA.length,
@@ -2226,16 +2223,21 @@ function renderChipFilter(seg, key, values, label){
   }));
 }
 
+/* 담당자 고르기를 띄우는 화면 — 목록(일정)과 오늘 할 일. */
+const OWNER_VIEWS = new Set(["schedule", "dash"]);
 function renderOwnerPicker(){
   const seg = $("#me-seg");
   const owners = [...new Set(DATA.map(d=>d.owner).filter(Boolean))].sort();
-  seg.hidden = state.view !== "mine" || owners.length < 2;
+  seg.hidden = !OWNER_VIEWS.has(state.view) || owners.length < 2;
   if (seg.hidden) return;
   seg.innerHTML = [`<button data-v="" aria-pressed="${state.me===""}">전체</button>`]
     .concat(owners.map(o=>`<button data-v="${esc(o)}" aria-pressed="${state.me===o}">${esc(o)}</button>`)).join("");
   seg.querySelectorAll("button").forEach(b=>b.addEventListener("click",()=>{
     state.me = b.dataset.v;
-    $("#view-crumb").textContent = state.me ? `담당자 · ${state.me}` : "상단에서 담당자를 고르세요";
+    const cfg = VIEWMAP[state.view] || VIEWMAP.dash;
+    const base = cfg.mode ? MODES[cfg.mode] : cfg;
+    const crumb = typeof base.crumb === "function" ? base.crumb() : base.crumb;
+    $("#view-crumb").textContent = state.me ? `담당자 · ${state.me} · ${crumb}` : crumb;
     renderOwnerPicker(); render();
   }));
 }

@@ -111,3 +111,48 @@ def to_xlsx(src, dst):
     if _xls_with_soffice(src, dst):
         return "soffice"
     raise ConvertError("Cpk 계산 파일(.xls)을 바꿀 도구가 없습니다 (Excel 또는 LibreOffice).")
+
+
+def _pdf_with_word(src, dst):
+    try:
+        import win32com.client
+    except ImportError:
+        return False
+    word = win32com.client.DispatchEx("Word.Application")
+    word.Visible = False
+    try:
+        doc = word.Documents.Open(os.path.abspath(src), ReadOnly=True)
+        doc.SaveAs2(os.path.abspath(dst), FileFormat=17)      # wdFormatPDF
+        doc.Close(False)
+    finally:
+        word.Quit()
+    return os.path.isfile(dst)
+
+
+def _pdf_with_soffice(src, dst):
+    exe = _soffice()
+    if not exe:
+        return False
+    outdir = os.path.dirname(os.path.abspath(dst))
+    subprocess.run([exe, "--headless", "--convert-to", "pdf", "--outdir", outdir, os.path.abspath(src)],
+                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=600)
+    made = os.path.join(outdir, os.path.splitext(os.path.basename(src))[0] + ".pdf")
+    if os.path.isfile(made) and os.path.abspath(made) != os.path.abspath(dst):
+        shutil.move(made, dst)
+    return os.path.isfile(dst)
+
+
+def to_pdf(src, dst):
+    """보고서(.docx/.doc)를 화면에서 볼 수 있게 PDF 로 바꾼다.
+
+    담당자 PC 에는 Word 가 있으므로 Word 로 만든다(쪽 나눔·글꼴이 실제 인쇄본과 같다).
+    없으면 LibreOffice 를 쓴다. 이미 PDF 면 복사만 한다.
+    """
+    if src.lower().endswith(".pdf"):
+        shutil.copyfile(src, dst)
+        return "copy"
+    if sys.platform == "win32" and _pdf_with_word(src, dst):
+        return "word"
+    if _pdf_with_soffice(src, dst):
+        return "soffice"
+    raise ConvertError("보고서를 화면에 띄우려면 Word 또는 LibreOffice 가 필요합니다.")

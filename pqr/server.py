@@ -596,9 +596,44 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(200, self.workspace.dashboard_payload())
         if path == "/api/health":
             return self._json(200, {"ok": True, "input_dir": self.workspace.input_dir})
+        if path == "/api/final-view":
+            return self._handle_final_view()
         if path == "/favicon.ico":
             return self._send(404, b"", "text/plain")
         return self._serve_file(path.lstrip("/"), None)
+
+    def _handle_final_view(self):
+        """완성본 보고서를 PDF 로 바꿔 브라우저 화면에 띄웁니다 (담당자: 눌러서 바로 보고 싶다)."""
+        import urllib.parse as _parse
+        query = _parse.parse_qs(self.path.split("?", 1)[1] if "?" in self.path else "")
+        code = (query.get("product") or [""])[0].strip()
+        try:
+            folder = self.workspace.product_folder(code)
+        except UploadError as error:
+            return self._send(400, str(error), "text/plain; charset=utf-8")
+        matcher = build_module.item_matcher(self.workspace.data["items"])
+        target = build_module.find_final_report(folder, matcher)
+        if not target:
+            return self._send(404, "완성본 보고서가 없습니다.", "text/plain; charset=utf-8")
+        cache_dir = os.path.join(self.workspace.out_dir, "preview")
+        os.makedirs(cache_dir, exist_ok=True)
+        pdf = os.path.join(cache_dir, "%s.pdf" % re.sub(r"[^\w.-]+", "_", code))
+        try:
+            if not os.path.isfile(pdf) or os.path.getmtime(pdf) < os.path.getmtime(target):
+                from .engine import convert
+                convert.to_pdf(target, pdf)
+        except Exception as error:
+            return self._send(500, "보고서를 화면에 띄우지 못했습니다: %s" % error,
+                              "text/plain; charset=utf-8")
+        with open(pdf, "rb") as handle:
+            payload = handle.read()
+        self.send_response(200)
+        self.send_header("Content-Type", "application/pdf")
+        self.send_header("Content-Length", str(len(payload)))
+        self.send_header("Content-Disposition",
+                         "inline; filename=\"report.pdf\"")
+        self.end_headers()
+        self.wfile.write(payload)
 
     def _serve_file(self, relative, content_type):
         base = self.dashboard_dir

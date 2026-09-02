@@ -39,6 +39,12 @@ def apply(document, log=None, product_title=None):
             toc = i
     # ---- 앞부분 ----
     try:
+        # 표지 다음은 '검토 및 승인' 이 새 쪽에서 시작한다. 결재본은 표지 아래를 빈 줄로 채워
+        # 그 자리를 만들지만, 빈 줄은 글꼴·줄 높이가 조금만 달라도 무너진다(담당자 PC 에서
+        # 표지와 결재표가 한 쪽에 붙어 나왔다). 쪽 나눔으로 못 박는다.
+        approval_head = find_para(document, "검토 및 승인")
+        if approval_head is not None:
+            E.page_break_before(approval_head)
         log("개정 내역 위 빈 줄 삭제: %d" % E.drop_blank_paras_after(document, "본 문서의 승인일을 제/개정일로 한다.", 5))
         anchor_title = "3. 대상 제품"
         rev_blank = E.blank_para_before(document, "개 정 내 역", anchor_title)
@@ -186,6 +192,7 @@ def apply(document, log=None, product_title=None):
             E.drop_blank_paras_between(document, T[prev[0]], h)
         E.page_break_before(h)
     log("항 제목 다음과 함께: %d" % E.keep_headings_with_next(document))
+    log("표 앞 문단 다음과 함께: %d" % E.keep_paras_before_tables(document))
     log("윗첨자 각주 번호: %d" % len(E.superscript_note_marks(document)))
     log("쪽 나눔 앞 빈 문단 삭제: %d" % E.strip_blanks_before_page_breaks(document))
     log("각주 내어쓰기: %d" % E.hanging_indent_notes(document))
