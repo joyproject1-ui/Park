@@ -106,3 +106,24 @@ LibreOffice 로 변환해 확인하면 멀쩡한데 담당자 Word 에서는 빈
 > LibreOffice 변환은 조판 확인용 보조 수단일 뿐입니다. 한글 글꼴이 없으면
 > 대체 글꼴로 조판돼 쪽수가 실제와 달라지므로(굴림→NanumGothic 등),
 > 쪽수는 담당자 Word 에서 확인받는 것이 최종입니다.
+
+## 전년도 결재본이 .doc 일 때 — 변환 흔적 지우기
+
+작성 기준 본이 옛 Word 파일(.doc)이면 편집을 위해 LibreOffice 로 .docx 로 바꿔야 하는데,
+이때 담당자 Word 에서 **글꼴이 결재본과 달라 보이는** 흔적이 남습니다. 조판(표 위치·사선·
+바닥글)은 그대로 옮겨지므로, 아래 넷만 되돌리면 결재본과 같아집니다.
+
+1. **글꼴 이름에 세미콜론이 붙는다.** LibreOffice 는 `w:ascii="굴림;Gulim"` 처럼
+   `이름;대체이름` 으로 씁니다. Word 는 이런 이름의 글꼴을 찾지 못해 다른 글꼴로 바꿔
+   버립니다. → 모든 `w:ascii/w:hAnsi/w:eastAsia/w:cs` 값에서 `;` 앞부분만 남깁니다
+   (앞부분이 깨진 글자면 뒷부분을 씁니다). `word/fontTable.xml` 의 `w:name` 도 같이 고칩니다.
+2. **LibreOffice 대체 글꼴**이 섞여 들어옵니다. Liberation Serif → Times New Roman,
+   Liberation Sans·FreeSans → Arial, WenQuanYi Zen Hei → 굴림 으로 바꿉니다.
+3. **한글·숫자 자동 간격**(`autoSpaceDE`·`autoSpaceDN`)이 켜져 "품질보증 1 팀" 처럼
+   벌어질 수 있습니다. → 둘 다 `false` 로 두고 `styles.xml` 의 `docDefaults` 에도 넣습니다.
+4. **Strict OOXML 속성**(`w:jc val="start"/"end"`, `w:ind w:start/w:end`,
+   `tblCellMar` 안의 `w:start/w:end`)을 Word 가 쓰는 `left/right` 로 되돌립니다.
+
+검사 방법 — 완성한 docx 안 `word/*.xml` 에 `;` 가 든 글꼴 이름이 0 개여야 합니다.
+조판이 결재본과 같은지는 원본 .doc 과 완성본을 각각 PDF 로 변환해 같은 쪽을 겹쳐 보면
+확인됩니다(머리글의 문서번호·쪽수 말고 달라지는 곳이 없어야 합니다).
