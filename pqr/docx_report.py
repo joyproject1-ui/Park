@@ -565,4 +565,6 @@ def write_docx(data, code, out_dir, config=None, filename=None):
             info = zipfile.ZipInfo(name, date_time=stamp)
             info.compress_type = zipfile.ZIP_DEFLATED
             archive.writestr(info, payload.encode("utf-8"))
+    # 이건 프로그램이 만든 초안입니다 — 담당자 제출본이 들어오면 그쪽이 완성본입니다.
+    build_module.mark_auto_draft(out_dir, target)
     return target

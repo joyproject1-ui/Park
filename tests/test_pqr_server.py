@@ -359,6 +359,21 @@ class BulkUploadTest(ItemUploadTest):
         self.assertFalse(result.get("ok"))
         self.assertIn("형식", result["error"])
 
+    def test_authored_report_wins_over_generated_draft(self):
+        """프로그램이 만든 초안이 있어도 완성본 단추는 담당자 제출본을 엽니다."""
+        from pqr import build as build_module
+        folder = os.path.join(self.dir, self.folder)   # setUp 이 만든 제품 폴더
+        draft = os.path.join(folder, "[HP-110] 히알루론점안액 2025년 제품품질평가 (제출용).docx")
+        with open(draft, "wb") as handle:
+            handle.write(b"draft")
+        build_module.mark_auto_draft(folder, draft)
+        authored = os.path.join(folder, "[HP-110] 히알루론점안액 2025년 제품품질평가 (제출용) v4.docx")
+        with open(authored, "wb") as handle:
+            handle.write(b"authored")
+        os.utime(authored, (1, 1))              # 초안보다 오래된 파일이어도
+        found = build_module.find_final_report(folder)
+        self.assertEqual(os.path.basename(found), os.path.basename(authored))
+
     def test_submitted_report_becomes_the_final_report(self):
         """작성해 준 제출본을 한번에 올리기로 넣으면 완성본 버튼이 그 파일을 엽니다."""
         name = "[HP-110] 히알루론점안액 2025년 제품품질평가 (제출용).docx"

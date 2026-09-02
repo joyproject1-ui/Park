@@ -447,6 +447,51 @@ def collect_item_files(input_dir, items):
 
 FINAL_KEYWORDS = ("완성본", "제출")
 FINAL_SUFFIXES = (".docx", ".doc", ".hwp", ".hwpx", ".pdf")
+# 프로그램이 스스로 만든 초안을 적어 두는 파일입니다. 담당자가 실제로 작성한
+# 제출본과 구분하려고 둡니다 — 이름만으로는 둘을 가릴 수 없습니다.
+AUTO_DRAFT_MARKER = ".pqr_자동초안.json"
+
+
+def mark_auto_draft(folder, path):
+    """프로그램이 만든 초안임을 기록합니다 (파일 이름과 만든 시각)."""
+    marker = os.path.join(folder, AUTO_DRAFT_MARKER)
+    try:
+        with open(marker, encoding="utf-8") as handle:
+            drafts = json.load(handle)
+    except Exception:
+        drafts = {}
+    if not isinstance(drafts, dict):
+        drafts = {}
+    try:
+        drafts[os.path.basename(path)] = os.path.getmtime(path)
+        with open(marker, "w", encoding="utf-8") as handle:
+            json.dump(drafts, handle, ensure_ascii=False, indent=1)
+    except OSError:
+        pass
+    return marker
+
+
+def _auto_drafts(folder):
+    try:
+        with open(os.path.join(folder, AUTO_DRAFT_MARKER), encoding="utf-8") as handle:
+            drafts = json.load(handle)
+    except Exception:
+        return {}
+    return drafts if isinstance(drafts, dict) else {}
+
+
+def _is_auto_draft(path, drafts):
+    """기록된 초안이고 그 뒤로 손대지 않았으면 자동 초안으로 봅니다.
+
+    담당자가 같은 이름으로 덮어썼다면 수정 시각이 달라지므로 '작성본' 으로 칩니다.
+    """
+    recorded = drafts.get(os.path.basename(path))
+    if recorded is None:
+        return False
+    try:
+        return abs(os.path.getmtime(path) - float(recorded)) < 5
+    except (OSError, TypeError, ValueError):
+        return False
 
 
 def find_final_report(folder, matcher=None):
@@ -454,11 +499,15 @@ def find_final_report(folder, matcher=None):
 
     파일 이름에 '완성본' 또는 '제출' 이 들어간 문서 파일(.docx/.doc/.hwp/.hwpx/.pdf)을
     완성본으로 봅니다. 항 번호로 시작하는 파일은 근거 자료이므로 제외합니다.
-    여러 개면 가장 최근에 고친 파일 하나를 돌려줍니다.
+
+    담당자가 넣은 작성본이 있으면 그것을 먼저 씁니다 — 프로그램이 만든 초안은
+    자리를 채워 두는 용도라, 완성본 단추는 실제 제출본을 열어야 합니다.
+    둘 다 여럿이면 가장 최근에 고친 파일을 돌려줍니다.
     """
     if not folder or not os.path.isdir(folder):
         return None
-    candidates = []
+    drafts = _auto_drafts(folder)
+    authored, generated = [], []
     for name in sorted(os.listdir(folder)):
         path = os.path.join(folder, name)
         if not os.path.isfile(path) or name.startswith("~$") or name.startswith("."):
@@ -468,7 +517,8 @@ def find_final_report(folder, matcher=None):
         if matcher and matcher(name):
             continue
         if any(keyword in name for keyword in FINAL_KEYWORDS):
-            candidates.append(path)
+            (generated if _is_auto_draft(path, drafts) else authored).append(path)
+    candidates = authored or generated
     if not candidates:
         return None
     return max(candidates, key=os.path.getmtime)
