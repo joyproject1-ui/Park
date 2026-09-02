@@ -400,7 +400,8 @@ td.wrap{white-space:normal;min-width:220px}
 
     <nav class="nav-group" aria-label="현황">
       <div class="nav-label"><span>현황</span><span class="nav-count" id="b-status">0</span></div>
-      <button class="nav-item" data-view="products"><span class="nav-ico">🏭</span>제품별 현황</button>
+      <!-- '제품별 현황' 메뉴는 담당자 요청으로 삭제했습니다 — 'PQR 일정(전체)' 이
+           같은 목록을 마감일 순으로 보여 줍니다. -->
       <button class="nav-item" data-view="items"><span class="nav-ico">🗂️</span>평가항목 자료 수집<span class="badge" id="b-items">0</span></button>
       <button class="nav-item" data-view="schedule"><span class="nav-ico">🗓️</span>PQR 일정(전체)<span class="badge" id="b-sched">0</span></button>
       <!-- '보고서 작성 완료 현황' 메뉴는 담당자 요청으로 삭제했습니다.
@@ -764,6 +765,7 @@ const SAMPLE_STAGES = ["자료 수집","보고서 작성"];
 
 /* 평가항목 — PQR 보고서 항 번호(3 · 8.1.1 · 9.2.4 …) */
 const SAMPLE_ITEMS = [
+  ["0","전년도 PQR word & excel","기준 본 · 첨부 엑셀"],
   ["3","허가증","EDMS"],
   ["6","제조내역","ERP"],
   ["7","수율현황표","개인 작성"],
@@ -1076,7 +1078,7 @@ function renderKpis(rows){
     // 칩으로 고를 수 있는 것만 겁니다.
     b.addEventListener("click",()=>{
       state.filter = FILTERS[d.k] ? d.k : "all";
-      go("products");
+      go("schedule");
     });
     wrap.appendChild(b);
   });
@@ -1247,7 +1249,6 @@ function renderDue(rows){
 
 /* ---- 제품별 현황 (여러 메뉴가 이 표를 공유) ---- */
 const MODES = {
-  products: { title:"제품별 현황", crumb:"전체 PQR 대상 제품", pred:()=>true },
   mine:     { title:"내 담당 PQR",
               crumb:()=>state.me ? `담당자 · ${state.me}` : "상단에서 담당자를 고르세요",
               pred:d=>!state.me || d.owner===state.me },
@@ -1283,7 +1284,7 @@ function lotCell(d){
 /* 일탈·OOS·변경·불만 칸은 그 숫자를 보러 오는 '일탈 · OOS/OOT' 화면에서만 씁니다.
    제품 목록에서는 자리만 차지해 빼 두었습니다. */
 function renderProducts(rows, mode){
-  const m = MODES[mode] || MODES.products;
+  const m = MODES[mode] || MODES.schedule;
   const withIssues = mode === "issues";
   let list = rows.filter(m.pred).filter(FILTERS[state.filter]);
   if (m.sort) list = list.slice().sort(m.sort); else list = list.slice().sort((a,b)=>a.dueD-b.dueD);
@@ -1847,7 +1848,6 @@ const VIEWMAP = {
   /* crumb 은 데이터가 실린 뒤에 계산해야 하므로 함수로 둡니다. */
   dash:{ sec:"v-dash", title:"대시보드 — 오늘 할 일",
          crumb:()=>`평가기간 ${PERIOD} · 기준일 ${fmt(TODAY)}` },
-  products:{ sec:"v-products", mode:"products" },
   mine:{ sec:"v-products", mode:"mine" },
   issues:{ sec:"v-products", mode:"issues" },
   schedule:{ sec:"v-products", mode:"schedule" },
