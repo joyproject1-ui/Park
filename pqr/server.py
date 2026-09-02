@@ -131,6 +131,8 @@ class Workspace(object):
         self.lock = threading.Lock()
         self.data = None
         self.rebuild()
+        # 참고 문서 폴더는 미리 만들어 둡니다 — 담당자가 탐색기로 바로 넣을 수 있게.
+        self.reference_folder(create=True)
 
     # ---------------- 집계 ----------------
 
@@ -633,7 +635,14 @@ class Handler(BaseHTTPRequestHandler):
     def _handle_reference_open(self):
         """'PQR 작성 시 참고 사항' 문서를 엽니다 — 담당자가 눌러 바로 읽도록."""
         body = self._read_json()
-        target = self.workspace.reference_path(str(body.get("name") or "").strip())
+        name = str(body.get("name") or "").strip()
+        if not name:                       # 이름이 없으면 폴더를 엽니다
+            folder = self.workspace.reference_folder(create=True)
+            opened = open_in_file_manager(folder)
+            return {"ok": True, "path": os.path.abspath(folder), "name": "",
+                    "opened": opened, "folder": True,
+                    "hint": "" if opened else "폴더를 자동으로 열지 못했습니다. 위 경로를 파일 탐색기에 붙여넣으세요."}
+        target = self.workspace.reference_path(name)
         opened = open_in_file_manager(target)
         return {"ok": True, "path": os.path.abspath(target),
                 "name": os.path.basename(target), "opened": opened,

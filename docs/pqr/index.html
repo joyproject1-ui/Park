@@ -594,6 +594,7 @@ td.wrap{white-space:normal;min-width:220px}
           <div class="card-head">
             <h2>참고 문서</h2>
             <span class="pill" id="ref-count">0개</span>
+            <button class="link" id="ref-folder">폴더 열기 📂</button>
             <button class="link" id="ref-add">참고 문서 올리기 +</button>
           </div>
           <div class="card-body" id="ref-note"></div>
@@ -1593,9 +1594,12 @@ function renderUpload(){
   const info = (SOURCE && SOURCE.reference) || { files: [], folder: "" };
   const files = info.files || [];
   $("#ref-count").textContent = files.length + "개";
-  $("#ref-note").innerHTML = files.length
-    ? `문서를 누르면 바로 열립니다. 파일은 <code>${esc(info.folder || "")}</code> 에 있습니다.`
-    : `아직 올린 참고 문서가 없습니다. <b>참고 문서 올리기 +</b> 로 PQR 작성방법 같은 자료를 올려 두면, 팀원 누구나 여기서 눌러 읽을 수 있습니다.`;
+  $("#ref-note").innerHTML =
+    (files.length
+      ? `문서를 누르면 바로 열립니다.`
+      : `아직 올린 참고 문서가 없습니다. <b>참고 문서 올리기 +</b> 로 PQR 작성방법 같은 자료를 올려 두면, 팀원 누구나 여기서 눌러 읽을 수 있습니다.`)
+    + `<br>이 폴더에 파일을 직접 넣어도 됩니다: <code>${esc(info.folder || "")}</code>`
+    + ` — 넣은 뒤 오른쪽 위 <b>↻</b> 를 누르세요.`;
   $("#ref-body").innerHTML = files.map(f=>`<tr>
     <td><button class="link ref-open" data-ref="${esc(f.name)}">${esc(f.name)}</button></td>
     <td class="num">${(f.size/1024).toFixed(0)} KB</td>
@@ -1611,7 +1615,9 @@ async function openReference(name){
       headers:{ "Content-Type":"application/json" }, body: JSON.stringify({ name }) });
     const payload = await response.json();
     if (!payload.ok) throw new Error(payload.error || "문서를 열지 못했습니다");
-    showToast(`📄 ${esc(payload.name)} — 파일이 열립니다`
+    showToast(payload.folder
+      ? `📂 참고 문서 폴더가 열립니다<br>${esc(payload.path)}`
+      : `📄 ${esc(payload.name)} — 파일이 열립니다`
       + (payload.hint ? "<br>" + esc(payload.hint) : ""));
   } catch (error) { showToast("열기 실패: " + esc(error.message)); }
 }
@@ -1740,6 +1746,7 @@ $("#up-file").addEventListener("change", e=>pickFile(e.target.files[0]));
 $("#bulk-file").addEventListener("change", e=>bulkUpload(Array.from(e.target.files)));
 $("#ref-file").addEventListener("change", e=>uploadReference(Array.from(e.target.files)));
 $("#ref-add").addEventListener("click", ()=>{ const p=$("#ref-file"); p.value=""; p.click(); });
+$("#ref-folder").addEventListener("click", ()=>openReference(""));
 $("#up-drop").addEventListener("click", ()=>$("#up-file").click());
 $("#up-drop").addEventListener("keydown", e=>{
   if (e.key === "Enter" || e.key === " "){ e.preventDefault(); $("#up-file").click(); }

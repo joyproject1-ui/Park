@@ -352,6 +352,17 @@ class ReferenceDocTest(ServerTest):
             payload = json.loads(error.read().decode("utf-8"))
         self.assertFalse(payload.get("ok"))
 
+    def test_empty_name_opens_the_folder(self):
+        """이름 없이 부르면 참고 폴더를 엽니다 — 탐색기로 파일을 직접 넣을 수 있게."""
+        request = urllib.request.Request(
+            self.base + "/api/reference-open", data=b"{}",
+            headers={"Content-Type": "application/json"})
+        with urllib.request.urlopen(request, timeout=10) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+        self.assertTrue(payload["ok"])
+        self.assertTrue(payload["folder"])
+        self.assertTrue(os.path.isdir(payload["path"]))
+
     def test_reference_files_are_not_counted_as_product_data(self):
         """참고 폴더는 제품 폴더가 아니므로 수집 현황에 섞이지 않습니다."""
         result = self.upload_reference("0. 전년도 PQR 참고.docx")
