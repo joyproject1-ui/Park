@@ -2104,13 +2104,21 @@ function renderSourceNote(){
       + "<code>python -m pqr build</code> 가 만든 <code>data.js</code> 를 이 파일 옆에 두면 실제 데이터로 바뀝니다.";
   } else {
     const errors = SOURCE.issue_count || 0;
+    /* 서버를 여러 번 띄우면 입력 폴더가 다른 창이 섞입니다 — 올린 자료가 안 보이는
+       일이 그래서 생깁니다. 지금 보고 있는 폴더를 항상 적어 둡니다. */
+    const inputDir = (SOURCE.upload && SOURCE.upload.input_dir) || "";
+    const shortDir = inputDir.length > 34 ? "…" + inputDir.slice(-33) : inputDir;
     note.innerHTML = `<span class="tag g">생성 데이터</span>`
       + `<span class="muted" style="margin-left:8px">${esc((SOURCE.generated_at||"").replace("T"," "))}</span>`
+      + (inputDir ? `<span class="muted" style="margin-left:8px" title="${esc(inputDir)}">`
+                    + `📂 ${esc(shortDir)}</span>` : "")
       + (errors ? `<span class="tag r" style="margin-left:8px">적재 오류 ${errors}건</span>` : "");
     $("#file-open").hidden = uploadEnabled();
     $("#reload-btn").hidden = !uploadEnabled();
     const files = Object.values(SOURCE.sources || {}).reduce((sum, list)=>sum + list.length, 0);
     foot.innerHTML = `제출 파일 ${files}건으로 ${esc((SOURCE.generated_at || "").replace("T", " "))} 에 생성한 데이터입니다. `
+      + (SOURCE.upload && SOURCE.upload.input_dir
+          ? `입력 폴더: <code>${esc(SOURCE.upload.input_dir)}</code>. ` : "")
       + `서술 문안이 포함된 보고서는 생성형 AI가 작성한 <b>초안</b>이며, 발행 전 담당자 검토와 승인이 필요합니다.`
       + versionNote();
   }
