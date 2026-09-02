@@ -229,6 +229,16 @@ td.wrap{white-space:normal;min-width:220px}
 .report-btn{margin-top:5px;color:var(--ok);border-color:var(--ok)}
 .report-btn[disabled]{opacity:.55;cursor:default}
 .bulk-btn{margin-top:5px}
+.ref-drop{margin:10px 14px;padding:18px;border:2px dashed var(--line-2);border-radius:10px;
+  display:flex;flex-direction:column;align-items:center;gap:4px;text-align:center;cursor:pointer;
+  font-size:13px;color:var(--ink-2);transition:border-color .15s,background .15s}
+.ref-drop:hover{border-color:var(--accent)}
+.ref-drop.over{border-color:var(--accent);background:var(--accent-soft)}
+.up-files{margin-top:10px;display:flex;flex-direction:column;gap:4px;font-size:12px}
+.up-files-head{font-weight:600;color:var(--ink-2)}
+.up-file-row{display:flex;align-items:center;gap:8px;padding:5px 8px;border:1px solid var(--line);border-radius:7px}
+.up-file-name{flex:1;word-break:break-all}
+.mini.danger{color:var(--crit);border-color:var(--crit)}
 .bulk-btn[disabled]{opacity:.55;cursor:default}
 .final-btn{margin-top:5px;color:var(--accent);border-color:var(--accent);font-weight:700}
 .final-btn[disabled]{opacity:.55;cursor:default}
@@ -598,6 +608,10 @@ td.wrap{white-space:normal;min-width:220px}
             <button class="link" id="ref-add">참고 문서 올리기 +</button>
           </div>
           <div class="card-body" id="ref-note"></div>
+          <div class="ref-drop" id="ref-drop">
+            <b>여기로 파일을 끌어다 놓으세요</b>
+            <span class="muted">또는 눌러서 고르기 · 워드 · 엑셀 · PDF · 한글 (최대 64 MB)</span>
+          </div>
           <div class="tablewrap">
             <table class="compact">
               <thead><tr><th>문서</th><th>크기</th><th>올린 날짜</th><th></th></tr></thead>
@@ -737,6 +751,7 @@ td.wrap{white-space:normal;min-width:220px}
       <span class="picked" id="up-filename"></span>
     </div>
     <div class="up-path" id="up-path"></div>
+    <div class="up-files" id="up-files"></div>
     <div class="up-result" id="up-result"></div>
   </div>
   <div class="modal-foot">
@@ -1210,8 +1225,14 @@ async function makeReport(code, button){
       headers:{ "Content-Type":"application/json" }, body: JSON.stringify({ product: code }) });
     const payload = await response.json();
     if (!payload.ok) throw new Error(payload.error || "보고서를 만들지 못했습니다");
-    showToast("제출용 보고서를 만들었습니다 — 제품 폴더가 열립니다<br>"
-      + `📄 ${esc(payload.final_name || "")}<br>${esc(payload.folder || "")}`
+    const base = payload.based_on;
+    showToast((base
+        ? `전년도 PQR 서식으로 제출용 보고서를 만들었습니다 — 제품 폴더가 열립니다`
+          + `<br><span class="muted">기준 본: ${esc(base.previous || "")}`
+          + ` · 연도 표기 ${base.changed || 0}곳을 새로 맞췄습니다. 표 안의 값은 원본을 보고 채우세요.</span>`
+        : `자료 상태 요약본을 만들었습니다 — 전년도 PQR 워드를 (0) 항목으로 올리면`
+          + ` 그 서식 그대로 제출용 보고서를 만듭니다`)
+      + `<br>📄 ${esc(payload.final_name || "")}<br>${esc(payload.folder || "")}`
       + (payload.opened ? "" : "<br>(자동으로 열리지 않으면 위 경로를 파일 탐색기에 붙여넣으세요)"));
     // 방금 만든 제출용 보고서를 바로 열 수 있게 옆에 완성본 단추를 세웁니다.
     // (표를 다시 그리므로 이 button 은 사라집니다 — 상태는 데이터에서 옵니다.)
@@ -1481,7 +1502,8 @@ function openUpload(code, itemKey){
   pickedFile = null;
 
   $("#up-product").textContent = `${product.code} · ${product.name}`;
-  $("#up-title").textContent = `(${item[0]}) ${item[1]}`;
+  $("#up-title").textContent = `${item[0]}. ${item[1]}`;
+  renderItemFiles();
   $("#up-filename").textContent = "";
   $("#up-result").textContent = "";
   $("#up-result").className = "up-result";
@@ -1548,6 +1570,43 @@ function updatePathHint(){
   $("#up-path").textContent = `저장 위치:  ${folder}/${saved}`;
 }
 
+/* 그 항목에 이미 올라와 있는 파일을 보여 주고, 잘못 올린 것은 지웁니다. */
+async function renderItemFiles(){
+  const box = $("#up-files");
+  if (!uploadTarget || !uploadEnabled()){ box.innerHTML = ""; return; }
+  box.innerHTML = `<div class="muted">첨부 파일을 불러오는 중…</div>`;
+  try {
+    const response = await fetch("api/item-files", { method:"POST",
+      headers:{ "Content-Type":"application/json" },
+      body: JSON.stringify({ product: uploadTarget.code, item: uploadTarget.item }) });
+    const payload = await response.json();
+    if (!payload.ok) throw new Error(payload.error || "목록을 불러오지 못했습니다");
+    const files = payload.files || [];
+    box.innerHTML = files.length
+      ? `<div class="up-files-head">첨부된 파일 ${files.length}개</div>`
+        + files.map(f=>`<div class="up-file-row">
+             <span class="up-file-name">${esc(f.name)}</span>
+             <span class="muted">${(f.size/1024).toFixed(0)} KB · ${esc(f.modified||"")}</span>
+             <button class="mini danger item-del" data-del="${esc(f.name)}">삭제</button>
+           </div>`).join("")
+      : `<div class="muted">아직 이 항목에 올린 파일이 없습니다.</div>`;
+  } catch (error) { box.innerHTML = `<div class="muted">${esc(error.message)}</div>`; }
+}
+async function deleteItemFile(name){
+  if (!uploadTarget) return;
+  if (!confirm(`${name}\n\n이 파일을 지울까요? 되돌릴 수 없습니다.`)) return;
+  try {
+    const response = await fetch("api/item-delete", { method:"POST",
+      headers:{ "Content-Type":"application/json" },
+      body: JSON.stringify({ product: uploadTarget.code, item: uploadTarget.item, name }) });
+    const payload = await response.json();
+    if (!payload.ok) throw new Error(payload.error || "지우지 못했습니다");
+    if (payload.data){ adopt(payload.data); render(); refreshUploadState(); }
+    showToast(`🗑️ ${esc(payload.deleted)} 을(를) 지웠습니다.`);
+    renderItemFiles();
+  } catch (error) { showToast("삭제 실패: " + esc(error.message)); }
+}
+
 function closeUpload(){
   modal.classList.remove("open");
   if (!drawer.classList.contains("open")) scrim.classList.remove("open");
@@ -1590,6 +1649,7 @@ async function submitUpload(){
       + (warnings.length ? `<ul>${warnings.map(e=>`<li>${esc(e.row)}행 ${esc(e.field)} — ${esc(e.message)}</li>`).join("")}</ul>` : "");
     if (errors.length){ result.className = "up-result bad"; }
     $("#up-filename").textContent = ""; pickedFile = null;
+    renderItemFiles();
   } catch (error) {
     result.className = "up-result bad";
     result.textContent = error.message;
@@ -1711,6 +1771,8 @@ document.addEventListener("click", e=>{
   }
   const folder = e.target.closest(".name-btn");
   if (folder){ openFolder(folder.dataset.folder); return; }
+  const del = e.target.closest(".item-del");
+  if (del){ deleteItemFile(del.dataset.del); return; }
   const ref = e.target.closest(".ref-open");
   if (ref){ openReference(ref.dataset.ref); return; }
   const bulk = e.target.closest(".bulk-btn");
@@ -1760,6 +1822,20 @@ $("#bulk-file").addEventListener("change", e=>bulkUpload(Array.from(e.target.fil
 $("#ref-file").addEventListener("change", e=>uploadReference(Array.from(e.target.files)));
 $("#ref-add").addEventListener("click", ()=>{ const p=$("#ref-file"); p.value=""; p.click(); });
 $("#ref-folder").addEventListener("click", ()=>openReference(""));
+/* 참고 문서는 끌어다 놓아도 올라갑니다 — 탐색기에서 바로 던지는 편이 빠릅니다. */
+(function(){
+  const drop = $("#ref-drop");
+  if (!drop) return;
+  drop.addEventListener("click", ()=>{ const p=$("#ref-file"); p.value=""; p.click(); });
+  ["dragenter","dragover"].forEach(name=>drop.addEventListener(name, e=>{
+    e.preventDefault(); e.stopPropagation(); drop.classList.add("over"); }));
+  ["dragleave","drop"].forEach(name=>drop.addEventListener(name, e=>{
+    e.preventDefault(); e.stopPropagation(); drop.classList.remove("over"); }));
+  drop.addEventListener("drop", e=>{
+    const files = Array.from((e.dataTransfer && e.dataTransfer.files) || []);
+    if (files.length) uploadReference(files);
+  });
+})();
 $("#up-drop").addEventListener("click", ()=>$("#up-file").click());
 $("#up-drop").addEventListener("keydown", e=>{
   if (e.key === "Enter" || e.key === " "){ e.preventDefault(); $("#up-file").click(); }

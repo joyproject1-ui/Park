@@ -317,6 +317,136 @@ class ItemUploadTest(ServerTest):
         self.assertIn("평가항목", result["error"])
 
 
+class PriorReportTest(ServerTest):
+    """보고서 작성 — 전년도 PQR 이 있으면 그 서식으로 새 연도 보고서를 만듭니다."""
+
+    def make_previous(self, year=2025):
+        """전년도 PQR 을 흉내낸 워드 파일을 제품 폴더에 둡니다."""
+        import zipfile
+        from pqr import prior_report
+        folder = os.path.join(self.dir, self.folder)
+        path = os.path.join(folder, "0. 전년도 PQR 히알루론점안액.docx")
+        document = (
+            '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+            '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'
+            '<w:body>'
+            '<w:p><w:r><w:t>제품품질평가는 %d 년 1월 ~ 12월까지 생산된 제품을 평가한다.</w:t></w:r></w:p>'
+            '<w:tbl><w:tr><w:tc><w:p><w:r><w:t>%d.02.13</w:t></w:r></w:p></w:tc></w:tr></w:tbl>'
+            '</w:body></w:document>' % (year, year))
+        with zipfile.ZipFile(path, "w") as archive:
+            archive.writestr("word/document.xml", document)
+            archive.writestr("[Content_Types].xml", "<Types/>")
+        return path, folder
+
+    def report(self, code="HP-110"):
+        request = urllib.request.Request(
+            self.base + "/api/report",
+            data=json.dumps({"product": code, "force": True}).encode("utf-8"),
+            headers={"Content-Type": "application/json"})
+        try:
+            with urllib.request.urlopen(request, timeout=60) as response:
+                return json.loads(response.read().decode("utf-8"))
+        except urllib.error.HTTPError as error:
+            return json.loads(error.read().decode("utf-8"))
+
+    def test_uses_previous_pqr_as_the_base(self):
+        previous, folder = self.make_previous(2024)
+        result = self.report()
+        self.assertTrue(result["ok"], result.get("error"))
+        self.assertIsNotNone(result["based_on"], "전년도 PQR 을 기준 본으로 써야 합니다")
+        self.assertEqual(result["based_on"]["previous"], os.path.basename(previous))
+        self.assertEqual(result["based_on"]["previous_year"], 2024)
+
+    def test_body_years_move_but_table_values_stay(self):
+        """평가 기간이 2025년이면 2024년 기준 본의 본문 연도는 2025로 옮깁니다."""
+        import zipfile
+        self.make_previous(2024)
+        result = self.report()
+        with zipfile.ZipFile(result["final"]) as archive:
+            body = archive.read("word/document.xml").decode("utf-8")
+        self.assertIn("2025 년 1월", body)      # 본문 연도는 새 평가 연도로
+        self.assertIn("2024.02.13", body)       # 표 안 날짜는 그대로 — 담당자가 채웁니다
+
+    def test_zip_base_is_unpacked_and_attachments_come_along(self):
+        """전년도 PQR 을 압축으로 올려도 안의 워드를 기준 본으로 씁니다."""
+        import io, zipfile
+        folder = os.path.join(self.dir, self.folder)
+        document = (
+            '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+            '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'
+            '<w:body><w:p><w:r><w:t>제품품질평가는 2024 년 1월 ~ 12월까지 생산된 제품이다.</w:t>'
+            '</w:r></w:p></w:body></w:document>')
+        inner = io.BytesIO()
+        with zipfile.ZipFile(inner, "w") as docx:
+            docx.writestr("word/document.xml", document)
+            docx.writestr("[Content_Types].xml", "<Types/>")
+        bundle = os.path.join(folder, "0. 전년도 PQR 자료.zip")
+        with zipfile.ZipFile(bundle, "w") as archive:
+            archive.writestr("PQR24 히알루론점안액.docx", inner.getvalue())
+            archive.writestr("HLF-QC-126-06 안정성 경향 2024.xlsx", b"excel")
+        result = self.report()
+        self.assertTrue(result["ok"], result.get("error"))
+        self.assertIn(".docx", result["based_on"]["previous"])
+        with zipfile.ZipFile(result["final"]) as archive:
+            body = archive.read("word/document.xml").decode("utf-8")
+        self.assertIn("2025 년 1월", body)
+        # 첨부 엑셀도 새 연도 이름으로 옆에 놓입니다.
+        self.assertIn("HLF-QC-126-06 안정성 경향 2025.xlsx", result["based_on"]["attachments"])
+        self.assertTrue(os.path.isfile(
+            os.path.join(folder, "HLF-QC-126-06 안정성 경향 2025.xlsx")))
+
+    def test_without_previous_pqr_it_still_makes_a_summary(self):
+        result = self.report()
+        self.assertTrue(result["ok"], result.get("error"))
+        self.assertIsNone(result["based_on"])
+
+
+class ItemFileListTest(ItemUploadTest):
+    """올리기 창에서 그 항목의 첨부를 보고, 잘못 올린 것은 지웁니다."""
+
+    def call(self, path, body):
+        request = urllib.request.Request(
+            self.base + path, data=json.dumps(body).encode("utf-8"),
+            headers={"Content-Type": "application/json"})
+        try:
+            with urllib.request.urlopen(request, timeout=20) as response:
+                return json.loads(response.read().decode("utf-8"))
+        except urllib.error.HTTPError as error:
+            return json.loads(error.read().decode("utf-8"))
+
+    def test_list_shows_only_that_items_files(self):
+        self.upload_item("HP-110", "13", "안정성 결과표.xlsx")
+        self.upload_item("HP-110", "12", "변경관리 대장.xlsx")
+        listing = self.call("/api/item-files", {"product": "HP-110", "item": "13"})
+        self.assertTrue(listing["ok"], listing.get("error"))
+        names = [row["name"] for row in listing["files"]]
+        self.assertTrue(all(name.startswith("13") for name in names), names)
+
+    def test_delete_removes_the_file_and_updates_the_screen(self):
+        saved = self.upload_item("HP-110", "13", "안정성 결과표.xlsx")
+        name = os.path.basename(saved["saved"])
+        result = self.call("/api/item-delete",
+                           {"product": "HP-110", "item": "13", "name": name})
+        self.assertTrue(result["ok"], result.get("error"))
+        self.assertFalse(os.path.isfile(os.path.join(self.dir, self.folder, name)))
+        product = next(p for p in result["data"]["products"] if p["code"] == "HP-110")
+        ids = [item[0] for item in result["data"]["items"]]
+        self.assertEqual(dict(zip(ids, product["checks"]))["13"], "n")
+
+    def test_delete_refuses_a_file_from_another_item(self):
+        saved = self.upload_item("HP-110", "12", "변경관리 대장.xlsx")
+        name = os.path.basename(saved["saved"])
+        result = self.call("/api/item-delete",
+                           {"product": "HP-110", "item": "13", "name": name})
+        self.assertFalse(result.get("ok"))
+        self.assertTrue(os.path.isfile(os.path.join(self.dir, self.folder, name)))
+
+    def test_delete_refuses_a_path_outside_the_folder(self):
+        result = self.call("/api/item-delete",
+                           {"product": "HP-110", "item": "13", "name": "../config.json"})
+        self.assertFalse(result.get("ok"))
+
+
 class ReferenceDocTest(ServerTest):
     """'PQR 작성 시 참고 사항' — 올린 문서를 목록에서 눌러 읽습니다."""
 

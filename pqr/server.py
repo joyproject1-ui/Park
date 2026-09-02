@@ -325,6 +325,40 @@ class Workspace(object):
                 "folder": os.path.abspath(folder),
                 "name": os.path.basename(target)}
 
+    def item_files(self, code, item_id):
+        """그 제품·그 평가항목에 올라와 있는 파일 목록입니다."""
+        folder = self.product_folder(code)
+        matcher = build_module.item_matcher(self.data["items"])
+        rows = []
+        for name in sorted(os.listdir(folder)):
+            path = os.path.join(folder, name)
+            if not os.path.isfile(path) or name.startswith("~$") or name.startswith("."):
+                continue
+            if matcher(name) != item_id:
+                continue
+            stat = os.stat(path)
+            rows.append({"name": name, "size": stat.st_size,
+                         "modified": _dt.datetime.fromtimestamp(stat.st_mtime)
+                                     .strftime("%Y-%m-%d %H:%M")})
+        return rows
+
+    def delete_item_file(self, code, item_id, name):
+        """잘못 올린 파일을 지웁니다 — 그 항목의 파일만 지울 수 있습니다."""
+        base = os.path.basename(name or "")
+        if not base or base != name or _UNSAFE.search(base):
+            raise UploadError("파일 이름이 올바르지 않습니다.")
+        folder = self.product_folder(code)
+        path = os.path.join(folder, base)
+        if not os.path.isfile(path):
+            raise UploadError("파일을 찾지 못했습니다: %s" % base)
+        matcher = build_module.item_matcher(self.data["items"])
+        if matcher(base) != item_id:
+            raise UploadError("%s 항목의 파일이 아닙니다: %s" % (item_id, base))
+        with self.lock:
+            os.remove(path)
+        self.rebuild()
+        return {"deleted": base, "folder": os.path.abspath(folder)}
+
     def save_bulk_file(self, code, filename, payload, rebuild=True):
         """'파일 한번에 올리기' — 원본 이름 그대로 제품 폴더에 저장합니다.
 
@@ -502,6 +536,10 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(200, self._handle_report())
             if path == "/api/final":
                 return self._json(200, self._handle_final())
+            if path == "/api/item-files":
+                return self._json(200, self._handle_item_files())
+            if path == "/api/item-delete":
+                return self._json(200, self._handle_item_delete())
             if path == "/api/reference-open":
                 return self._json(200, self._handle_reference_open())
         except UploadError as error:
@@ -591,19 +629,45 @@ class Handler(BaseHTTPRequestHandler):
                        if state == "n"]
             return {"ok": False, "error": "자료 수집이 %d%% 입니다. 미착수 항목: %s"
                     % (product.get("pct", 0), ", ".join(missing) or "-")}
-        from . import docx_report
+        from . import docx_report, prior_report
         out_dir = os.path.join(self.workspace.out_dir, "reports")
         written = report_module.write_reports(self.workspace.data, out_dir, codes=[code])
         # 제출용 보고서(.docx)는 제품 폴더에 둡니다 — 근거 자료 옆에 있어야 검토가 쉽고,
         # 이름에 '제출용' 이 들어가 있어 다음 새로고침에서 '완성본' 단추가 생깁니다.
         folder = self.workspace.product_folder(code)
-        final = docx_report.write_docx(self.workspace.data, code, folder,
-                                       config=self.workspace.config)
+        # 전년도 PQR(평가항목 0)이 있으면 그 서식을 그대로 물려받아 새 연도 보고서를
+        # 만듭니다 — 담당자가 하는 방식과 같습니다. 없으면 자료 상태 요약본을 만듭니다.
+        matcher = build_module.item_matcher(self.workspace.data["items"])
+        previous = prior_report.find_previous_report(folder, matcher)
+        based_on = None
+        if previous:
+            period = self.workspace.data.get("period") or {}
+            year = None
+            for key in ("from", "to"):
+                value = str(period.get(key) or "")[:4]
+                if value.isdigit():
+                    year = int(value)
+                    break
+            target = os.path.join(
+                folder, docx_report.report_filename(product, self.workspace.data.get("period")))
+            based_on = prior_report.write_from_previous(previous, target, year)
+            if based_on is not None:
+                based_on["attachments"] = prior_report.copy_attachments(
+                    previous, folder, based_on.get("previous_year"), year)
+                build_module.mark_auto_draft(folder, target)
+                final = target
+            else:                              # 압축 안에 워드가 없으면 요약본으로
+                final = docx_report.write_docx(self.workspace.data, code, folder,
+                                               config=self.workspace.config)
+        else:
+            final = docx_report.write_docx(self.workspace.data, code, folder,
+                                           config=self.workspace.config)
         self.workspace.rebuild()
         # '어디 있지?' 를 없앱니다 — 제출용 보고서가 있는 제품 폴더를 바로 열어 줍니다.
         opened = open_in_file_manager(folder)
         return {"ok": True, "files": [os.path.abspath(p) for p in written],
                 "final": os.path.abspath(final), "final_name": os.path.basename(final),
+                "based_on": based_on,
                 "folder": os.path.abspath(folder),
                 "out_dir": os.path.abspath(out_dir), "opened": opened,
                 "data": self.workspace.dashboard_payload()}
@@ -631,6 +695,24 @@ class Handler(BaseHTTPRequestHandler):
         return {"ok": True, "path": os.path.abspath(target),
                 "name": os.path.basename(target), "opened": opened,
                 "hint": "" if opened else "파일을 자동으로 열지 못했습니다. 위 경로를 파일 탐색기에 붙여넣으세요."}
+
+    def _handle_item_files(self):
+        """평가항목 칸에 올라와 있는 파일 목록 — 올리기 창에서 보여 줍니다."""
+        body = self._read_json()
+        code = str(body.get("product") or "").strip()
+        item_id = str(body.get("item") or "").strip()
+        return {"ok": True, "files": self.workspace.item_files(code, item_id)}
+
+    def _handle_item_delete(self):
+        """잘못 올린 첨부를 지웁니다."""
+        body = self._read_json()
+        result = self.workspace.delete_item_file(
+            str(body.get("product") or "").strip(),
+            str(body.get("item") or "").strip(),
+            str(body.get("name") or "").strip())
+        result["ok"] = True
+        result["data"] = self.workspace.dashboard_payload()
+        return result
 
     def _handle_reference_open(self):
         """'PQR 작성 시 참고 사항' 문서를 엽니다 — 담당자가 눌러 바로 읽도록."""
