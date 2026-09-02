@@ -29,7 +29,8 @@ def read_layout(path, pages=None):
                 if pages and i not in pages:
                     continue
                 try:
-                    text = page.extract_text(layout=True, x_density=4.5, y_density=10) or ""
+                    # x_tolerance 를 줄여야 한글 낱말 사이 공백이 살아난다 (기본값이면 '인하여가동정지' 처럼 붙는다)
+                    text = page.extract_text(layout=True, x_tolerance=1.5) or ""
                 except Exception:
                     text = page.extract_text() or ""
                 out.append(_normalize(text))
