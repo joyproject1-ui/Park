@@ -151,6 +151,27 @@
   이어지는 문단은 `start 247`, '1) …' 값 줄은 `firstLine 180`. 손으로 끊으면 글꼴이나
   칸 너비가 조금만 달라져도 '(82.62' / '%)' 처럼 어색하게 잘린다.
 
+## ⚠ 속성이 워드에서 통째로 무시되는 원인 — OOXML 자식 순서
+
+정렬·사선·줄간격·윗첨자·행 분할 금지를 XML 에 넣었는데 **LibreOffice 미리보기에서는
+보이고 담당자 Word 에서는 하나도 적용되지 않은** 일이 있었다(2026 퀴노비드, 여러 라운드
+동안 "안 됐다"는 지적이 반복됨). 원인은 `w:pPr`·`w:rPr`·`w:tcPr`·`w:trPr`·`w:tcBorders`
+안에서 **자식 요소의 순서가 스키마와 다르면 Word 가 그 속성을 무시**하기 때문이다.
+LibreOffice 는 순서를 따지지 않아 미리보기로는 절대 잡히지 않는다.
+
+- `w:pPr`: pStyle → keepNext → keepLines → pageBreakBefore → … → snapToGrid → spacing →
+  ind → … → **jc** → … → **rPr** → sectPr. (`jc` 를 `rPr` 뒤에 붙이면 정렬 무시)
+- `w:rPr`: rStyle → rFonts → b → … → sz → szCs → … → **vertAlign** → … → lang.
+- `w:tcPr`: tcW → gridSpan → vMerge → **tcBorders** → shd → … → **vAlign**.
+  (`vAlign` 을 먼저 넣고 `tcBorders` 를 뒤에 붙이면 사선 무시)
+- `w:trPr`: … → **cantSplit** → trHeight → tblHeader → …
+- `w:tcBorders`: top → left → bottom → right → insideH → insideV → tl2br → tr2bl.
+
+조치: 요소를 넣을 때 `append` 하지 말고 **순서표에 맞는 자리에 끼워 넣는다**
+(`ooxml_order.get_or_add`). 저장 뒤에는 모든 `word/*.xml` 을 다시 열어 어긋난 곳을
+정렬하고(`fix_order`), **어긋난 곳이 0 개인지 검사**한 뒤에만 담당자에게 준다.
+LibreOffice 렌더는 쪽수·빈 쪽 확인용일 뿐, 속성 적용 여부의 증거가 아니다.
+
 ## 빈 페이지를 만드는 세 가지 함정 (Word 에서만 나타남)
 
 LibreOffice 로 변환해 확인하면 멀쩡한데 담당자 Word 에서는 빈 페이지가 생기는
