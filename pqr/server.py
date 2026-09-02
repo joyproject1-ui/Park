@@ -6,6 +6,7 @@
 표준 라이브러리(http.server)만 사용하며, 기본적으로 이 PC(127.0.0.1)에서만 접속됩니다.
 """
 
+import datetime as _dt
 import json
 import os
 import posixpath
@@ -150,6 +151,8 @@ class Workspace(object):
                     "trend", "leadtime", "sources", "narrative")}
         payload["issue_count"] = len([i for i in data.get("issues", []) if i["level"] == "error"])
         payload["program_version"] = program_version()
+        payload["reference"] = {"folder": self.reference_folder(),
+                                "files": self.reference_files()}
         payload["upload"] = {
             "enabled": True,
             "input_dir": self.input_dir,
@@ -157,6 +160,59 @@ class Workspace(object):
             "datasets": self.config["dataset_files"],
         }
         return payload
+
+    # ---------------- PQR 작성 시 참고 문서 ----------------
+
+    REFERENCE_DIRNAME = "PQR 작성 시 참고 사항"
+
+    def reference_folder(self, create=False):
+        """참고 문서를 모아 두는 폴더 — 담당자 누구나 열어 읽는 자리입니다."""
+        path = os.path.join(self.input_dir, self.REFERENCE_DIRNAME)
+        if create and not os.path.isdir(path):
+            os.makedirs(path, exist_ok=True)
+        return path
+
+    def reference_files(self):
+        """참고 폴더의 문서 목록 — 이름·크기·수정일."""
+        folder = self.reference_folder()
+        if not os.path.isdir(folder):
+            return []
+        rows = []
+        for name in sorted(os.listdir(folder)):
+            path = os.path.join(folder, name)
+            if not os.path.isfile(path) or name.startswith("~$") or name.startswith("."):
+                continue
+            stat = os.stat(path)
+            rows.append({"name": name, "size": stat.st_size,
+                         "modified": _dt.datetime.fromtimestamp(stat.st_mtime)
+                                     .strftime("%Y-%m-%d %H:%M")})
+        return rows
+
+    def save_reference_file(self, filename, payload):
+        """참고 문서를 참고 폴더에 원본 이름 그대로 둡니다."""
+        if len(payload) > MAX_UPLOAD:
+            raise UploadError("파일이 너무 큽니다 (최대 %d MB)." % (MAX_UPLOAD // 1024 // 1024))
+        if not payload:
+            raise UploadError("빈 파일입니다.")
+        base = safe_filename(filename, ALLOWED_ITEM_SUFFIXES)
+        if not base:
+            raise UploadError("허용되지 않는 파일 형식입니다: %s" % filename)
+        folder = self.reference_folder(create=True)
+        target = os.path.join(folder, base)
+        with self.lock:
+            with open(target, "wb") as handle:
+                handle.write(payload)
+        return {"saved": base, "folder": os.path.abspath(folder)}
+
+    def reference_path(self, name):
+        """목록에서 고른 문서의 실제 경로 — 폴더 밖으로 나가지 못하게 막습니다."""
+        base = os.path.basename(name or "")
+        if not base or base != name or _UNSAFE.search(base):
+            raise UploadError("파일 이름이 올바르지 않습니다.")
+        path = os.path.join(self.reference_folder(), base)
+        if not os.path.isfile(path):
+            raise UploadError("참고 문서를 찾지 못했습니다: %s" % base)
+        return path
 
     # ---------------- 업로드 ----------------
 
@@ -444,6 +500,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(200, self._handle_report())
             if path == "/api/final":
                 return self._json(200, self._handle_final())
+            if path == "/api/reference-open":
+                return self._json(200, self._handle_reference_open())
         except UploadError as error:
             return self._json(400, {"ok": False, "error": str(error)})
         except Exception as error:               # 서버가 죽지 않도록 오류를 그대로 알려 줍니다.
@@ -572,6 +630,15 @@ class Handler(BaseHTTPRequestHandler):
                 "name": os.path.basename(target), "opened": opened,
                 "hint": "" if opened else "파일을 자동으로 열지 못했습니다. 위 경로를 파일 탐색기에 붙여넣으세요."}
 
+    def _handle_reference_open(self):
+        """'PQR 작성 시 참고 사항' 문서를 엽니다 — 담당자가 눌러 바로 읽도록."""
+        body = self._read_json()
+        target = self.workspace.reference_path(str(body.get("name") or "").strip())
+        opened = open_in_file_manager(target)
+        return {"ok": True, "path": os.path.abspath(target),
+                "name": os.path.basename(target), "opened": opened,
+                "hint": "" if opened else "파일을 자동으로 열지 못했습니다. 위 경로를 파일 탐색기에 붙여넣으세요."}
+
     def _handle_upload(self):
         length = int(self.headers.get("Content-Length") or 0)
         if length <= 0:
@@ -583,6 +650,11 @@ class Handler(BaseHTTPRequestHandler):
         upload = fields.get("file")
         if not isinstance(upload, tuple):
             raise UploadError("파일을 선택하세요.")
+        if (fields.get("reference") or "").strip():
+            result = self.workspace.save_reference_file(upload[0], upload[1])
+            result["ok"] = True
+            result["data"] = self.workspace.dashboard_payload()
+            return result
         if (fields.get("bulk") or "").strip():
             result = self.workspace.save_bulk_file(
                 code=fields.get("product") or "",

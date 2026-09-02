@@ -588,19 +588,19 @@ td.wrap{white-space:normal;min-width:220px}
         </div>
       </section>
 
-      <!-- ============ 자료 업로드 ============ -->
+      <!-- ============ PQR 작성 시 참고 사항 ============ -->
       <section class="view" id="v-upload" hidden>
         <div class="card">
           <div class="card-head">
-            <h2>제품별 자료 제출 현황</h2>
-            <span class="pill" id="up-count">0품목</span>
-            <button class="link" id="up-export">보고서 다시 만들기 →</button>
+            <h2>참고 문서</h2>
+            <span class="pill" id="ref-count">0개</span>
+            <button class="link" id="ref-add">참고 문서 올리기 +</button>
           </div>
-          <div class="card-body" id="upload-note"></div>
+          <div class="card-body" id="ref-note"></div>
           <div class="tablewrap">
-            <table class="uploadgrid">
-              <thead><tr id="upload-head"><th>코드</th><th>제품명</th></tr></thead>
-              <tbody id="upload-body"></tbody>
+            <table class="compact">
+              <thead><tr><th>문서</th><th>크기</th><th>올린 날짜</th><th></th></tr></thead>
+              <tbody id="ref-body"></tbody>
             </table>
           </div>
         </div>
@@ -730,6 +730,7 @@ td.wrap{white-space:normal;min-width:220px}
          aria-label="파일 선택 — 끌어다 놓거나 눌러서 고르세요">
       <input type="file" id="up-file" accept=".csv,.tsv,.txt,.xlsx,.xlsm" hidden>
       <input type="file" id="bulk-file" multiple hidden>
+      <input type="file" id="ref-file" multiple hidden>
       <b>파일을 끌어다 놓거나 눌러서 고르세요</b>
       <small>pdf · xlsx · xls · csv · 문서 파일 (최대 64 MB)</small>
       <span class="picked" id="up-filename"></span>
@@ -1586,55 +1587,54 @@ async function submitUpload(){
 /* ---- 자료 업로드 화면 ---- */
 /* 자료 업로드 — 평가항목 자료 수집과 같은 항목(보고서 항 번호)을 씁니다.
    담당자가 폴더에서 보는 파일 이름 · 수집 현황 · 올리는 자리가 모두 같은 번호를 쓰게 하려는 것입니다. */
-function renderUpload(rows){
-  const label = { y:"수집 완료", p:"요청 · 진행 중", n:"미착수" };
-  $("#up-count").textContent = rows.length + "품목";
-  $("#upload-head").innerHTML = `<th>코드</th><th>제품명</th>`
-    + ITEMS.map(([k])=>`<th class="rot mono">${esc(k)}</th>`).join("")
-    + `<th>자료 수집</th>`;
-  const list = rows.slice().sort((a,b)=>a.collected-b.collected);
-  $("#upload-body").innerHTML = list.map(d=>`
-    <tr>
-      <td>${codeCell(d)}</td>
-      ${nameCell(d)}
-      ${d.checks.map((c,i)=>`<td class="cell"><button class="cell-btn"
-          data-upload="${d.code}|${esc(ITEMS[i][0])}" data-uptip="${d.code}|${i}"
-          ${uploadEnabled()?"":"disabled"}
-          aria-label="${esc(d.name)} (${esc(ITEMS[i][0])}) ${esc(ITEMS[i][1])} 자료 올리기"
-          ><span class="dot ${c}"></span></button></td>`).join("")}
-      <td>${progCell(d)}${reportButton(d)}</td>
-    </tr>`).join("");
-  $("#upload-body").querySelectorAll(".cell-btn").forEach(n=>{
-    const [code,i] = n.dataset.uptip.split("|");
-    const d = DATA.find(x=>x.code===code), it = ITEMS[+i];
-    const hint = uploadEnabled() ? "<br><b>눌러서 자료 올리기</b>"
-      : "<br>자료를 올리려면 <b>python -m pqr serve</b> 로 실행하세요";
-    bindTip(n, `<b>(${esc(it[0])}) ${esc(it[1])}</b><br>${esc(d.name)}<br>${label[d.checks[+i]]}${hint}`);
-  });
-
-  $("#upload-note").innerHTML =
-    `<div class="legend" style="margin-bottom:10px">
-       <span class="k"><i class="swatch" style="background:var(--ok)"></i>수집 완료</span>
-       <span class="k"><i class="swatch" style="background:var(--warn)"></i>요청 · 진행 중</span>
-       <span class="k"><i class="swatch" style="background:var(--line-2)"></i>미착수</span>
-     </div>`
-    + (uploadEnabled()
-    ? `<p class="up-note" style="margin:0">칸을 누르면 그 항목의 자료를 올릴 수 있습니다. 올린 파일은
-       <code>${esc(uploadConfig().input_dir || "")}</code> 아래 제품 폴더에 저장되고, 저장 즉시 다시
-       집계됩니다. 같은 종류의 자료를 다시 올리면 이전 파일을 대체합니다.</p>`
-    : `<p class="up-note" style="margin:0">이 화면은 정적 파일로 열려 있어 자료를 올릴 수 없습니다.
-       <code>python -m pqr serve --in &lt;입력폴더&gt;</code> 로 실행한 뒤 브라우저에서 열면
-       칸을 눌러 그 자리에서 올릴 수 있습니다.</p>`);
+function renderUpload(){
+  /* 이 화면은 제품별 제출 현황이 아니라, PQR 을 쓸 때 읽어 보는 문서 모음입니다.
+     담당자가 문서를 눌러 바로 열어 볼 수 있게 목록만 보여 줍니다. */
+  const info = (SOURCE && SOURCE.reference) || { files: [], folder: "" };
+  const files = info.files || [];
+  $("#ref-count").textContent = files.length + "개";
+  $("#ref-note").innerHTML = files.length
+    ? `문서를 누르면 바로 열립니다. 파일은 <code>${esc(info.folder || "")}</code> 에 있습니다.`
+    : `아직 올린 참고 문서가 없습니다. <b>참고 문서 올리기 +</b> 로 PQR 작성방법 같은 자료를 올려 두면, 팀원 누구나 여기서 눌러 읽을 수 있습니다.`;
+  $("#ref-body").innerHTML = files.map(f=>`<tr>
+    <td><button class="link ref-open" data-ref="${esc(f.name)}">${esc(f.name)}</button></td>
+    <td class="num">${(f.size/1024).toFixed(0)} KB</td>
+    <td class="muted">${esc(f.modified || "")}</td>
+    <td><button class="mini ref-open" data-ref="${esc(f.name)}">열기</button></td>
+  </tr>`).join("")
+    || `<tr><td colspan="4" class="muted" style="padding:20px">참고 문서가 없습니다.</td></tr>`;
+}
+/* 참고 문서 열기 · 올리기 */
+async function openReference(name){
+  try {
+    const response = await fetch("api/reference-open", { method:"POST",
+      headers:{ "Content-Type":"application/json" }, body: JSON.stringify({ name }) });
+    const payload = await response.json();
+    if (!payload.ok) throw new Error(payload.error || "문서를 열지 못했습니다");
+    showToast(`📄 ${esc(payload.name)} — 파일이 열립니다`
+      + (payload.hint ? "<br>" + esc(payload.hint) : ""));
+  } catch (error) { showToast("열기 실패: " + esc(error.message)); }
+}
+async function uploadReference(files){
+  if (!files.length) return;
+  showToast(`⏳ 참고 문서 ${files.length}개를 올리는 중…`);
+  let last = null; const failed = [];
+  for (const file of files){
+    const form = new FormData();
+    form.append("reference", "1");
+    form.append("file", file, file.name);
+    try {
+      const response = await fetch("api/upload", { method:"POST", body: form });
+      const payload = await response.json();
+      if (!response.ok || !payload.ok) throw new Error(payload.error || "실패");
+      last = payload;
+    } catch (error) { failed.push(`${file.name} — ${error.message}`); }
+  }
+  if (last && last.data){ adopt(last.data); render(); }
+  showToast(`📎 참고 문서 ${files.length - failed.length}개를 올렸습니다.`
+    + (failed.length ? `<br>실패: ${failed.map(esc).join("<br>")}` : ""));
 }
 
-/* ---- 상세 패널 ---- */
-const DATASET_LABELS = {
-  batches:"시험성적서 · 공정관리", deviations:"일탈 · OOS/OOT · CAPA",
-  changes:"변경 · 불만 · 회수", stability:"안정성 모니터링",
-  qualification:"설비 적격성 · 위수탁", products:"제품 마스터", stagelog:"단계 진행 이력",
-};
-const drawer=$("#drawer"), scrim=$("#scrim");
-let lastFocus=null;
 function openDrawer(code){
   const d = DATA.find(x=>x.code===code); if(!d) return;
   lastFocus = document.activeElement;
@@ -1692,6 +1692,8 @@ document.addEventListener("click", e=>{
   }
   const folder = e.target.closest(".name-btn");
   if (folder){ openFolder(folder.dataset.folder); return; }
+  const ref = e.target.closest(".ref-open");
+  if (ref){ openReference(ref.dataset.ref); return; }
   const bulk = e.target.closest(".bulk-btn");
   if (bulk && !bulk.disabled){
     bulkCode = bulk.dataset.bulk;
@@ -1736,6 +1738,8 @@ $("#up-submit").addEventListener("click", submitUpload);
 $("#up-dataset").addEventListener("change", updatePathHint);
 $("#up-file").addEventListener("change", e=>pickFile(e.target.files[0]));
 $("#bulk-file").addEventListener("change", e=>bulkUpload(Array.from(e.target.files)));
+$("#ref-file").addEventListener("change", e=>uploadReference(Array.from(e.target.files)));
+$("#ref-add").addEventListener("click", ()=>{ const p=$("#ref-file"); p.value=""; p.click(); });
 $("#up-drop").addEventListener("click", ()=>$("#up-file").click());
 $("#up-drop").addEventListener("keydown", e=>{
   if (e.key === "Enter" || e.key === " "){ e.preventDefault(); $("#up-file").click(); }
@@ -1763,20 +1767,6 @@ $("#reload-btn").addEventListener("click", async ()=>{
   } finally {
     button.textContent = "↻"; button.disabled = false;
   }
-});
-
-$("#up-export").addEventListener("click", async ()=>{
-  if (!uploadEnabled()){ alert("python -m pqr serve 로 실행한 경우에만 동작합니다."); return; }
-  const button = $("#up-export");
-  button.textContent = "만드는 중…";
-  try {
-    const response = await fetch("api/export", { method:"POST" });
-    const payload = await response.json();
-    button.textContent = payload.ok ? `보고서 ${payload.files.length}건 생성됨` : "실패";
-  } catch (error) {
-    button.textContent = "실패: " + error.message;
-  }
-  setTimeout(()=>{ button.textContent = "보고서 다시 만들기 →"; }, 4000);
 });
 
 /* ---- 제작자 문의 메일 ----
@@ -1892,7 +1882,7 @@ function render(){
   else if (cfg.sec==="v-items"){ renderMatrix(rows); }
   else if (cfg.sec==="v-trend"){ renderTrend(); }
   else if (cfg.sec==="v-lead"){ renderLead(rows); }
-  else if (cfg.sec==="v-upload"){ renderUpload(rows); }
+  else if (cfg.sec==="v-upload"){ renderUpload(); }
   else if (cfg.sec==="v-todo"){ renderTodo(cfg.todo); }
   updateBadges();
 }

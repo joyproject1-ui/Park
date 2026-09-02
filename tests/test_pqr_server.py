@@ -317,6 +317,48 @@ class ItemUploadTest(ServerTest):
         self.assertIn("평가항목", result["error"])
 
 
+class ReferenceDocTest(ServerTest):
+    """'PQR 작성 시 참고 사항' — 올린 문서를 목록에서 눌러 읽습니다."""
+
+    def upload_reference(self, filename, payload=b"x" * 30):
+        body, content_type = multipart({"reference": "1"}, {"file": (filename, payload)})
+        request = urllib.request.Request(self.base + "/api/upload", data=body,
+                                         headers={"Content-Type": content_type})
+        try:
+            with urllib.request.urlopen(request, timeout=30) as response:
+                return json.loads(response.read().decode("utf-8"))
+        except urllib.error.HTTPError as error:
+            return json.loads(error.read().decode("utf-8"))
+
+    def test_uploaded_document_shows_up_in_the_list(self):
+        name = "PQR 작성방법.docx"
+        result = self.upload_reference(name)
+        self.assertTrue(result["ok"], result.get("error"))
+        files = [row["name"] for row in result["data"]["reference"]["files"]]
+        self.assertIn(name, files)
+        # 제품 폴더가 아니라 참고 폴더에 들어갑니다.
+        folder = os.path.join(self.dir, "PQR 작성 시 참고 사항")
+        self.assertTrue(os.path.isfile(os.path.join(folder, name)))
+
+    def test_open_refuses_a_path_outside_the_folder(self):
+        request = urllib.request.Request(
+            self.base + "/api/reference-open",
+            data=json.dumps({"name": "../config.json"}).encode("utf-8"),
+            headers={"Content-Type": "application/json"})
+        try:
+            with urllib.request.urlopen(request, timeout=10) as response:
+                payload = json.loads(response.read().decode("utf-8"))
+        except urllib.error.HTTPError as error:
+            payload = json.loads(error.read().decode("utf-8"))
+        self.assertFalse(payload.get("ok"))
+
+    def test_reference_files_are_not_counted_as_product_data(self):
+        """참고 폴더는 제품 폴더가 아니므로 수집 현황에 섞이지 않습니다."""
+        result = self.upload_reference("0. 전년도 PQR 참고.docx")
+        codes = [p["code"] for p in result["data"]["products"]]
+        self.assertNotIn("PQR", codes)
+
+
 class BulkUploadTest(ItemUploadTest):
     """'파일 한번에 올리기' — 원본 이름 그대로 제품 폴더에 저장하고 항은 이름으로 인식."""
 
