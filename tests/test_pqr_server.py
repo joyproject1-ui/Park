@@ -485,6 +485,42 @@ class FinalAttachmentTest(ItemUploadTest):
         self.assertFalse(bad.get("ok"))
 
 
+class BundleTest(ItemUploadTest):
+    """자료 묶기 — 제품에 올린 자료를 zip 하나로 만들어 밖으로 건넵니다."""
+
+    def bundle(self, code="HP-110"):
+        request = urllib.request.Request(
+            self.base + "/api/bundle", data=json.dumps({"product": code}).encode("utf-8"),
+            headers={"Content-Type": "application/json"})
+        try:
+            with urllib.request.urlopen(request, timeout=30) as response:
+                return json.loads(response.read().decode("utf-8"))
+        except urllib.error.HTTPError as error:
+            return json.loads(error.read().decode("utf-8"))
+
+    def test_bundle_contains_the_uploaded_files(self):
+        import zipfile
+        saved = self.upload_item("HP-110", "13", "안정성 결과표.xlsx")
+        result = self.bundle()
+        self.assertTrue(result["ok"], result.get("error"))
+        with zipfile.ZipFile(result["path"]) as archive:
+            names = archive.namelist()
+        self.assertIn(os.path.basename(saved["saved"]), names)
+        self.assertTrue(result["size"] > 0)
+
+    def test_bundle_leaves_out_the_generated_draft(self):
+        import zipfile
+        from pqr import build as build_module, docx_report
+        folder = os.path.join(self.dir, self.folder)
+        data = build_module.build(input_dir=self.dir, today=TODAY)
+        draft = docx_report.write_docx(data, "HP-110", folder)
+        result = self.bundle()
+        with zipfile.ZipFile(result["path"]) as archive:
+            names = archive.namelist()
+        self.assertNotIn(os.path.basename(draft), names)
+        self.assertIn(os.path.basename(draft), result["skipped"])
+
+
 class ReferenceDocTest(ServerTest):
     """'PQR 작성 시 참고 사항' — 올린 문서를 목록에서 눌러 읽습니다."""
 

@@ -358,6 +358,40 @@ class Workspace(object):
             raise UploadError("파일을 찾지 못했습니다: %s" % base)
         return path
 
+    def bundle_product(self, code):
+        """제품 폴더의 자료를 zip 하나로 묶습니다.
+
+        담당자가 대시보드에 올린 자료를 밖(사내 메신저·대화창)으로 한 번에
+        건네려면 파일을 하나씩 찾아 붙여야 했습니다. 묶음 파일 하나면 됩니다.
+        프로그램이 만든 초안과 임시 파일은 넣지 않습니다.
+        """
+        import zipfile as _zip
+        folder = self.product_folder(code)
+        product = next((item for item in self.data["products"]
+                        if item["code"] == code), None)
+        label = ("%s %s" % (code, product["name"] if product else "")).strip()
+        stamp = _dt.datetime.now().strftime("%Y%m%d")
+        out_dir = os.path.join(self.out_dir, "bundles")
+        if not os.path.isdir(out_dir):
+            os.makedirs(out_dir)
+        target = os.path.join(out_dir, _UNSAFE.sub("_", "%s 자료묶음 %s.zip" % (label, stamp)))
+        drafts = build_module._auto_drafts(folder)
+        included, skipped = [], []
+        with _zip.ZipFile(target, "w", _zip.ZIP_DEFLATED) as archive:
+            for name in sorted(os.listdir(folder)):
+                path = os.path.join(folder, name)
+                if not os.path.isfile(path) or name.startswith("~$") or name.startswith("."):
+                    continue
+                if build_module._is_auto_draft(path, drafts):   # 프로그램이 만든 초안
+                    skipped.append(name)
+                    continue
+                archive.write(path, name)
+                included.append(name)
+        return {"path": os.path.abspath(target), "name": os.path.basename(target),
+                "folder": os.path.abspath(out_dir),
+                "files": included, "skipped": skipped,
+                "size": os.path.getsize(target)}
+
     def item_files(self, code, item_id):
         """그 제품·그 평가항목에 올라와 있는 파일 목록입니다."""
         folder = self.product_folder(code)
@@ -569,6 +603,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(200, self._handle_report())
             if path == "/api/final":
                 return self._json(200, self._handle_final())
+            if path == "/api/bundle":
+                return self._json(200, self._handle_bundle())
             if path == "/api/file-open":
                 return self._json(200, self._handle_file_open())
             if path == "/api/item-files":
@@ -767,6 +803,14 @@ class Handler(BaseHTTPRequestHandler):
         return {"ok": True, "path": os.path.abspath(target),
                 "name": os.path.basename(target), "opened": opened,
                 "hint": "" if opened else "파일을 자동으로 열지 못했습니다. 위 경로를 파일 탐색기에 붙여넣으세요."}
+
+    def _handle_bundle(self):
+        """제품 자료를 묶어 두고 그 폴더를 엽니다 — 끌어다 보내기 좋게."""
+        body = self._read_json()
+        result = self.workspace.bundle_product(str(body.get("product") or "").strip())
+        result["ok"] = True
+        result["opened"] = open_in_file_manager(result["folder"])
+        return result
 
     def _handle_file_open(self):
         """제품 폴더 안의 파일(첨부 엑셀 등)을 엽니다."""
