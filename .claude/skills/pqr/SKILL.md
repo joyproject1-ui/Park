@@ -73,6 +73,7 @@ python -m pqr launch                        # 폴더 준비 + 브라우저 열�
   유무, 4항 일정, 7항 수율 일탈, 11 · 12 · 13 · 14 · 15 · 16 항의 정해진 문안입니다.
   서술을 지어내지 말고 이 문구를 쓰세요. 14.1 만 일반 제품과 미국수출용의 문구가 다릅니다.
 - `references/stability-workbook.md` — HLF-QC-126-06 좌표, 차트 보존, 공란 마감처리
+- `references/writing-guide.md` — **담당자 'PQR 작성방법' 지침 요약. 모든 PQR 에서 먼저 읽는다** (4항 분기 문구, 수율 일탈 Lot 통계 제외, 13·14·15·16항 표준 문안)
 
 python-docx 로 이 서식을 다루면 `table.cell(r, c)` 가 **틀린 칸을 짚습니다**. 서식의 행마다
 칸 수가 다르고(그리드 열보다 적은 행이 있음) `gridSpan`·`vMerge` 가 섞여 있어서, python-docx 의
