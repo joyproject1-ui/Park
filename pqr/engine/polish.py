@@ -200,6 +200,9 @@ def polish(path):
                     if name == "word/styles.xml":
                         xml = add_doc_defaults(xml)
                         xml = fix_default_font(xml)
+                    if name == "word/settings.xml" and "w:updateFields" not in xml:
+                        # 열 때 Word 가 목차 PAGEREF 를 다시 계산하도록
+                        xml = xml.replace("</w:settings>", '<w:updateFields w:val="true"/></w:settings>')
                     xml, fixed = fix_order(xml)
                     if fixed:
                         print(f"  순서 바로잡음 {name}: {fixed}")

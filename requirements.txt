@@ -5,3 +5,5 @@ openpyxl>=3.1         # 수율표·마스터파일·경향분석 엑셀
 xlrd>=2.0             # ERP 에서 내려받은 옛 엑셀(.xls)
 pdfplumber>=0.11      # PDF 글자를 표 배치 그대로 읽기 (pdftotext -layout 과 같은 결과)
 pdfminer.six>=20221105   # pdfplumber 가 쓰는 PDF 엔진
+anthropic>=0.60        # 손글씨 안정성시험일지 판독 (Claude 비전) — API 키가 있을 때만 쓴다
+pywin32>=306; sys_platform == "win32"   # Windows 에서 Word·Excel 로 .doc/.xls 변환 (COM)

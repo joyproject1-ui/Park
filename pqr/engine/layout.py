@@ -189,4 +189,9 @@ def apply(document, log=None, product_title=None):
     log("윗첨자 각주 번호: %d" % len(E.superscript_note_marks(document)))
     log("쪽 나눔 앞 빈 문단 삭제: %d" % E.strip_blanks_before_page_breaks(document))
     log("각주 내어쓰기: %d" % E.hanging_indent_notes(document))
+    try:
+        from .toc import link_toc
+        log("목차 쪽수 필드: %d" % link_toc(document, T[toc]))
+    except Exception as error:
+        log("목차 필드 건너뜀: %s" % error)
     return document
