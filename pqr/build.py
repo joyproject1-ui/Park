@@ -711,7 +711,10 @@ def expand_product_variants(products_meta):
             variant = "%s-%s" % (code, suffix)
             if variant in out:
                 continue
-            out[variant] = dict(row, product_code=variant, product_name=label)
+            # 계획서는 생산 Lot 을 품목 단위로만 적는다 — 갈라낸 건에는 같은 수가 붙으므로
+            # 화면에서 '품목 합계' 임을 알 수 있게 표시해 둔다.
+            out[variant] = dict(row, product_code=variant, product_name=label,
+                                lots_shared=code)
     return out
 
 
@@ -970,6 +973,8 @@ def build(input_dir=None, files=None, today=None, config=None, period=None):
             # 담당자는 마스터에 적힌 값이 먼저고, 없으면 제형별 담당표에서 가져옵니다.
             "owner_source": "master" if meta.get("owner") else ("form" if owner else ""),
             "lots": meta.get("lots"),
+            # 갈라낸 건이면 그 Lot 수가 본 품목 합계라는 표시(본 품목 코드)
+            "lots_shared": meta.get("lots_shared", ""),
             "site": meta.get("site", ""),
             "owner": owner,
             "due": due,

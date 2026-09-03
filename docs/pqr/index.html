@@ -1499,7 +1499,12 @@ function metricCell(d, value, dataset){
     return `<td class="num muted" title="${esc(DATASET_LABELS[dataset] || dataset)} 자료 미제출">—</td>`;
   return `<td class="num ${value?"warnlink":"muted"}">${value}</td>`;
 }
+/* 연간 계획서는 생산 Lot 을 품목 단위로만 적습니다. '(1회용)' 처럼 갈라 놓은 건은
+   본 품목의 합계를 그대로 보여 주므로, 숫자 뒤에 별표를 달아 합계임을 알립니다. */
+const LOTS_SHARED_HINT = "연간 계획서의 생산 Lot 은 품목 합계입니다 — 이 건만의 Lot 수가 필요하면 제품 마스터에 이 코드로 행을 넣으세요.";
 function lotCell(d){
+  if (d.lots != null && d.lots_shared)
+    return `<td class="num" title="${esc(LOTS_SHARED_HINT)}">${Math.round(d.lots)}<span class="muted">*</span></td>`;
   if (d.lots != null) return `<td class="num">${Math.round(d.lots)}</td>`;
   if ((d.missing_datasets || []).includes("batches")) return `<td class="num muted">—</td>`;
   return `<td class="num">${d.batches}</td>`;
@@ -1933,8 +1938,10 @@ function openDrawer(code){
       <dt>현재 단계</dt><dd>${stageTag(d)}</dd>
       <dt>담당자</dt><dd>${esc(d.owner)}</dd>
       <dt>평가 그룹</dt><dd>${esc(d.group || "—")}</dd>
-      <dt>대상 배치</dt><dd class="num">${d.lots != null
-        ? `${Math.round(d.lots)} Lot <span class="muted">(연간 계획서 기준)</span>`
+      <dt>대상 배치</dt><dd class="num" title="${d.lots_shared ? esc(LOTS_SHARED_HINT) : ""}">${
+        d.lots != null
+        ? `${Math.round(d.lots)} Lot <span class="muted">(연간 계획서 기준${
+            d.lots_shared ? " · 품목 합계" : ""})</span>`
         : `${d.batches} 배치`}</dd>
       <dt>이슈</dt><dd>일탈 ${d.dev} · OOS/OOT ${d.oos} · 변경 ${d.chg} · 불만 ${d.cmp}</dd>
     </dl>
