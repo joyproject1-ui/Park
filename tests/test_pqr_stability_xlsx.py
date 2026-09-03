@@ -156,3 +156,90 @@ class XlsFillTest(unittest.TestCase):
             self.assertRaises(xls_fill.FillError, xls_fill.fill, "x.xls", "y.xls", {}, [])
         finally:
             xls_fill._with_uno = real
+
+
+ROW72 = ('<row r="72"><c r="A72" s="4"><v>1</v></c>'
+         '<c r="B72" s="5" t="str"><f>B38</f><v>OEU101</v></c>'
+         '<c r="C72" s="6"><f t="shared" ref="C72:L87" si="0">IF(C38=0, NA(), C38)</f><v>101.7</v></c>'
+         '<c r="D72" s="6" t="e"><f t="shared" si="0"/><v>#N/A</v></c>'
+         '<c r="M72" s="6"/></row>')
+
+
+class FormulaCacheTest(unittest.TestCase):
+    def test_문자열_결과는_t_str(self):
+        out = S.set_formula_cache(ROW72, "B72", "OEV301")
+        self.assertIn('<c r="B72" s="5" t="str"><f>B38</f><v>OEV301</v></c>', out)
+
+    def test_숫자_결과는_t_없이(self):
+        out = S.set_formula_cache(ROW72, "C72", 100.5)
+        self.assertIn('<f t="shared" ref="C72:L87" si="0">IF(C38=0, NA(), C38)</f><v>100.5</v>', out)
+        self.assertNotIn('<c r="C72" s="6" t=', out)
+
+    def test_값이_없으면_NA_오류로(self):
+        out = S.set_formula_cache(ROW72, "C72", None)
+        self.assertIn('<c r="C72" s="6" t="e">', out)
+        self.assertIn("<v>#N/A</v>", out)
+
+    def test_수식은_그대로_남는다(self):
+        out = S.set_formula_cache(ROW72, "D72", 7.5)
+        self.assertIn('<f t="shared" si="0"/><v>7.5</v>', out)
+
+    def test_수식이_없는_칸은_건드리지_않는다(self):
+        self.assertEqual(S.set_formula_cache(ROW72, "A72", 9), ROW72)
+        self.assertEqual(S.set_formula_cache(ROW72, "M72", 9), ROW72)
+        self.assertEqual(S.set_formula_cache(ROW72, "Z99", 9), ROW72)
+
+
+DRAWING = (
+    '<xdr:wsDr xmlns:xdr="x" xmlns:a="y">'
+    '<xdr:twoCellAnchor><xdr:graphicFrame><xdr:nvGraphicFramePr>'
+    '<xdr:cNvPr id="1" name="차트 1"/></xdr:nvGraphicFramePr></xdr:graphicFrame></xdr:twoCellAnchor>'
+    '<xdr:twoCellAnchor><xdr:pic><xdr:nvPicPr><xdr:cNvPr id="2" name="그림 2"/></xdr:nvPicPr>'
+    '<xdr:spPr><a:prstGeom prst="rect"/></xdr:spPr></xdr:pic></xdr:twoCellAnchor>'
+    '<xdr:twoCellAnchor><xdr:cxnSp><xdr:nvCxnSpPr><xdr:cNvPr id="4" name="직선 연결선 4"/>'
+    '</xdr:nvCxnSpPr><xdr:spPr><a:prstGeom prst="line"/></xdr:spPr></xdr:cxnSp></xdr:twoCellAnchor>'
+    '</xdr:wsDr>'
+)
+
+STYLES = (
+    '<styleSheet><borders count="2">'
+    '<border><left/><right/><top/><bottom/><diagonal/></border>'
+    '<border><left style="thin"/><right style="thin"/><top style="thin"/>'
+    '<bottom style="thin"/><diagonal/></border>'
+    '</borders><cellXfs count="2">'
+    '<xf numFmtId="0" fontId="0" fillId="2" borderId="1" xfId="0"/>'
+    '<xf numFmtId="176" fontId="0" fillId="2" borderId="1" xfId="0"/>'
+    '</cellXfs></styleSheet>'
+)
+
+
+class DrawingTest(unittest.TestCase):
+    def test_사선_도형만_지운다(self):
+        out, removed = S.strip_floating_lines(DRAWING.encode("utf-8"))
+        text = out.decode("utf-8")
+        self.assertEqual(removed, 1)
+        self.assertIn("차트 1", text)
+        self.assertIn("그림 2", text)
+        self.assertNotIn("직선 연결선", text)
+
+    def test_지울_도형이_없으면_그대로(self):
+        raw = '<xdr:wsDr xmlns:xdr="x"/>'.encode("utf-8")
+        out, removed = S.strip_floating_lines(raw)
+        self.assertEqual((out, removed), (raw, 0))
+
+
+class DiagonalStyleTest(unittest.TestCase):
+    def test_사선_테두리와_서식을_새로_만든다(self):
+        out, mapping = S.diagonal_styles(STYLES.encode("utf-8"), (0, 1))
+        text = out.decode("utf-8")
+        self.assertIn('diagonalUp="1"', text)
+        self.assertIn('<diagonal style="thin"><color indexed="64"/></diagonal>', text)
+        self.assertIn('<borders count="3">', text)
+        self.assertIn('<cellXfs count="4">', text)
+        self.assertEqual(mapping, {0: 2, 1: 3})
+
+    def test_이미_있는_사선_서식을_다시_쓴다(self):
+        once, first = S.diagonal_styles(STYLES.encode("utf-8"), (0, 1))
+        twice, second = S.diagonal_styles(once, (0, 1))
+        self.assertEqual(first, second)
+        self.assertEqual(once, twice)          # 두 번 돌려도 늘어나지 않는다
