@@ -93,22 +93,35 @@ def _unzip(path, workdir):
     return out
 
 
-def discover(folder, workdir=None):
-    """{항: [파일 경로]} — 폴더 바로 아래 파일·폴더·압축을 항 번호로 나눈다."""
+def discover(folder, workdir=None, depth=3):
+    """{항: [파일 경로]} — 폴더 아래 파일·폴더·압축을 항 번호로 나눈다.
+
+    번호가 붙은 폴더(`13. 안정성 시험`) 안의 파일은 이름에 번호가 없어도 그 항으로 친다.
+    번호가 없는 중간 폴더(`필요 자료`)는 그냥 지나쳐 안쪽을 계속 본다 —
+    담당자가 자료를 한 단계 더 접어 두는 일이 흔하다.
+    """
     workdir = workdir or tempfile.mkdtemp(prefix="pqr-engine-")
     items = {}
-    for name in sorted(os.listdir(folder)):
-        path = os.path.join(folder, name)
-        item = _item_of(name)
-        if not item:
-            continue
-        if os.path.isdir(path):
-            paths = list(_walk(path))
-        elif name.lower().endswith(".zip"):
-            paths = list(_walk(_unzip(path, workdir)))
-        else:
-            paths = [path]
-        items.setdefault(item, []).extend(paths)
+
+    def scan(root, left):
+        for name in sorted(os.listdir(root)):
+            if name.startswith("~$") or name.startswith("."):
+                continue
+            path = os.path.join(root, name)
+            item = _item_of(name)
+            if os.path.isdir(path):
+                if item:
+                    items.setdefault(item, []).extend(_walk(path))
+                elif left > 0:                    # 번호 없는 중간 폴더는 지나쳐 들어간다
+                    scan(path, left - 1)
+                continue
+            if not item:
+                continue
+            paths = (list(_walk(_unzip(path, workdir)))
+                     if name.lower().endswith(".zip") else [path])
+            items.setdefault(item, []).extend(paths)
+
+    scan(folder, depth)
     return items
 
 

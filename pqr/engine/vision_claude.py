@@ -115,7 +115,10 @@ def build_tables(records, data, period):
         in_year = [p for p in done if _in_period(p.get("reviewer_date") or p.get("test_date"), period)]
         year = _year(rec.get("mfg_date")) or "확인 필요"
         pack = rec.get("package") or "확인 필요"
-        stab["points"][lot] = {p["label"]: p.get("assay") for p in done if p.get("assay")}
+        # 안정성 경향 파일(126-06)은 포장 규격마다 따로 만든다 — 그래서 여기서 나눠 담는다.
+        pack_key = "수출용" if is_exp else "내수용"
+        stab["points"].setdefault(pack_key, {})[lot] = {
+            p["label"]: p.get("assay") for p in done if p.get("assay")}
         vals = [float(re.sub(r"[^\d.]", "", p["assay"])) for p in done if re.sub(r"[^\d.]", "", p.get("assay") or "")]
         if vals:
             key = (rec.get("test_type") or "기타", year)
