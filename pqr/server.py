@@ -820,10 +820,14 @@ class Handler(BaseHTTPRequestHandler):
         # 만듭니다 — 담당자가 하는 방식과 같습니다. 없으면 자료 상태 요약본을 만듭니다.
         matcher = build_module.item_matcher(self.workspace.data["items"])
         previous = prior_report.find_previous_report(folder, matcher)
+        # 서식은 EDMS 결재본 서식(E-HLF-32)이 먼저다 — 전년도 결재본이 없는 첫해 제품도
+        # 서식만 있으면 엔진이 돈다. 둘 다 없으면 자료 상태 요약본을 만든다.
+        from .engine import edms as edms_module
+        form = edms_module.find_form(folder)
         based_on = None
         engine_result = None
         issues = []
-        if previous:
+        if previous or form:
             period = self.workspace.data.get("period") or {}
             year = None
             for key in ("from", "to"):
@@ -842,11 +846,12 @@ class Handler(BaseHTTPRequestHandler):
                 issues = engine_result.get("issues") or []
                 final = target
                 build_module.unmark_auto_draft(folder, target)   # 예전 초안 표시가 남아 있으면 완성본으로 안 보인다
-                based_on = {"previous": os.path.basename(previous), "previous_year": year,
+                based_on = {"previous": os.path.basename(previous or form), "previous_year": year,
+                            "form": os.path.basename(form) if form else None,
                             "changed": 0, "engine": True, "log": engine_result.get("log") or []}
                 write_issue_list(folder, product, issues)
             except Exception as error:                     # 엔진이 못 돌면 예전 방식(연도만 바꾼 사본)
-                based_on = prior_report.write_from_previous(previous, target, year)
+                based_on = prior_report.write_from_previous(previous, target, year) if previous else None
                 if based_on is not None:
                     based_on["engine"] = False
                     based_on["engine_error"] = str(error)

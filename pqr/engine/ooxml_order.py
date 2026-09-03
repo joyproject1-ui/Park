@@ -34,8 +34,15 @@ TRPR = ["cnfStyle", "divId", "gridBefore", "gridAfter", "wBefore", "wAfter",
 TCBORDERS = ["top", "start", "left", "bottom", "end", "right",
              "insideH", "insideV", "tl2br", "tr2bl"]
 
+TBLPR = ["tblStyle", "tblpPr", "tblOverlap", "bidiVisual", "tblStyleRowBandSize",
+         "tblStyleColBandSize", "tblW", "jc", "tblCellSpacing", "tblInd", "tblBorders",
+         "shd", "tblLayout", "tblCellMar", "tblLook", "tblCaption", "tblDescription",
+         "tblPrChange"]
+
+TBL = ["tblPr", "tblGrid", "tr"]
+
 _SEQ = {"pPr": PPR, "rPr": RPR, "tcPr": TCPR, "trPr": TRPR,
-        "tcBorders": TCBORDERS}
+        "tcBorders": TCBORDERS, "tblPr": TBLPR, "tbl": TBL}
 
 
 def _local(el):

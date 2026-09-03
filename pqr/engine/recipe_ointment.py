@@ -83,14 +83,26 @@ def fill(document, data, product, period, today=None, log=None):
     name = product.get("name") or ""
 
     # ---------- 머리글 ----------
+    # 머리글은 칸의 위치가 아니라 라벨로 찾는다. 전년도 결재본(HLF-QC-126-01)은 문서번호·
+    # 작성일자·제품명 행이 있지만, EDMS 서식(E-HLF-32)은 문서번호·Rev. No.·Page 뿐이라
+    # 세 번째 행이 쪽 번호 필드다 — 위치로 쓰면 거기에 날짜를 덮어쓴다.
     hdr = document.sections[0].header.tables[0]
-    old_no = E.cell_text(hdr.rows[0].cells[-1]).strip()
-    new_no = re.sub(r"PQR\d{2}-", "PQR%02d-" % (write_year % 100), old_no)
-    E.set_cell(hdr.rows[0].cells[-1], new_no)
-    E.set_cell(hdr.rows[2].cells[-1], today.strftime("%Y.%m.%d"))
-    # 결론(16항)에는 머리글에 적힌 정식 제품명(성분명까지)을 쓴다 — 마스터의 짧은 이름이 아니라.
-    full_name = E.cell_text(hdr.rows[-1].cells[-1]).strip() or name
-    log("머리글: %s / %s" % (new_no, today.strftime("%Y.%m.%d")))
+    new_no, full_name = "", name
+    for row in hdr.rows:
+        cells = E.raw_cells(row)
+        labels = "".join(E.cell_text(c) for c in cells[:-1])
+        target = cells[-1]
+        if "문서번호" in labels:
+            old_no = E.cell_text(target).strip()
+            if re.search(r"PQR\d{2}-", old_no):
+                new_no = re.sub(r"PQR\d{2}-", "PQR%02d-" % (write_year % 100), old_no)
+                E.set_cell(target, new_no)        # EDMS 서식은 비어 있다 — EDMS 가 번호를 준다
+        elif "작성일자" in labels:
+            E.set_cell(target, today.strftime("%Y.%m.%d"))
+        elif "제품명" in labels:
+            # 결론(16항)에는 머리글의 정식 제품명(성분명까지)을 쓴다 — 마스터의 짧은 이름이 아니라.
+            full_name = E.cell_text(target).strip() or name
+    log("머리글: %s / %s" % (new_no or "(EDMS 서식 — 문서번호 비움)", today.strftime("%Y.%m.%d")))
 
     # ---------- 4항 ----------
     # 1항 '목적' 도 "제품품질평가는" 으로 시작하므로 평가 기간 문장만 집어 찾는다.
@@ -599,11 +611,22 @@ def fill(document, data, product, period, today=None, log=None):
     if t11:
         tbl = t11[0]
         if devs:
+            # 열은 머리행 이름으로 짚는다 — 전년도 양식은 '구분(제품)' 열이 있고 EDMS 서식은 없다.
+            head = [re.sub(r"\s+", "", E.cell_text(h)) for h in E.raw_cells(tbl.rows[0])]
+            def col(*words):
+                return next((i for i, h in enumerate(head) if any(w in h for w in words)), None)
+            i_kind, i_lot, i_doc = col("구분"), col("Lot"), col("문서")
+            i_det, i_act, i_capa = col("일탈사항"), col("조치사항"), col("CAPA")
             f, l = E.fit_rows(tbl, 1, len(tbl.rows) - 2, len(devs))
             for i, d in enumerate(devs):
                 c = E.raw_cells(tbl.rows[f + i])
-                E.set_cell(c[0], str(i + 1)); E.set_cell(c[1], "제품"); E.set_cell(c[2], d.get("lot") or "")
-                E.set_cell(c[3], d.get("doc_no") or "")
+                E.set_cell(c[0], str(i + 1))
+                if i_kind is not None and i_kind < len(c):
+                    E.set_cell(c[i_kind], "제품")
+                if i_lot is not None and i_lot < len(c):
+                    E.set_cell(c[i_lot], d.get("lot") or "")
+                if i_doc is not None and i_doc < len(c):
+                    E.set_cell(c[i_doc], d.get("doc_no") or "")
                 title = re.sub(r"^\S+\([A-Z0-9]+\)\s*", "", d.get("title") or "")
                 detail = [("* " + title, "none")]
                 for line in (d.get("description") or "").split("\n"):
@@ -617,8 +640,12 @@ def fill(document, data, product, period, today=None, log=None):
                 action = [(line, "none") for line in (d.get("correction") or "").split("\n") if line.strip()]
                 if d.get("completed"):
                     action.append(("(조치사항 완료일 : %s)" % d["completed"], "none"))
-                E.set_cell_flow(c[4], detail); E.set_cell_flow(c[5], action)
-                E.set_cell(c[6], "☐ Yes", "■ No")
+                if i_det is not None and i_det < len(c):
+                    E.set_cell_flow(c[i_det], detail)
+                if i_act is not None and i_act < len(c):
+                    E.set_cell_flow(c[i_act], action)
+                if i_capa is not None and i_capa < len(c):
+                    E.set_cell(c[i_capa], "☐ Yes", "■ No")
             nos = ", ".join(d.get("doc_no") or "" for d in devs)
             E.set_cell_plain(E.raw_cells(tbl.rows[-1])[0], "특이사항 (Comment)",
                              "평가 년도 내 발생한 내수용 제품의 일탈 %d건(%s)은 조치사항이 적절하게 완료되었음을 확인함." % (len(devs), nos))

@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 """전년도 PQR(.docx) 을 그대로 두고 값만 갈아 끼우기 위한 도우미."""
 import copy
+import math
 from docx.oxml.ns import qn
 from .ooxml_order import place, get_or_add, resort_all
 
@@ -451,6 +452,184 @@ def strip_blanks_before_page_breaks(document):
             body.remove(gone)
             removed += 1
     return removed
+
+
+def _has_page_break(el):
+    return any(b.get(qn("w:type")) == "page" for b in el.iter(qn("w:br")))
+
+
+def tidy_page_breaks(document):
+    """빈 쪽이 생기는 구조를 없앤다. {'앞 빈 문단': n, '쪽나눔 전환': n, '끝 빈 문단': n}
+
+    Word 는 LibreOffice 보다 줄이 높아 같은 문서가 몇 쪽 더 나온다(2026 퀴노비드: 32 → 37).
+    그 차이가 쌓이면 '쪽나눔 문단 앞의 빈 문단' 이 다음 쪽으로 밀리고, 거기서 쪽나눔을 만나
+    빈 쪽을 통째로 만든다. 그래서
+      1) 하드 쪽나눔 문단 바로 앞의 빈 문단을 지운다 — 쪽 끝 채움일 뿐이라 배치가 안 바뀐다
+      2) '빈 문단 + 하드 쪽나눔' 은 다음 문단의 pageBreakBefore 로 바꾼다 (표 앞이면 그대로)
+      3) 문서 맨 끝의 빈 문단을 지운다 — 마지막 빈 쪽에 홀로 남던 것. 단, 표 바로 뒤의
+         빈 문단은 둔다(Word 는 본문이 표로 끝나는 것을 허용하지 않는다).
+    """
+    body = document.element.body
+    before = 0
+    for el in list(body):
+        if not el.tag.endswith("}p") or not _has_page_break(el):
+            continue
+        prev = el.getprevious()
+        while prev is not None and prev.tag.endswith("}p") and is_blank_para(prev):
+            gone, prev = prev, prev.getprevious()
+            body.remove(gone)
+            before += 1
+    moved = hard_breaks_to_page_break_before(document)
+    before += strip_blanks_before_page_breaks(document)
+    tail = 0
+    for el in reversed(list(body)):
+        if el.tag.endswith("}sectPr"):
+            continue
+        prev = el.getprevious()
+        if (el.tag.endswith("}p") and is_blank_para(el)
+                and prev is not None and not prev.tag.endswith("}tbl")):
+            body.remove(el)
+            tail += 1
+        else:
+            break
+    return {"앞 빈 문단": before, "쪽나눔 전환": moved, "끝 빈 문단": tail}
+
+
+def fix_table_widths(table):
+    """표 배치를 '고정' 으로 두고 칸 폭을 그리드(w:tblGrid)와 맞춘다. 고친 칸 수를 돌려준다.
+
+    EDMS 서식은 칸 폭(w:tcW)이 행마다 단위가 뒤섞여 있다 — 머리행은 pct 5000 기준, 요약
+    행은 dxa 값을 pct 로 적어 3932% 같은 값이 들어 있다. Word 는 자동 맞춤에서 이 값을 함께
+    보므로 그리드와 다르게 열을 나눈다(성상은 넓고 생균수는 좁아 결과가 두 줄, 튜브인쇄는
+    네 줄). 담당자 지적: "되도록 한 줄에 결과가 표시되도록 오른쪽처럼", "한 줄에 안 되면
+    두 줄로". 그리드는 담당자가 의도한 폭이므로 그리드를 그대로 쓰게 한다.
+    """
+    tbl = table._tbl
+    grid = tbl.find(qn("w:tblGrid"))
+    if grid is None:
+        return 0
+    cols = [int(g.get(qn("w:w")) or 0) for g in grid.findall(qn("w:gridCol"))]
+    if not cols or not all(cols):
+        return 0
+    pr = get_or_add(tbl, "tblPr")
+    layout = get_or_add(pr, "tblLayout")
+    layout.set(qn("w:type"), "fixed")
+    tw = get_or_add(pr, "tblW")
+    tw.set(qn("w:w"), str(sum(cols)))
+    tw.set(qn("w:type"), "dxa")
+    n = 0
+    for tr in tbl.findall(qn("w:tr")):
+        col = 0
+        for tc in tr.findall(qn("w:tc")):
+            tcpr = _tcpr(tc)
+            span_el = tcpr.find(qn("w:gridSpan"))
+            span = int(span_el.get(qn("w:val"))) if span_el is not None else 1
+            width = sum(cols[col:col + span]) or cols[-1]
+            w = get_or_add(tcpr, "tcW")
+            w.set(qn("w:w"), str(width))
+            w.set(qn("w:type"), "dxa")
+            col += span
+            n += 1
+    return n
+
+
+UNIT = 92           # 반각 한 자의 폭(twip) — 굴림 10pt 를 Word 로 재어 맞춤. 한글·전각은 2 단위
+CELL_MARGIN = 220   # 칸 좌우 여백(108×2) + 여유
+KEY_HEADS = ("연번", "no.", "lot no", "lot", "구분")
+
+
+def text_units(text):
+    """글의 시각적 길이(반각 단위). 한글·전각 2, 나머지 1. 줄바꿈이 있으면 가장 긴 줄."""
+    best = 0
+    for line in (text or "").split("\n"):
+        n = 0
+        for ch in line:
+            n += 2 if ord(ch) > 0x2E7F else 1
+        best = max(best, n)
+    return best
+
+
+def balance_columns(table, fixed_heads=KEY_HEADS, unit=UNIT, margin=CELL_MARGIN):
+    """열마다 글 길이를 재서 줄 수가 최대한 같아지도록 그리드 폭을 다시 나눈다. 새 그리드를 돌려준다.
+
+    담당자 지적: "오른편처럼 최대한 균등하게" — 성상 열이 넓어 한 줄이고 확인 2) 열이 좁아
+    아홉 줄이면 안 된다. 연번·Lot No. 같은 열쇠 열은 그대로 두고, 나머지 폭을
+      1) 모든 열이 L 줄 안에 들어가는 가장 작은 L 을 찾아 그만큼 배정하고
+      2) 남는 폭은 열마다 똑같이 나눈다
+    그래서 짧은 값(10 CFU/g 미만·음성)은 한 줄, 긴 문장끼리는 같은 줄 수가 된다.
+    가로 병합(gridSpan) 칸은 한 열의 길이가 아니므로 재지 않는다. 표 배치는 fix_table_widths 로
+    고정한다(이 함수가 마지막에 부른다).
+    """
+    tbl = table._tbl
+    grid_el = tbl.find(qn("w:tblGrid"))
+    if grid_el is None:
+        return None
+    cols = [int(g.get(qn("w:w")) or 0) for g in grid_el.findall(qn("w:gridCol"))]
+    if len(cols) < 3 or not all(cols):
+        return None
+    need = [0] * len(cols)
+    heads = [""] * len(cols)
+    rows = tbl.findall(qn("w:tr"))
+    for ri, tr in enumerate(rows):
+        tcs = tr.findall(qn("w:tc"))
+        first = "".join(t.text or "" for t in tcs[0].iter(qn("w:t"))).strip() if tcs else ""
+        # 머리행은 담당자가 일부러 두 줄로 둔 제목이 많아 줄 수에 세지 않는다. 자료 행(연번이
+        # 숫자인 행)만 잰다 — 요약 행의 값은 짧은 숫자라 어차피 한 줄이다.
+        is_data = first.isdigit()
+        col = 0
+        for tc in tcs:
+            pr = tc.find(qn("w:tcPr"))
+            sp = pr.find(qn("w:gridSpan")) if pr is not None else None
+            span = int(sp.get(qn("w:val"))) if sp is not None else 1
+            if span == 1 and col < len(cols):
+                txt = "".join(t.text or "" for t in tc.iter(qn("w:t")))
+                if ri == 0:
+                    heads[col] = txt.strip().lower()
+                if is_data:
+                    need[col] = max(need[col], text_units(txt))
+            col += span
+    if not any(need):
+        return None
+    fixed = [any(k in h for k in fixed_heads) for h in heads]
+    free = [i for i in range(len(cols)) if not fixed[i]]
+    if len(free) < 2:
+        return None
+    total = sum(cols)
+    budget = total - sum(cols[i] for i in range(len(cols)) if fixed[i])
+    floor = {i: 0.6 * cols[i] for i in free}          # 원래 폭의 60% 밑으로는 좁히지 않는다
+    chosen = best = None
+    for lines in range(1, 40):
+        want = [max(need[i] * unit / float(lines) + margin, floor[i]) for i in free]
+        if sum(want) <= budget:
+            chosen, best = want, lines
+            break
+    if chosen is None:
+        return None
+    # 지금 폭으로도 줄 수가 이미 최소면 담당자가 정한 폭을 그대로 둔다
+    # (담당자: 함량·입자도·무균·질량 표는 "이것은 잘했어" — 다시 나누지 않는다).
+    current = max(int(math.ceil(need[i] * unit / max(1.0, cols[i] - margin))) if need[i] else 1
+                  for i in free)
+    if current <= best:
+        return None
+    extra = (budget - sum(chosen)) / float(len(free))
+    new = list(cols)
+    for k, i in enumerate(free):
+        new[i] = int(round(chosen[k] + extra))
+    new[free[-1]] += total - sum(new)          # 반올림 오차는 마지막 자유 열에
+    for g, w in zip(grid_el.findall(qn("w:gridCol")), new):
+        g.set(qn("w:w"), str(w))
+    fix_table_widths(table)
+    return new
+
+
+def fix_all_table_widths(document, skip=()):
+    """본문 표 전부의 폭을 그리드에 맞춘다(skip 번호는 제외). 고친 칸 수."""
+    n = 0
+    for ti, table in enumerate(document.tables):
+        if ti in skip:
+            continue
+        n += fix_table_widths(table)
+    return n
 
 
 def zero_cell_spacing(document, skip=()):

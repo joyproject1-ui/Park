@@ -63,8 +63,15 @@ python -m pqr launch                        # 폴더 준비 + 브라우저 열�
 
 ## 보고서 서식 채우기
 
+**모든 PQR 의 서식은 EDMS 결재본 서식(E-HLF-32)이다** — 담당자 지시(2026-09-03). 먼저
+`references/form-edms.md` 를 읽는다. 전년도 결재본은 값·문안의 근거일 뿐 서식이 아니다.
+엔진도 제품 폴더(또는 `공통/`)의 EDMS 서식(바닥글 `EHLF-32`)을 바탕으로 쓰고, 없을 때만
+전년도 결재본을 바탕으로 쓴다(`pqr/engine/edms.py`).
+
 절차서.docx(18항·표 32개)와 안정성 서식을 채울 때는 각각:
 
+- `references/form-edms.md` — **EDMS 결재본 서식(E-HLF-32) — 모든 PQR 의 바탕.** 항·표 구성,
+  서식을 알아보는 법, 채울 때 지킬 것, 전년도 결재본과의 관계
 - `references/report-form.md` — 항·표 대응, 표마다의 병합 구조, 통일문구 표준 문안
 - `references/house-style.md` — **승인된 최종본에서 확인한 작성 관행.** 숫자 자릿수·반올림,
   허용기준의 `자가)`/`허가)` 구분, 결과 열에 범위를 쓰는 방식 등 서식만 봐서는 알 수 없고
@@ -118,7 +125,7 @@ LibreOffice 렌더링이 되는 환경이면 PDF 로 변환해 눈으로도 확�
 ## 자동 완성 엔진 (`pqr/engine`) — '보고서 작성' 단추가 부르는 것
 
 담당자 대시보드의 **보고서 작성** 단추는 `pqr.engine.writer.write_report` 를 부른다.
-전년도 결재본(평가항목 16, .doc 도 됨) → .docx 변환(Windows 는 Word, 아니면 LibreOffice)
+EDMS 서식(없으면 전년도 결재본, .doc 도 됨) → .docx 변환(Windows 는 Word, 아니면 LibreOffice)
 → 제품 폴더 판독(`collect`: 성적서 PDF·ERP xls·수율 xlsx·PV/설비 마스터·일탈/변경 PDF·
 공급업체 목록) → 항별 채움(`recipe_ointment`) → 조판(`layout` = report-format.md 규칙)
 → `polish` → OOXML 순서 0건 검사 → 첨부 엑셀(Cpk 4종·HLF-QC-126-06) 까지 한 번에.

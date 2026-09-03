@@ -46,13 +46,20 @@ def write_report(folder, product, period, out_path, today=None, recipe=None, log
         if log:
             log(msg)
 
+    # 서식은 언제나 EDMS 결재본 서식(E-HLF-32). 전년도 결재본은 값·문안의 근거로만 쓴다.
+    # 서식이 폴더에 없을 때만 전년도 결재본을 바탕으로 쓴다(예전 방식).
+    from . import edms
     previous = find_previous(folder)
-    if not previous:
-        raise EngineError("전년도 결재본(평가항목 16. 전년도 PQR word)이 제품 폴더에 없습니다.")
+    form = edms.find_form(folder)
+    source, why = edms.choose_base(form, previous)
+    if not source:
+        raise EngineError(why)
     work = tempfile.mkdtemp(prefix="pqr-report-")
     base = os.path.join(work, "base.docx")
-    how = convert.to_docx(previous, base)
-    log_("결재본: %s (%s)" % (os.path.basename(previous), how))
+    how = convert.to_docx(source, base)
+    log_("바탕 문서: %s — %s (%s)" % (os.path.basename(source), why, how))
+    if previous and previous != source:
+        log_("전년도 결재본(값 근거): %s" % os.path.basename(previous))
 
     data = collect_module.collect(folder, product_name=product.get("name"), log=log_)
     data.previous_report = previous

@@ -21,9 +21,35 @@ def _header_text(table):
     return re.sub(r"\s+", "", _text(table._tbl.findall(qn("w:tr"))[0]))
 
 
-def apply(document, log=None, product_title=None):
-    """document 를 제자리에서 다듬는다. log(문구) 로 진행을 알린다."""
+class _SkipFront(Exception):
+    """EDMS 서식이라 앞부분 조판을 건너뛴다는 표시."""
+
+
+def is_edms(document):
+    """EDMS 결재본 서식(E-HLF-32)으로 쓴 문서인지 — 바닥글에 EHLF-32 가 있다."""
+    for section in document.sections:
+        for part in (section.footer, section.header):
+            try:
+                text = "\n".join(p.text for p in part.paragraphs)
+                text += "\n".join(E.cell_text(c) for t in part.tables for r in t.rows for c in E.raw_cells(r))
+            except Exception:
+                continue
+            if re.search(r"E-?HLF-?32", text, re.I):
+                return True
+    return False
+
+
+def apply(document, log=None, product_title=None, edms=None):
+    """document 를 제자리에서 다듬는다. log(문구) 로 진행을 알린다.
+
+    edms: EDMS 서식이면 True. None 이면 바닥글로 알아낸다. EDMS 서식은 표지·결재표·개정 내역이
+    없고 목차 줄 간격도 서식이 정한 것이므로 앞부분 조판을 건너뛴다.
+    """
     log = log or (lambda *a: None)
+    if edms is None:
+        edms = is_edms(document)
+    if edms:
+        log("EDMS 서식(E-HLF-32) — 앞부분(표지·결재표·개정 내역) 조판 없음")
     T = document.tables
     tables_all = list(range(len(T)))
     approval = 0                                  # 결재표 = 첫 표 (구 분·성 명·직위·서 명·서명일자)
@@ -39,6 +65,8 @@ def apply(document, log=None, product_title=None):
             toc = i
     # ---- 앞부분 ----
     try:
+        if edms:
+            raise _SkipFront()
         # 표지 다음은 '검토 및 승인' 이 새 쪽에서 시작한다. 결재본은 표지 아래를 빈 줄로 채워
         # 그 자리를 만들지만, 빈 줄은 글꼴·줄 높이가 조금만 달라도 무너진다(담당자 PC 에서
         # 표지와 결재표가 한 쪽에 붙어 나왔다). 쪽 나눔으로 못 박는다.
@@ -64,6 +92,8 @@ def apply(document, log=None, product_title=None):
         if p4 is not None:
             E.page_break_before(p4)
         E.blank_para_before(document, "5. 책임과 권한", anchor_title)
+    except _SkipFront:
+        pass
     except Exception as error:                      # 앞부분 서식이 다른 결재본이면 건너뛴다
         log("앞부분 조판 건너뜀: %s" % error)
 
@@ -87,7 +117,7 @@ def apply(document, log=None, product_title=None):
                 E.set_cell_align(cell, "center")
                 centered += 1
     log("가운데 정렬한 칸: %d" % centered)
-    for row in T[approval].rows:                    # 결재표 구분 행은 왼쪽
+    for row in ([] if edms else T[approval].rows):  # 결재표 구분 행은 왼쪽 (EDMS 서식엔 결재표 없음)
         for cell in E.raw_cells(row):
             if any(k in E.cell_text(cell) for k in ("(Written by)", "(Reviewed by)", "(Approved by)")):
                 E.set_cell_align(cell, "left")
@@ -96,7 +126,13 @@ def apply(document, log=None, product_title=None):
             cells = E.raw_cells(row)
             if ri and len(cells) >= 3:
                 E.set_cell_align(cells[-1], "left")
-    log("표 안 문단 앞뒤 간격 0: %d" % E.zero_cell_spacing(document, skip=(approval, revision)))
+    fixed_tables = (toc,) if edms else (approval, revision)   # 서식이 정한 표는 건드리지 않는다
+    log("표 안 문단 앞뒤 간격 0: %d" % E.zero_cell_spacing(document, skip=fixed_tables))
+    # 칸 폭은 그리드대로 — 단위가 뒤섞인 tcW 를 Word 가 자동 맞춤에 섞어 쓰면 결과가 두 줄로 갈린다
+    log("칸 폭을 그리드에 맞춤: %d" % E.fix_all_table_widths(document, skip=(toc,)))
+    # 9.2 세부표는 열마다 글 길이가 달라, 한 열만 여러 줄로 늘어지면 줄 수가 같아지도록 다시 나눈다
+    balanced = sum(1 for ti in _tables_under(document, ("9.2",)) if E.balance_columns(T[ti]) is not None)
+    log("9.2 표 열 폭 균등 배분: %d" % balanced)
     log("표 안 글씨 굴림 10: %d" % E.table_font_size(document, 20))
     from .ooxml_order import get_or_add
     small = 0
@@ -150,7 +186,7 @@ def apply(document, log=None, product_title=None):
                     E.split_header_cell(cell, "기준", "Lot No.")
     for ti in _tables_under(document, ("8.1.2",)):
         E.diag_empty_in_column(T[ti], "기타업체")
-    log("빈 칸 사선: %d" % E.diag_all_empty(document, skip=no_diag | {approval, revision, toc}))
+    log("빈 칸 사선: %d" % E.diag_all_empty(document, skip=no_diag | set(fixed_tables) | {toc}))
 
     # ---- 쪽 배치 ----
     PAGE_BODY = 11800
@@ -194,7 +230,7 @@ def apply(document, log=None, product_title=None):
     log("항 제목 다음과 함께: %d" % E.keep_headings_with_next(document))
     log("표 앞 문단 다음과 함께: %d" % E.keep_paras_before_tables(document))
     log("윗첨자 각주 번호: %d" % len(E.superscript_note_marks(document)))
-    log("쪽 나눔 앞 빈 문단 삭제: %d" % E.strip_blanks_before_page_breaks(document))
+    log("빈 쪽 방지 정리: %s" % E.tidy_page_breaks(document))
     log("각주 내어쓰기: %d" % E.hanging_indent_notes(document))
     try:
         from .toc import link_toc
