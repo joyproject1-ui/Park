@@ -241,3 +241,125 @@ class 칸폭(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class 서식에옮겨담기(unittest.TestCase):
+    """채운 문서의 본문을 EDMS 서식 껍데기(머리글·바닥글·목차·쪽 설정)에 담는다."""
+
+    def setUp(self):
+        self.dir = tempfile.mkdtemp()
+
+    def tearDown(self):
+        shutil.rmtree(self.dir, ignore_errors=True)
+
+    def _filled(self):
+        d = docx.Document()
+        d.add_paragraph("퀴노비드안연고 제품품질평가 보고서")          # 표지
+        d.add_paragraph("검토 및 승인")
+        t = d.add_table(rows=2, cols=3); t.cell(0, 0).text = "구 분"; t.cell(0, 1).text = "서 명"; t.cell(0, 2).text = "서명일자"
+        d.add_paragraph("개 정 내 역")
+        d.add_paragraph("1. 목 적")
+        d.add_paragraph("당사 의약품의 품질에 대하여 …")
+        d.add_paragraph("6. 제조내역 확인")
+        t6 = d.add_table(rows=2, cols=2); t6.cell(0, 0).text = "연번"; t6.cell(0, 1).text = "Lot No."; t6.cell(1, 1).text = "OEY101"
+        d.sections[0].footer.paragraphs[0].text = "한림제약 HLF-QC-126-01/Rev.010-1"
+        d.sections[0].header.paragraphs[0].text = "PQR26-2-QUIO3"
+        p = os.path.join(self.dir, "filled.docx"); d.save(p); return p
+
+    def _form(self):
+        d = docx.Document()
+        d.add_paragraph("목차 (Table of Contents)")
+        t = d.add_table(rows=2, cols=2); t.cell(0, 0).text = "1.  목 적 (Purpose)"; t.cell(0, 1).text = "2"
+        t.cell(1, 0).text = "6.  제조내역 확인"; t.cell(1, 1).text = "4"
+        d.add_paragraph(""); d.add_paragraph("")
+        d.add_paragraph("1. 목 적")
+        d.add_paragraph("서식의 목적 글")
+        d.sections[0].footer.paragraphs[0].text = "EHLF-32/Rev.000"
+        d.sections[0].header.paragraphs[0].text = "제품 품질 평가 보고서 문서번호 Rev. No. Page"
+        d.sections[0].left_margin = docx.shared.Mm(19)
+        p = os.path.join(self.dir, "form.docx"); d.save(p); return p
+
+    def test_본문은_남기고_껍데기만_바꾼다(self):
+        from pqr.engine import rehouse
+        out = os.path.join(self.dir, "out.docx")
+        got = rehouse.rehouse(self._filled(), self._form(), out)
+        self.assertEqual(got["앞부분 삭제"], 4)          # 표지·결재표 제목·결재표·개정 내역
+        self.assertGreaterEqual(got["머리글·바닥글"], 2)
+        d = docx.Document(out)
+        texts = [p.text for p in d.paragraphs if p.text.strip()]
+        self.assertEqual(texts[0], "목차 (Table of Contents)")
+        self.assertIn("1. 목 적", texts)                  # 채운 문서의 1항이 남는다
+        self.assertNotIn("서식의 목적 글", texts)          # 서식의 본문은 안 들어온다
+        self.assertNotIn("검토 및 승인", texts)
+        self.assertEqual([c.text for c in d.tables[0].rows[0].cells], ["1.  목 적 (Purpose)", "2"])
+        self.assertEqual(d.tables[1].cell(1, 1).text, "OEY101")
+        self.assertIn("EHLF-32", d.sections[0].footer.paragraphs[0].text)
+        self.assertIn("문서번호", d.sections[0].header.paragraphs[0].text)
+        self.assertLess(abs(d.sections[0].left_margin - docx.shared.Mm(19)), 1000)   # twip 반올림
+        self.assertTrue(layout.is_edms(d))
+        # 1항 제목은 '앞에서 쪽 나눔' 으로 목차 다음 쪽에서 시작한다
+        head = next(p for p in d.paragraphs if p.text.startswith("1. 목 적"))
+        self.assertIsNotNone(head._p.find(qn("w:pPr")).find(qn("w:pageBreakBefore")))
+
+    def test_1항_제목이_없으면_실패한다(self):
+        from pqr.engine import rehouse
+        d = docx.Document(); d.add_paragraph("아무 제목 없음")
+        bad = os.path.join(self.dir, "bad.docx"); d.save(bad)
+        with self.assertRaises(rehouse.RehouseError):
+            rehouse.rehouse(bad, self._form(), os.path.join(self.dir, "o.docx"))
+
+
+class 압축속결재본(unittest.TestCase):
+    def setUp(self):
+        self.dir = tempfile.mkdtemp()
+        self.product = os.path.join(self.dir, "QC1-7014 디겐타안연고")
+        os.makedirs(self.product)
+
+    def tearDown(self):
+        shutil.rmtree(self.dir, ignore_errors=True)
+
+    def test_zip_안의_doc_를_꺼낸다(self):
+        import zipfile
+        from pqr.engine import writer
+        z = os.path.join(self.product, "16 전년도 PQR word & excel (PQR25).zip")
+        with zipfile.ZipFile(z, "w") as zf:
+            zf.writestr("a. PQR25 디겐타안연고.doc", b"\xd0\xcf\x11\xe0 fake")
+            zf.writestr("a. 함량 Cpk 계산 파일.xls", b"x")
+        work = tempfile.mkdtemp()
+        got = writer.find_previous(self.product, work)
+        self.assertTrue(got and got.endswith(".doc"))
+        self.assertTrue(os.path.isfile(got))
+        # Cpk 엑셀은 꺼낸 결재본과 같은 폴더(압축을 푼 곳)에서 찾는다
+        src = writer.attachment_source(self.product, work)
+        self.assertTrue(src.endswith(".zip") or any(
+            n.lower().endswith(".xls") for n in os.listdir(os.path.dirname(src))))
+
+    def test_자료_전체를_묶은_zip_하나만_있어도_찾는다(self):
+        """디겐타안연고: '2026년 PQR 필요 자료.zip' 하나에 16. 전년도 PQR 압축까지 들어 있다."""
+        import zipfile, io as _io
+        from pqr.engine import writer
+        inner = _io.BytesIO()
+        with zipfile.ZipFile(inner, "w") as zf:
+            zf.writestr("a. PQR25 디겐타안연고.doc", b"\xd0\xcf\x11\xe0 fake")
+            zf.writestr("a. 함량 Cpk 계산 파일.xls", b"x")
+        bundle = os.path.join(self.product, "디겐타 안연고 2026년 PQR 필요 자료.zip")
+        with zipfile.ZipFile(bundle, "w") as zf:
+            zf.writestr("디겐타 안연고 2026년 PQR 필요 자료/3. 허가증.pdf", b"%PDF")
+            zf.writestr("디겐타 안연고 2026년 PQR 필요 자료/16 전년도 PQR word & excel (PQR25).zip", inner.getvalue())
+        work = tempfile.mkdtemp()
+        got = writer.find_previous(self.product, work)
+        self.assertTrue(got and got.endswith("a. PQR25 디겐타안연고.doc"), got)
+
+    def test_docx_가_있으면_압축보다_먼저(self):
+        import zipfile
+        from pqr.engine import writer
+        make_docx(os.path.join(self.product, "16. 전년도 PQR.docx"), footer="HLF-QC-126-01")
+        with zipfile.ZipFile(os.path.join(self.product, "16 PQR25.zip"), "w") as zf:
+            zf.writestr("a.doc", b"x")
+        got = writer.find_previous(self.product, tempfile.mkdtemp())
+        self.assertTrue(got.endswith("16. 전년도 PQR.docx"))
+
+    def test_없으면_None(self):
+        from pqr.engine import writer
+        self.assertIsNone(writer.find_previous(self.product, tempfile.mkdtemp()))
+        self.assertIsNone(writer.attachment_source(self.product))

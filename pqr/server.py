@@ -820,9 +820,17 @@ class Handler(BaseHTTPRequestHandler):
         # 만듭니다 — 담당자가 하는 방식과 같습니다. 없으면 자료 상태 요약본을 만듭니다.
         matcher = build_module.item_matcher(self.workspace.data["items"])
         previous = prior_report.find_previous_report(folder, matcher)
+        # 담당자는 자료 전체를 zip 하나로 올리는 일이 잦다('디겐타 안연고 2026년 PQR 필요 자료.zip').
+        # 폴더 맨 위만 보면 전년도 결재본을 못 찾아 요약본이 나오므로, 엔진과 같은 찾기
+        # (묶음 zip·중간 폴더 안까지)로 다시 찾는다.
+        from .engine import edms as edms_module, writer as engine_writer
+        if not previous:
+            try:
+                previous = engine_writer.find_previous(folder)
+            except Exception:
+                previous = None
         # 서식은 EDMS 결재본 서식(E-HLF-32)이 먼저다 — 전년도 결재본이 없는 첫해 제품도
         # 서식만 있으면 엔진이 돈다. 둘 다 없으면 자료 상태 요약본을 만든다.
-        from .engine import edms as edms_module
         form = edms_module.find_form(folder)
         based_on = None
         engine_result = None
@@ -839,7 +847,6 @@ class Handler(BaseHTTPRequestHandler):
                 folder, docx_report.report_filename(product, self.workspace.data.get("period")))
             # 1) 자동 완성 엔진 — 결재본을 열어 올린 자료 값으로 채우고 회사 조판 규칙을 적용합니다.
             try:
-                from .engine import writer as engine_writer
                 engine_result = engine_writer.write_report(
                     folder, product, period, target, today=self.workspace.data.get("today"),
                     log=None, vision=_vision_hook())
