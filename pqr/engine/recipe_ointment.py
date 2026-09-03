@@ -88,10 +88,13 @@ def fill(document, data, product, period, today=None, log=None):
     new_no = re.sub(r"PQR\d{2}-", "PQR%02d-" % (write_year % 100), old_no)
     E.set_cell(hdr.rows[0].cells[-1], new_no)
     E.set_cell(hdr.rows[2].cells[-1], today.strftime("%Y.%m.%d"))
+    # 결론(16항)에는 머리글에 적힌 정식 제품명(성분명까지)을 쓴다 — 마스터의 짧은 이름이 아니라.
+    full_name = E.cell_text(hdr.rows[-1].cells[-1]).strip() or name
     log("머리글: %s / %s" % (new_no, today.strftime("%Y.%m.%d")))
 
     # ---------- 4항 ----------
-    p = find_para(document, "제품품질평가는 ")
+    # 1항 '목적' 도 "제품품질평가는" 으로 시작하므로 평가 기간 문장만 집어 찾는다.
+    p = find_para(document, "월까지 생산된")
     if p is not None and "년 1월" in p.text:
         text = re.sub(r"\d{4}년 1월", "%d년 1월" % year_from, p.text)
         text = re.sub(r"\d{4}년도 (상반기|하반기|\d분기)", "%d년도 %d분기" % (write_year, _quarter(today)), text)
@@ -685,7 +688,7 @@ def fill(document, data, product, period, today=None, log=None):
 
     # ---------- 16항 ----------
     p = find_para(document, "16.1.")
-    full = name
+    full = full_name
     if p is not None:
         E.set_para_text(p, "16.1. %s 내수용%s에 대한 제품품질평가 결과, 출발물질, 포장자재, IPC Test 그리고 제품 시험 결과 모두 정해진 규격에 만족하며, "
                         "기준에 적합한 제품이 일관되게 제조되고 있어 표준제조공정이 적절하다고 판단됨." % (full, ", 수출용" if exp else ""))
