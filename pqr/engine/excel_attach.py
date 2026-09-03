@@ -12,10 +12,9 @@ import tempfile
 import zipfile
 
 from openpyxl import load_workbook
-from openpyxl.styles import Border, Side, PatternFill
-from openpyxl.comments import Comment
 
 from . import convert
+from . import stability_xlsx
 
 CPK_ITEMS = [   # (파일 이름에 든 낱말, 완제 성적서 항목)
     ("금속성이물(개개)", "metal_each"), ("금속성이물(합계)", "metal_total"),
@@ -109,39 +108,41 @@ COL = {"Initial": "C", "초기": "C", "3M": "D", "6M": "E", "9M": "F", "12M": "G
        "36M": "J", "48M": "K", "60M": "L"}
 
 
+def _grouped(points):
+    """{Lot: {시점: 값}} 또는 {포장구분: {Lot: {시점: 값}}} 을 [(구분, [(Lot, 값)])] 로 편다."""
+    if not points:
+        return []
+    inner = list(points.values())
+    if inner and isinstance(inner[0], dict) and inner[0] and \
+            all(isinstance(v, dict) for v in inner[0].values()):
+        return [(k, list(v.items())) for k, v in points.items()]
+    return [("", list(points.items()))]
+
+
 def write_stability_workbook(folder, data, product, today, input_dir=None):
-    """HLF-QC-126-06 (함량 시트) — 비전 판독의 시점별 함량으로 채운다. 없으면 None."""
+    """HLF-QC-126-06 — 시점별 함량을 채운다. 포장 규격이 나뉘어 있으면 파일도 나눈다.
+
+    작성자·작성일은 서명란이라 비워 둔다(report-format.md).
+    반환값은 [(파일명, 경로), ...] 이며 만들지 못하면 빈 목록이다.
+    """
     stab = getattr(data, "stability", None)
     points = (stab or {}).get("points") or {}
     form = _find_stability_form(folder, input_dir)
     if not form:
         data.issues.append(("첨부", "", "안정성 경향 분석 서식(HLF-QC-126-06)을 찾지 못해 만들지 못함 — 제품 폴더나 입력 폴더의 '서식' 폴더에 두세요"))
-        return None
-    name = "HLF-QC-126-06 안정성 시험 경향 분석 결과 - %s.xlsx" % (product.get("name") or "")
-    dst = os.path.join(folder, name)
-    wb = load_workbook(form)
-    ws = wb["함량"] if "함량" in wb.sheetnames else wb.worksheets[0]
-    ws["C3"] = product.get("name") or ""
-    ws["G3"] = "함량 (%)"
-    ws["C4"] = "25±2℃, 60±5%RH"
-    ws["K4"] = today
-    thin = Side(style="thin")
-    diag = Border(diagonal=thin, diagonalDown=True, left=thin, right=thin, top=thin, bottom=thin)
-    yellow = PatternFill("solid", fgColor="FFFF00")
-    r = 38
-    for lot, vals in points.items():
-        ws["A%d" % r] = r - 37
-        ws["B%d" % r] = lot
-        for label, col in COL.items():
-            if label in vals:
-                ws["%s%d" % (col, r)] = _num(vals[label])
-        r += 1
+        return []
     if not points:
-        ws["B38"] = "확인 필요"
-        ws["B38"].fill = yellow
-        ws["B38"].comment = Comment("시험일지 판독값이 없어 비워 둠 — 담당자 기입", "PQR")
-    for sname in wb.sheetnames:
-        if sname != ws.title:
-            wb[sname]["C3"] = product.get("name") or ""
-    wb.save(dst)
-    return (name, dst)
+        data.issues.append(("첨부", "", "안정성 시험일지 판독값이 없어 경향 분석 파일을 만들지 못함 — 시험일지를 올리거나 담당자가 직접 기입"))
+        return []
+    base = product.get("name") or ""
+    made = []
+    for label, lots in _grouped(points):
+        title = base if not label or label in base else "%s(%s)" % (base, label)
+        name = "HLF-QC-126-06 안정성 시험 경향 분석 결과 - %s.xlsx" % title
+        dst = os.path.join(folder, name)
+        lots = [(lot, {k: _num(v) for k, v in vals.items()}) for lot, vals in lots]
+        stability_xlsx.build(form, dst, title, lots,
+                             lcl=(stab or {}).get("lcl", 90),
+                             ucl=(stab or {}).get("ucl", 110))
+        made.append((name, dst))
+    return made

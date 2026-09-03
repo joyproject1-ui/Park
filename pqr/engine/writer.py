@@ -84,10 +84,9 @@ def write_report(folder, product, period, out_path, today=None, recipe=None, log
         from . import excel_attach
         day = today.strftime("%Y.%m.%d") if hasattr(today, "strftime") else re.sub(r"-", ".", str(today or ""))[:10]
         attachments += excel_attach.write_cpk_files(os.path.dirname(out_path), data, previous, day)
-        made = excel_attach.write_stability_workbook(os.path.dirname(out_path), data, product, day,
-                                                     input_dir=os.path.dirname(os.path.abspath(folder)))
-        if made:
-            attachments.append(made)
+        attachments += excel_attach.write_stability_workbook(
+            os.path.dirname(out_path), data, product, day,
+            input_dir=os.path.dirname(os.path.abspath(folder)))
         log_("첨부 엑셀: %s" % ", ".join(n for n, _ in attachments))
     except Exception as error:
         data.issues.append(("첨부", "", "첨부 엑셀 생성 실패: %s" % error))
