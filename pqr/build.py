@@ -674,6 +674,48 @@ def _month_labels(today, months=12):
     return labels
 
 
+# 연간 계획서 비고에 적히는 구분 — 한 품목이 여러 PQR 건으로 갈리는 기준입니다.
+SINGLE_USE_WORDS = ("1회용", "일회용")
+US_EXPORT_WORD = "미국 수출용"
+
+
+def _note_tokens(note):
+    return [part.strip() for part in re.split(r"[/,]", note or "") if part.strip()]
+
+
+def expand_product_variants(products_meta):
+    """연간 계획서 비고에 따라 한 품목을 여러 PQR 건으로 나눕니다.
+
+    - 비고가 '미국 수출용' 뿐이면 그 품목 자체가 미국 수출용입니다 — 제품명에만 표기합니다.
+    - '1회용 / 다회용' 이면 기본 품명이 다회용이고, '(1회용)' 건을 하나 더 만듭니다.
+    - '미국 수출용' 이 다른 구분과 함께 있으면 '(미국 수출용)' 건을 하나 더 만듭니다.
+    마스터에 그 코드가 이미 있으면 손대지 않습니다 — 담당자가 적은 값이 먼저입니다.
+    """
+    out = dict(products_meta)
+    for code, row in sorted(products_meta.items()):
+        tokens = _note_tokens(row.get("note"))
+        if not tokens:
+            continue
+        name = (row.get("product_name") or code).strip()
+        us = US_EXPORT_WORD in tokens
+        if us and set(tokens) == {US_EXPORT_WORD}:
+            if "(미국 수출용)" not in name:
+                out[code] = dict(row, product_name="%s (미국 수출용)" % name)
+            continue
+        extras = []
+        if any(token in SINGLE_USE_WORDS for token in tokens):
+            extras.append(("1회용", "%s (1회용)" % name))
+        if us:
+            extras.append(("미국수출용", "%s (미국 수출용)" % name))
+        for suffix, label in extras:
+            variant = "%s-%s" % (code, suffix)
+            if variant in out:
+                continue
+            out[variant] = dict(row, product_code=variant, product_name=label)
+    return out
+
+
+
 def _cpk_trend(products, batches_by_product, today, months=12):
     """공정능력 부족(Cpk < 1) 제품의 월별 발생 추이 — 제형별로 나눠 셉니다.
 
@@ -789,7 +831,8 @@ def build(input_dir=None, files=None, today=None, config=None, period=None):
     presence["unknown"] = [path for path in presence["unknown"]
                            if not matcher(os.path.basename(path))]
 
-    products_meta = {row["product_code"]: row for row in datasets.get("products", [])}
+    products_meta = expand_product_variants(
+        {row["product_code"]: row for row in datasets.get("products", [])})
     batches = _group(datasets.get("batches", []))
     deviations = _group(datasets.get("deviations", []))
     changes = _group(datasets.get("changes", []))

@@ -19,7 +19,8 @@ DATASETS = {
         "label": "제품 마스터",
         "fields": ["product_code", "product_name", "form", "site", "owner",
                    "period_from", "period_to", "due", "stage", "group", "lots",
-                   "product_class", "license_no", "license_date", "shelf_life", "storage"],
+                   "product_class", "license_no", "license_date", "shelf_life", "storage",
+                   "note"],
         "required": ["product_code"],
     },
     "batches": {
@@ -84,6 +85,8 @@ _BUILTIN_ALIASES = {
     "period_to": ["평가종료일", "평가기간종료", "기간종료", "periodto", "to"],
     "due": ["마감일", "제출기한", "기한", "duedate", "due"],
     "stage": ["단계", "진행단계", "공정구분", "구분단계", "stage", "step"],
+    # 연간 계획서의 비고 — '1회용 / 다회용', '미국 수출용' 처럼 한 품목이 여러 건으로 갈린다.
+    "note": ["비고", "note", "remark", "remarks", "메모"],
     "batch_no": ["배치번호", "제조번호", "로트", "로트번호", "batchno", "lot", "lotno", "batch"],
     "mfg_date": ["제조일", "제조일자", "생산일", "mfgdate", "manufacturedate"],
     "test_name": ["시험항목", "항목", "관리항목", "testname", "test", "parameter"],
