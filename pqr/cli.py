@@ -10,6 +10,7 @@
 """
 
 import argparse
+import io
 import json
 import os
 import sys
@@ -509,6 +510,31 @@ def cmd_narrate(args):
     return 0
 
 
+def cmd_plan(args):
+    """연간 계획서의 제형별 표대로 제품 마스터의 건·생산 Lot 을 맞춥니다."""
+    import csv
+    from . import plan as plan_module
+
+    lines = plan_module.read_plan(args.doc)
+    with io.open(args.master, encoding="utf-8-sig", newline="") as handle:
+        reader = csv.DictReader(handle)
+        rows, fields = list(reader), list(reader.fieldnames or [])
+    if "비고" not in fields:
+        fields.append("비고")
+    made = plan_module.apply_to_master(lines, rows)
+    target = args.out or args.master
+    with io.open(target, "w", encoding="utf-8-sig", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=fields)
+        writer.writeheader()
+        for row in made:
+            writer.writerow({key: row.get(key, "") for key in fields})
+    added = len(made) - len(rows)
+    _print("계획서 %d품목을 읽어 마스터를 %d행 → %d행으로 맞췄습니다 (+%d)."
+           % (len(lines), len(rows), len(made), added))
+    _print("  저장: %s" % target)
+    return 0
+
+
 def cmd_report(args):
     data = _load_data(args.data)
     out_dir = args.out or os.path.join(os.path.dirname(args.data), "reports")
@@ -584,6 +610,13 @@ def build_parser():
     update_cmd.add_argument("--url", default=UPDATE_URL, help="내려받을 ZIP 주소")
     update_cmd.add_argument("--dir", dest="target", help="바꿀 프로그램 폴더 (기본: 지금 이 폴더)")
     update_cmd.set_defaults(func=cmd_update)
+
+    plan_cmd = subparsers.add_parser(
+        "plan", help="연간 계획서로 제품 마스터의 생산 Lot·구분 맞추기")
+    plan_cmd.add_argument("--doc", required=True, help="연간 계획서 (.doc/.docx)")
+    plan_cmd.add_argument("--master", required=True, help="제품 마스터 (.csv)")
+    plan_cmd.add_argument("-o", "--out", help="저장할 파일 (없으면 --master 를 덮어씁니다)")
+    plan_cmd.set_defaults(func=cmd_plan)
 
     report_cmd = subparsers.add_parser("report", help="보고서만 다시 생성")
     report_cmd.add_argument("-d", "--data", required=True, help="build 가 만든 pqr.json")
