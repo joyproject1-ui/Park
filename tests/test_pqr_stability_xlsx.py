@@ -132,3 +132,27 @@ class WrittenByTest(unittest.TestCase):
         from pqr.engine.excel_attach import written_by
         doc = DOC.replace("작 성 (Written by)", "검 토 (Reviewed by)")
         self.assertEqual(written_by(self._docx(doc)), "")
+
+
+class XlsFillTest(unittest.TestCase):
+    def test_그래프_끝행은_머리행_더하기_Lot수(self):
+        from pqr.engine import xls_fill
+        self.assertEqual(xls_fill._last_row(17), 26)     # 9 행 머리 + 17 Lot
+        self.assertEqual(xls_fill._last_row(1), 10)
+        self.assertEqual(xls_fill._last_row(0), 10)      # Lot 이 없어도 한 행은 남긴다
+
+    def test_계열_수식의_끝행만_바뀐다(self):
+        import re
+        f = "=SERIES(Bilateral!$R$9,,Bilateral!$R$10:$R$20,2)"
+        got = re.sub(r"\$([A-Z]+)\$(\d+):\$([A-Z]+)\$\d+",
+                     lambda m: "$%s$%s:$%s$%d" % (m.group(1), m.group(2), m.group(3), 26), f)
+        self.assertEqual(got, "=SERIES(Bilateral!$R$9,,Bilateral!$R$10:$R$26,2)")
+
+    def test_도구가_없으면_FillError(self):
+        from pqr.engine import xls_fill
+        real = xls_fill._with_uno
+        xls_fill._with_uno = lambda *a, **k: False
+        try:
+            self.assertRaises(xls_fill.FillError, xls_fill.fill, "x.xls", "y.xls", {}, [])
+        finally:
+            xls_fill._with_uno = real

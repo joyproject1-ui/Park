@@ -15,6 +15,7 @@ from openpyxl import load_workbook
 
 from . import convert
 from . import stability_xlsx
+from . import xls_fill
 
 CPK_ITEMS = [   # (파일 이름에 든 낱말, 완제 성적서 항목)
     ("금속성이물(개개)", "metal_each"), ("금속성이물(합계)", "metal_total"),
@@ -55,8 +56,8 @@ def _previous_xls(previous_path, workdir):
     return found
 
 
-def fill_cpk(src_xls, dst_xlsx, values, today):
-    """B10~B44 에 값, K4 에 작성일. 남는 칸은 비운다."""
+def _fill_cpk_xlsx(src_xls, dst_xlsx, values, today):
+    """Excel·LibreOffice 가 없을 때의 대비책 — .xlsx 로 바꿔 값만 채운다(그래프는 사라진다)."""
     tmp = dst_xlsx + ".tmp.xlsx"
     convert.to_xlsx(src_xls, tmp)
     wb = load_workbook(tmp)
@@ -67,6 +68,12 @@ def fill_cpk(src_xls, dst_xlsx, values, today):
     wb.save(dst_xlsx)
     os.remove(tmp)
     return dst_xlsx
+
+
+def fill_cpk(src_xls, dst_xls, values, today):
+    """B10~B44 에 결과값, K4 에 작성일. 서식의 수식·그래프를 그대로 둔 채 .xls 로 저장한다."""
+    xls_fill.fill(src_xls, dst_xls, {"K4": today}, values)
+    return dst_xls
 
 
 def write_cpk_files(folder, data, previous_path, today, lots=None):
@@ -82,11 +89,20 @@ def write_cpk_files(folder, data, previous_path, today, lots=None):
             continue
         vals = [_num((data.coa.get(l) or {}).get("924", {}).get(key)) for l in lots]
         vals = [v for v in vals if v is not None]
-        name = re.sub(r"\.xls$", ".xlsx", os.path.basename(src))
+        name = os.path.basename(src)
         dst = os.path.join(folder, name)
         try:
             fill_cpk(src, dst, vals, today)
             out.append((name, dst))
+        except xls_fill.FillError as error:
+            name = re.sub(r"\.xls$", ".xlsx", name)
+            dst = os.path.join(folder, name)
+            try:                                  # 그래프는 잃지만 값이라도 남긴다
+                _fill_cpk_xlsx(src, dst, vals, today)
+                out.append((name, dst))
+                data.issues.append(("첨부", name, "%s — 그래프 없이 값만 채웠습니다" % error))
+            except Exception as second:
+                data.issues.append(("첨부", name, "Cpk 파일을 만들지 못함: %s" % second))
         except Exception as error:
             data.issues.append(("첨부", name, "Cpk 파일을 만들지 못함: %s" % error))
     shutil.rmtree(work, ignore_errors=True)
