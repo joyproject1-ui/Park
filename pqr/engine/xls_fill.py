@@ -81,9 +81,12 @@ def _with_excel(src, dst, cells, values, levels=()):
                     r"\$([A-Z]+)\$(\d+):\$([A-Z]+)\$\d+",
                     lambda m: "$%s$%s:$%s$%d" % (m.group(1), m.group(2), m.group(3), last),
                     series.Formula)
-        blank = "B%d:B%d" % (FIRST_DATA_ROW + len(values), FIRST_DATA_ROW + ROWS - 1)
+        blanks = ["%s" % ref for ref, v in cells.items() if v is None or v == ""]
         if len(values) < ROWS:                           # 빈 칸 사선 (GMP 공란 없음)
-            edge = ws.Range(blank).Borders(6)            # xlDiagonalUp
+            blanks.append("B%d:B%d" % (FIRST_DATA_ROW + len(values),
+                                       FIRST_DATA_ROW + ROWS - 1))
+        for ref in blanks:
+            edge = ws.Range(ref).Borders(6)              # xlDiagonalUp
             edge.LineStyle, edge.Weight = 1, 2           # xlContinuous, xlThin
         marks = tuple(levels) + (ws.Range("G10").Value, ws.Range("G11").Value)
         upright, frac = _legend_layout(values, marks)
@@ -107,20 +110,20 @@ def _with_excel(src, dst, cells, values, levels=()):
 
 
 # ----------------------------------------------------------- LibreOffice(UNO)
-def _uno_desktop(port):
+def _uno_desktop(port, tries=30):
+    """LibreOffice 대기 창구에 붙는다. 아직 안 떴거나 방금 죽었으면 잠깐 기다렸다 다시."""
     import uno
-    from com.sun.star.connection import NoConnectException
     local = uno.getComponentContext()
     resolver = local.ServiceManager.createInstanceWithContext(
         "com.sun.star.bridge.UnoUrlResolver", local)
     url = ("uno:socket,host=127.0.0.1,port=%d;urp;StarOffice.ComponentContext" % port)
-    for _ in range(30):
+    for _ in range(tries):
         try:
             ctx = resolver.resolve(url)
-        except NoConnectException:
+            return ctx.ServiceManager.createInstanceWithContext(
+                "com.sun.star.frame.Desktop", ctx)
+        except Exception:                     # 연결 거부·끊긴 다리 모두 여기로 온다
             time.sleep(1)
-            continue
-        return ctx.ServiceManager.createInstanceWithContext("com.sun.star.frame.Desktop", ctx)
     return None
 
 
@@ -144,7 +147,7 @@ def _with_uno(src, dst, cells, values, levels=(), port=2103):
         from com.sun.star.chart.ChartLegendExpansion import HIGH as LEGEND_HIGH
     except ImportError:
         return False
-    desktop = _uno_desktop(port)
+    desktop = _uno_desktop(port, tries=2)
     started = None
     if desktop is None:
         started = _soffice_listener(port)
@@ -197,6 +200,9 @@ def _with_uno(src, dst, cells, values, levels=(), port=2103):
         for i in range(len(values), ROWS):
             sheet.getCellByPosition(1, FIRST_DATA_ROW - 1 + i).setPropertyValue(
                 "DiagonalBLTR", line)
+        for ref, value in cells.items():                  # 규격 Min 처럼 비워 둔 칸도
+            if value is None or value == "":
+                sheet.getCellRangeByName(ref).setPropertyValue("DiagonalBLTR", line)
 
         doc.calculateAll()
 
