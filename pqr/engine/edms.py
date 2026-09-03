@@ -78,7 +78,23 @@ def find_form(folder, depth=2):
         found = [p for p in _candidates(place) if is_edms_form(p)]
         if found:
             return max(found, key=os.path.getmtime)
-    return None
+    return shipped_form()
+
+
+SHIPPED_FORM = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "edms_shell.docx")
+
+
+def shipped_form():
+    """프로그램에 든 EDMS 서식 껍데기(목차·머리글·바닥글·쪽 설정만, 본문 없음).
+
+    담당자가 서식을 따로 두지 않아도 '보고서 작성' 이 EDMS 양식으로 나오게 한다. 폴더에 회사
+    서식(.docx)이 있으면 그것이 먼저다 — 서식이 개정되면 공통 폴더에 새 것을 두면 된다.
+    """
+    return SHIPPED_FORM if os.path.isfile(SHIPPED_FORM) and is_edms_form(SHIPPED_FORM) else None
+
+
+def is_shipped(path):
+    return bool(path) and os.path.abspath(path) == os.path.abspath(SHIPPED_FORM)
 
 
 def choose_base(form, previous):

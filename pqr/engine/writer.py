@@ -114,7 +114,8 @@ def write_report(folder, product, period, out_path, today=None, recipe=None, log
     how = convert.to_docx(source, base)
     log_("바탕 문서: %s — %s (%s)" % (os.path.basename(source), why, how))
     if form and source is previous:
-        log_("EDMS 서식: %s — 채운 뒤 이 서식에 옮겨 담음" % os.path.basename(form))
+        log_("EDMS 서식: %s — 채운 뒤 이 서식에 옮겨 담음" % (
+            "프로그램에 든 E-HLF-32 껍데기" if edms.is_shipped(form) else os.path.basename(form)))
     elif not form:
         log_("EDMS 서식 없음 — 제품 폴더나 공통 폴더에 E-HLF-32 서식(.docx)을 두면 그 서식으로 만듭니다")
         data_issue = ("서식", "", "EDMS 결재본 서식(E-HLF-32)이 없어 전년도 양식 그대로 만들었음 — 제품 폴더나 '공통' 폴더에 서식을 두세요")

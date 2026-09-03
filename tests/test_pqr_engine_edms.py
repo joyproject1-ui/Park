@@ -80,11 +80,22 @@ class 서식찾기(unittest.TestCase):
     def test_완성본과_제출본은_서식으로_보지_않는다(self):
         make_docx(os.path.join(self.product, "QC1-7007 완성본.docx"), footer="EHLF-32/Rev.000")
         make_docx(os.path.join(self.product, "제출용 보고서.docx"), footer="EHLF-32/Rev.000")
-        self.assertIsNone(edms.find_form(self.product))
+        got = edms.find_form(self.product)
+        self.assertTrue(edms.is_shipped(got), got)       # 결과물은 건너뛰고 프로그램 껍데기로
 
-    def test_없으면_None(self):
-        self.assertIsNone(edms.find_form(self.product))
+    def test_폴더에_없으면_프로그램에_든_껍데기를_쓴다(self):
+        got = edms.find_form(self.product)
+        self.assertTrue(edms.is_shipped(got), got)
+        self.assertTrue(edms.is_edms_form(got))
         self.assertIsNone(edms.find_form(os.path.join(self.root, "없는폴더")))
+
+    def test_프로그램에_든_껍데기는_본문이_없다(self):
+        d = docx.Document(edms.SHIPPED_FORM)
+        texts = [p.text.strip() for p in d.paragraphs if p.text.strip()]
+        self.assertEqual(texts[0], "목차 (Table of Contents)")
+        self.assertTrue(texts[-1].startswith("1."))
+        self.assertEqual(len(texts), 2)                      # 제품 고유 글이 없다
+        self.assertEqual(len(d.tables), 1)                   # 목차 표뿐
 
     def test_바탕_고르기(self):
         self.assertEqual(edms.choose_base("form.docx", "prev.doc")[0], "form.docx")

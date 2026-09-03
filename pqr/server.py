@@ -829,13 +829,13 @@ class Handler(BaseHTTPRequestHandler):
                 previous = engine_writer.find_previous(folder)
             except Exception:
                 previous = None
-        # 서식은 EDMS 결재본 서식(E-HLF-32)이 먼저다 — 전년도 결재본이 없는 첫해 제품도
-        # 서식만 있으면 엔진이 돈다. 둘 다 없으면 자료 상태 요약본을 만든다.
+        # 엔진은 전년도 결재본이 있을 때만 돈다 — 제품마다 다른 항·표 구조가 거기 있다.
+        # 서식(EDMS 껍데기)만으로는 빈 문서가 나오므로, 결재본이 없으면 자료 상태 요약본을 만든다.
         form = edms_module.find_form(folder)
         based_on = None
         engine_result = None
         issues = []
-        if previous or form:
+        if previous:
             period = self.workspace.data.get("period") or {}
             year = None
             for key in ("from", "to"):

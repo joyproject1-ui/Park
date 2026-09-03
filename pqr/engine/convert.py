@@ -15,11 +15,36 @@ class ConvertError(Exception):
     pass
 
 
+def _powershell(script):
+    """PowerShell 로 COM 자동화를 돌린다 — pywin32 가 없는 PC 에서도 Word·Excel 을 쓸 수 있다."""
+    exe = shutil.which("powershell") or shutil.which("pwsh")
+    if not exe:
+        return False
+    try:
+        run = subprocess.run([exe, "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", script],
+                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=300)
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    return run.returncode == 0
+
+
+def _ps_path(path):
+    return "'" + os.path.abspath(path).replace("'", "''") + "'"
+
+
+def _word_via_powershell(src, dst):
+    script = (
+        "$w = New-Object -ComObject Word.Application; $w.Visible = $false; "
+        "try { $d = $w.Documents.Open(%s, $false, $true); $d.SaveAs2(%s, 16); $d.Close($false) } "
+        "finally { $w.Quit() }" % (_ps_path(src), _ps_path(dst)))
+    return _powershell(script) and os.path.isfile(dst)
+
+
 def _with_word(src, dst):
     try:
         import win32com.client  # pywin32
     except ImportError:
-        return False
+        return _word_via_powershell(src, dst)
     word = win32com.client.DispatchEx("Word.Application")
     word.Visible = False
     try:
@@ -71,11 +96,19 @@ def to_docx(src, dst):
         "'다른 이름으로 저장 → Word 문서(*.docx)' 로 저장해 같은 폴더에 두세요.")
 
 
+def _excel_via_powershell(src, dst):
+    script = (
+        "$x = New-Object -ComObject Excel.Application; $x.Visible = $false; $x.DisplayAlerts = $false; "
+        "try { $b = $x.Workbooks.Open(%s, 0, $true); $b.SaveAs(%s, 51); $b.Close($false) } "
+        "finally { $x.Quit() }" % (_ps_path(src), _ps_path(dst)))
+    return _powershell(script) and os.path.isfile(dst)
+
+
 def _xls_with_excel(src, dst):
     try:
         import win32com.client
     except ImportError:
-        return False
+        return _excel_via_powershell(src, dst)
     excel = win32com.client.DispatchEx("Excel.Application")
     excel.Visible = False
     excel.DisplayAlerts = False
