@@ -429,20 +429,81 @@ def collect_item_files(input_dir, items):
         code = _folder_product_code(folder)   # 공통 폴더는 여기서 None 이 됩니다
         if not code:
             continue
-        found = {}
-        for name in sorted(os.listdir(folder_path)):
-            item_id = match(name)
-            if not item_id:
-                continue
-            path = os.path.join(folder_path, name)
-            if os.path.isdir(path):
-                has_content = any(files for _, _, files in os.walk(path))
-                if not has_content:
-                    continue
-            found.setdefault(item_id, []).append(name)
+        found = item_files_in(folder_path, match)
         if found:
             result[code] = found
     return result
+
+
+def zip_member_name(info):
+    """압축 안 파일 이름 — Windows 가 만든 압축은 한글이 CP437 로 깨져 오므로 되돌립니다."""
+    name = info.filename
+    if not (info.flag_bits & 0x800):          # UTF-8 표시가 없으면 cp949 로 적힌 것
+        try:
+            name = name.encode("cp437").decode("cp949")
+        except (UnicodeEncodeError, UnicodeDecodeError):
+            pass
+    return name.replace("\\", "/").strip("/")
+
+
+def item_files_in(folder_path, match, depth=2):
+    """제품 폴더 하나에서 {항목번호: [이름, ...]} 을 모읍니다.
+
+    담당자는 자료를 세 가지 모양으로 올립니다 — 항 번호 파일("3. 허가증.pdf"), 항 번호
+    폴더("9.2.1 조제 완료 후/"), 그리고 **폴더째 묶은 압축**("디겐타 안연고 2026년 PQR
+    필요 자료.zip"). 마지막 것은 이름에 번호가 없어 그냥 두면 자료가 0% 로 보입니다.
+    번호 없는 압축과 번호 없는 중간 폴더는 지나쳐 그 안을 depth 단계까지 봅니다.
+    번호가 붙은 폴더는 안에 파일이 하나라도 있어야 셉니다 — 빈 폴더는 자료가 아닙니다.
+    """
+    import zipfile
+    found = {}
+    seen = set()
+
+    def add(item_id, label):
+        if (item_id, label) in seen:
+            return
+        seen.add((item_id, label))
+        found.setdefault(item_id, []).append(label)
+
+    def scan_dir(path, prefix, left):
+        for name in sorted(os.listdir(path)):
+            if name.startswith(".") or name.startswith("~$"):
+                continue
+            full = os.path.join(path, name)
+            label = prefix + name
+            item_id = match(name)
+            if os.path.isdir(full):
+                if item_id:
+                    if any(files for _, _, files in os.walk(full)):
+                        add(item_id, label)
+                elif left > 0:
+                    scan_dir(full, label + "/", left - 1)
+                continue
+            if item_id:
+                add(item_id, label)
+            elif name.lower().endswith(".zip") and left > 0:
+                scan_zip(full, label + "/", left - 1)
+
+    def scan_zip(path, prefix, left):
+        try:
+            with zipfile.ZipFile(path) as archive:
+                members = [zip_member_name(info) for info in archive.infolist()
+                           if not info.is_dir()]
+        except (zipfile.BadZipFile, OSError):
+            return
+        for member in members:
+            parts = [part for part in member.split("/") if part]
+            if not parts or parts[0] == "__MACOSX":
+                continue
+            # 번호 없는 폴더는 지나치고, 처음 만나는 번호 붙은 폴더·파일을 그 항으로 칩니다.
+            for i, part in enumerate(parts[:left + 2]):
+                item_id = match(part)
+                if item_id:
+                    add(item_id, prefix + "/".join(parts[:i + 1]))
+                    break
+
+    scan_dir(folder_path, "", depth)
+    return found
 
 
 FINAL_KEYWORDS = ("완성본", "제출")
@@ -683,6 +744,61 @@ def _note_tokens(note):
     return [part.strip() for part in re.split(r"[/,]", note or "") if part.strip()]
 
 
+def _plain_name(text):
+    """제품명 비교용 — 공백과 대소문자 차이를 지웁니다."""
+    return re.sub(r"\s+", "", (text or "")).strip().lower()
+
+
+def reconcile_codes(master, expanded, datasets):
+    """제품 마스터에 없는 제품코드를 같은 제품명의 마스터 코드로 되돌립니다.
+
+    자료 파일이나 폴더에 코드를 잘못 적으면(레보클점안액을 QC1-5041 대신 PRD-001 로 적는
+    식) 그 코드가 마스터에 없는 새 제품처럼 잡혀, 대시보드에 자료 0% 짜리 행이 하나 더
+    생기고 정작 올린 자료는 진짜 제품에 붙지 않습니다. 제품명이 마스터의 한 제품과 정확히
+    같으면 코드 오기로 보고 마스터 코드로 돌립니다 — 제품 마스터가 코드의 근거입니다.
+
+    이름이 마스터의 어느 제품과도 안 맞거나 여러 제품과 겹치면 손대지 않고 알리기만 합니다.
+    (issues, {잘못된 코드: 마스터 코드}) 를 돌려줍니다 — 폴더 이름에서 온 코드로 모아 둔
+    자료(항 번호 파일·최종 결재본)도 이 대응표로 같이 옮겨야 진짜 제품에 붙습니다.
+    """
+    known = set(expanded) | set(master)
+    by_name = {}
+    for source in (expanded, master):        # 마스터 이름이 나중에 덮어써 이깁니다
+        for code, row in source.items():
+            name = _plain_name(row.get("product_name"))
+            if name:
+                by_name.setdefault(name, set()).add(code)
+
+    fixed, unknown = {}, {}
+    for dataset, rows in datasets.items():
+        for row in rows:
+            code = (row.get("product_code") or "").strip()
+            if not code or code in known:
+                continue
+            hits = by_name.get(_plain_name(row.get("product_name"))) or set()
+            if len(hits) == 1:
+                right = next(iter(hits))
+                row["product_code"] = right
+                key = (code, right, row.get("product_name") or "")
+                fixed[key] = fixed.get(key, 0) + 1
+            else:
+                unknown.setdefault(code, row.get("product_name") or "")
+
+    issues = []
+    for (wrong, right, name), count in sorted(fixed.items()):
+        issues.append({
+            "source": "제품 마스터", "row": 0, "field": "product_code", "level": "warn",
+            "message": "제품코드 %s 는 제품 마스터에 없어 같은 제품명(%s)의 %s 로 "
+                       "보았습니다 — 자료 %d 행. 자료 파일이나 폴더 이름의 코드를 "
+                       "고쳐 주세요." % (wrong, name, right, count)})
+    for wrong, name in sorted(unknown.items()):
+        issues.append({
+            "source": "제품 마스터", "row": 0, "field": "product_code", "level": "warn",
+            "message": "제품코드 %s(%s)는 제품 마스터에 없습니다 — 제품이 하나 더 있는 "
+                       "것처럼 보입니다." % (wrong, name or "제품명 없음")})
+    return issues, {wrong: right for wrong, right, _ in fixed}
+
+
 def expand_product_variants(products_meta):
     """연간 계획서 비고에 따라 한 품목을 여러 PQR 건으로 나눕니다.
 
@@ -834,8 +950,21 @@ def build(input_dir=None, files=None, today=None, config=None, period=None):
     presence["unknown"] = [path for path in presence["unknown"]
                            if not matcher(os.path.basename(path))]
 
-    products_meta = expand_product_variants(
-        {row["product_code"]: row for row in datasets.get("products", [])})
+    master_meta = {row["product_code"]: row for row in datasets.get("products", [])}
+    products_meta = expand_product_variants(master_meta)
+    found_issues, remap = reconcile_codes(master_meta, products_meta, datasets)
+    issues.extend(found_issues)
+    for wrong, right in remap.items():
+        # 폴더 이름이 코드였다면 그 폴더에 모아 둔 자료도 같이 옮깁니다.
+        moved = item_files_by_product.pop(wrong, None)
+        if moved:
+            target = item_files_by_product.setdefault(right, {})
+            for item_id, names in moved.items():
+                target.setdefault(item_id, []).extend(
+                    n for n in names if n not in target.get(item_id, []))
+        report = final_reports.pop(wrong, None)
+        if report and right not in final_reports:
+            final_reports[right] = report
     batches = _group(datasets.get("batches", []))
     deviations = _group(datasets.get("deviations", []))
     changes = _group(datasets.get("changes", []))

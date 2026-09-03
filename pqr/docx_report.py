@@ -302,7 +302,7 @@ def _body_for(number, product, quality, records, config):
         return _batches_table(records.get("batches", []))
     # 같은 집계표를 여러 항에 반복해 넣지 않습니다 — 대표 항에만 싣고 나머지 항은
     # 어떤 근거 파일로 확인했는지만 적습니다. 원본은 항마다 서식이 다릅니다.
-    if number == "8.2.1.1":
+    if number == "8.2.1":
         return _records_table(records.get("materials", []),
                               [("자재명", "material_name"), ("Lot No.", "batch_no"),
                                ("공급처 · 제조원", "supplier"), ("시험항목", "test_name"),

@@ -74,20 +74,31 @@ def _walk(folder):
             yield os.path.join(root, name)
 
 
+def _member_name(info):
+    """한글 이름이 CP437 로 깨져 오는 압축이 흔하다 (Windows 가 만든 압축)."""
+    name = info.filename
+    if not (info.flag_bits & 0x800):
+        try:
+            name = name.encode("cp437").decode("cp949")
+        except (UnicodeEncodeError, UnicodeDecodeError):
+            pass
+    return name.replace("\\", "/")
+
+
 def _unzip(path, workdir):
+    """압축을 작업 폴더에 푼다. 안의 폴더 구조는 그대로 둔다 — 폴더째 묶은 압축은
+    '9.2.1 조제 완료 후/…' 처럼 폴더 이름이 항 번호를 들고 있기 때문이다."""
     out = os.path.join(workdir, re.sub(r"[^\w.-]+", "_", os.path.basename(path)))
     os.makedirs(out, exist_ok=True)
     with zipfile.ZipFile(path) as z:
         for info in z.infolist():
-            if info.is_dir() or info.filename.startswith("__MACOSX"):
+            if info.is_dir():
                 continue
-            # 한글 이름이 CP437 로 깨져 오는 압축이 흔하다
-            name = info.filename
-            try:
-                name = name.encode("cp437").decode("cp949")
-            except Exception:
-                pass
-            target = os.path.join(out, os.path.basename(name))
+            parts = [p for p in _member_name(info).split("/") if p not in ("", ".", "..")]
+            if not parts or parts[0] == "__MACOSX":
+                continue
+            target = os.path.join(out, *parts)
+            os.makedirs(os.path.dirname(target), exist_ok=True)
             with open(target, "wb") as h:
                 h.write(z.read(info.filename))
     return out
@@ -97,8 +108,8 @@ def discover(folder, workdir=None, depth=3):
     """{항: [파일 경로]} — 폴더 아래 파일·폴더·압축을 항 번호로 나눈다.
 
     번호가 붙은 폴더(`13. 안정성 시험`) 안의 파일은 이름에 번호가 없어도 그 항으로 친다.
-    번호가 없는 중간 폴더(`필요 자료`)는 그냥 지나쳐 안쪽을 계속 본다 —
-    담당자가 자료를 한 단계 더 접어 두는 일이 흔하다.
+    번호가 없는 중간 폴더(`필요 자료`)와 번호 없는 압축(폴더째 묶은 것)은 그냥 지나쳐
+    안쪽을 계속 본다 — 담당자가 자료를 한 단계 더 접어 두는 일이 흔하다.
     """
     workdir = workdir or tempfile.mkdtemp(prefix="pqr-engine-")
     items = {}
@@ -115,10 +126,12 @@ def discover(folder, workdir=None, depth=3):
                 elif left > 0:                    # 번호 없는 중간 폴더는 지나쳐 들어간다
                     scan(path, left - 1)
                 continue
+            is_zip = name.lower().endswith(".zip")
             if not item:
+                if is_zip and left > 0:           # 번호 없는 압축 = 폴더째 묶은 것
+                    scan(_unzip(path, workdir), left - 1)
                 continue
-            paths = (list(_walk(_unzip(path, workdir)))
-                     if name.lower().endswith(".zip") else [path])
+            paths = list(_walk(_unzip(path, workdir))) if is_zip else [path]
             items.setdefault(item, []).extend(paths)
 
     scan(folder, depth)

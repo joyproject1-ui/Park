@@ -47,6 +47,41 @@ def safe_filename(name, allowed=None):
     return base
 
 
+def extract_bundle(archive_path, folder, limit=None):
+    """폴더째 묶은 압축을 제품 폴더에 풉니다. 푼 파일의 상대 경로 목록을 돌려줍니다.
+
+    압축이 폴더 하나로 감싸져 있으면("디겐타 안연고 필요 자료/3. 허가증.pdf") 그 겉 폴더는
+    벗깁니다 — 수집 현황과 보고서 작성은 제품 폴더 바로 아래의 항 번호를 봅니다.
+    경로에 '..' 이 든 항목과 __MACOSX 는 버리고, 푼 용량이 한도를 넘으면 중단합니다.
+    """
+    import zipfile
+    limit = limit or MAX_UPLOAD * 20
+    with zipfile.ZipFile(archive_path) as archive:
+        members = []
+        for info in archive.infolist():
+            if info.is_dir():
+                continue
+            parts = [part for part in build_module.zip_member_name(info).split("/") if part]
+            if not parts or parts[0] == "__MACOSX" or any(part in (".", "..") for part in parts):
+                continue
+            members.append((info, parts))
+        if not members:
+            raise UploadError("압축 안에 파일이 없습니다: %s" % os.path.basename(archive_path))
+        if sum(info.file_size for info, _ in members) > limit:
+            raise UploadError("압축을 푼 용량이 너무 큽니다 (최대 %d MB)." % (limit // 1024 // 1024))
+        tops = {parts[0] for _, parts in members}
+        strip = 1 if len(tops) == 1 and all(len(parts) > 1 for _, parts in members) else 0
+        written = []
+        for info, parts in members:
+            parts = [_UNSAFE.sub("_", part) for part in parts[strip:]]
+            target = os.path.join(folder, *parts)
+            os.makedirs(os.path.dirname(target), exist_ok=True)
+            with open(target, "wb") as handle:
+                handle.write(archive.read(info.filename))
+            written.append("/".join(parts))
+    return written
+
+
 def parse_multipart(content_type, body):
     """multipart/form-data 를 {필드명: 값 또는 (파일명, 바이트)} 로 바꿉니다.
 
@@ -470,15 +505,26 @@ class Workspace(object):
         if not base:
             raise UploadError("허용되지 않는 파일 형식입니다: %s" % filename)
         target = os.path.join(folder, base)
+        matcher = build_module.item_matcher(self.data["items"])
+        extracted = []
         with self.lock:
             with open(target, "wb") as handle:
                 handle.write(payload)
+            if base.lower().endswith(".zip") and not matcher(base):
+                # 항 번호 없는 압축 = 담당자가 자료 폴더째 묶은 것. 제품 폴더에 풀어
+                # 두어야 '3. 허가증.pdf' 처럼 항 번호로 자료가 잡힌다.
+                extracted = extract_bundle(target, folder)
+                os.remove(target)
         if rebuild:
             self.rebuild()
-        matcher = build_module.item_matcher(self.data["items"])
-        return {"saved": os.path.relpath(target, self.input_dir),
-                "folder": os.path.abspath(folder),
-                "name": base, "item": matcher(base) or ""}
+        result = {"saved": os.path.relpath(target, self.input_dir),
+                  "folder": os.path.abspath(folder),
+                  "name": base, "item": matcher(base) or ""}
+        if extracted:
+            result["extracted"] = extracted
+            result["items"] = sorted({matcher(part) for path in extracted
+                                      for part in path.split("/") if matcher(part)})
+        return result
 
     def save_upload(self, dataset, code, filename, payload, replace=True):
         """검증한 뒤에만 제품(또는 공통) 폴더에 저장하고 다시 집계합니다.
