@@ -5,6 +5,7 @@
 그래프가 사라지므로, 엑셀(Windows) 이나 LibreOffice 를 시켜 원래 형식 그대로 채운다.
 서식의 그래프는 11개 Lot 까지만 잡혀 있어 Lot 수에 맞춰 범위를 늘린다.
 """
+import math
 import os
 import re
 import shutil
@@ -28,17 +29,31 @@ def _last_row(n):
     return HEAD_ROW + max(n, 1)
 
 
-def _legend_fraction(values, levels):
-    """범례를 그래프 세로 어디에 둘지 — 선이 지나가지 않는 가장 넓은 빈 띠의 한가운데.
+def _axis_max(top):
+    """엑셀이 잡을 세로축 최댓값 어림 — 눈금 간격의 배수로 올린다."""
+    if top <= 0:
+        return 1.0
+    step = 10 ** int(math.floor(math.log10(top))) / 5.0
+    return math.ceil(top / step) * step
 
-    결재본도 결과선과 규격선 사이의 빈 자리에 범례를 둔다. 위에서부터의 비율을 돌려준다.
+
+def _legend_layout(values, levels):
+    """범례 자리 — (윗변을 기준으로 잡을지, 위에서 몇 % 자리인지).
+
+    결재본대로 범례는 늘 오른쪽에 세로로 세운다. 결과선이 위쪽에 있으면 가장 낮은 선
+    바로 아래에 윗변을 맞추고, 바닥에 깔려 있으면 결과선과 규격선 사이 빈 띠 한가운데에 둔다.
     """
-    pts = sorted(set([0.0] + [float(v) for v in values]
-                     + [float(x) for x in levels if isinstance(x, (int, float))]))
-    axis = (max(pts) * 1.15) or 1.0
-    pts.append(axis)
-    low, high = max(zip(pts, pts[1:]), key=lambda ab: ab[1] - ab[0])
-    return (axis - (low + high) / 2.0) / axis
+    marks = [float(v) for v in values]
+    marks += [float(x) for x in levels if isinstance(x, (int, float))]
+    marks = sorted(set([0.0] + marks))
+    axis = _axis_max(max(marks))
+    mean = sum(values) / float(len(values)) if values else 0.0
+    if mean > 0.1 * axis:                       # 결과가 위쪽 — 가장 낮은 선 바로 아래
+        low = min([v for v in marks if v > 0] or [axis])
+        return True, min(max((axis - low) / axis + 0.05, 0.0), 1.0)
+    pts = marks + [axis]                        # 결과가 바닥 — 가장 넓은 빈 띠 한가운데
+    a, b = max(zip(pts, pts[1:]), key=lambda ab: ab[1] - ab[0])
+    return False, (axis - (a + b) / 2.0) / axis
 
 
 # ---------------------------------------------------------------- Excel (COM)
@@ -70,13 +85,16 @@ def _with_excel(src, dst, cells, values, levels=()):
         if len(values) < ROWS:                           # 빈 칸 사선 (GMP 공란 없음)
             edge = ws.Range(blank).Borders(6)            # xlDiagonalUp
             edge.LineStyle, edge.Weight = 1, 2           # xlContinuous, xlThin
-        levels = tuple(levels) + (ws.Range("G10").Value, ws.Range("G11").Value)
-        frac = _legend_fraction(values, levels)
+        marks = tuple(levels) + (ws.Range("G10").Value, ws.Range("G11").Value)
+        upright, frac = _legend_layout(values, marks)
         for i in range(1, ws.ChartObjects().Count + 1):
             chart = ws.ChartObjects(i).Chart
             try:
                 plot, legend = chart.PlotArea, chart.Legend
-                top = plot.Top + plot.Height * frac - legend.Height / 2.0
+                legend.Width = min(legend.Width, plot.Width * 0.22)
+                legend.Left = plot.Left + plot.Width - legend.Width - 4
+                top = (plot.Top + plot.Height * frac if upright
+                       else plot.Top + plot.Height * frac - legend.Height / 2.0)
                 legend.Top = max(plot.Top, min(top, plot.Top + plot.Height - legend.Height))
             except Exception:
                 pass
@@ -123,6 +141,7 @@ def _with_uno(src, dst, cells, values, levels=(), port=2103):
         from com.sun.star.beans import PropertyValue
         from com.sun.star.table import BorderLine2, CellRangeAddress
         from com.sun.star.awt import Point
+        from com.sun.star.chart.ChartLegendExpansion import HIGH as LEGEND_HIGH
     except ImportError:
         return False
     desktop = _uno_desktop(port)
@@ -183,13 +202,16 @@ def _with_uno(src, dst, cells, values, levels=(), port=2103):
 
         marks = tuple(levels) + (sheet.getCellRangeByName("G10").getValue(),
                                  sheet.getCellRangeByName("G11").getValue())
-        frac = _legend_fraction(values, marks)            # 범례는 선이 없는 빈 띠에
+        upright, frac = _legend_layout(values, marks)     # 범례는 선을 가리지 않는 자리에
         for name in sheet.Charts.ElementNames:
             try:
                 obj = sheet.Charts.getByName(name).EmbeddedObject
                 dia, leg = obj.getDiagram(), obj.getLegend()
+                leg.Expansion = LEGEND_HIGH              # 오른쪽에 세로로 세운다
+                leg = obj.getLegend()
                 x = dia.Position.X + dia.Size.Width - leg.Size.Width - 150
-                y = int(dia.Position.Y + dia.Size.Height * frac - leg.Size.Height / 2)
+                y = int(dia.Position.Y + dia.Size.Height * frac
+                        - (0 if upright else leg.Size.Height / 2))
                 y = min(max(y, dia.Position.Y),
                         dia.Position.Y + dia.Size.Height - leg.Size.Height)
                 leg.setPosition(Point(max(x, dia.Position.X), y))

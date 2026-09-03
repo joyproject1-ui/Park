@@ -141,19 +141,32 @@ class XlsFillTest(unittest.TestCase):
         self.assertEqual(xls_fill._last_row(1), 10)
         self.assertEqual(xls_fill._last_row(0), 10)      # Lot 이 없어도 한 행은 남긴다
 
-    def test_범례는_선이_없는_빈_띠_가운데에(self):
-        from pqr.engine.xls_fill import _legend_fraction as frac
-        # 함량: 결과 100~110, 규격 90·110 → 0~90 이 빈 띠라 아래쪽
-        self.assertGreater(frac([102.8, 107.4], (90, "N/A", 110, 110.31, 101.19)), 0.5)
-        # 금속성이물: 결과 0~2, 규격 50 → 그 사이가 빈 띠
-        self.assertGreater(frac([0.0, 1.0, 2.0], (None, None, 50, 2.35, 0.0)), 0.4)
-        self.assertLess(frac([0.0, 1.0, 2.0], (None, None, 50, 2.35, 0.0)), 0.8)
+    def test_세로축_최댓값_어림(self):
+        from pqr.engine.xls_fill import _axis_max
+        self.assertEqual(_axis_max(110.31), 120.0)      # 함량
+        self.assertEqual(_axis_max(79.42), 80.0)        # 입자도
+        self.assertEqual(_axis_max(1.0), 1.0)
+
+    def test_결과선이_위쪽이면_가장_낮은_선_아래(self):
+        from pqr.engine.xls_fill import _legend_layout as layout
+        top, frac = layout([102.8, 107.4], (90, "N/A", 110, 110.31, 101.19))
+        self.assertTrue(top)                            # 윗변 기준
+        self.assertAlmostEqual(frac, 0.30, places=2)    # LSL 90 바로 아래
+        top, frac = layout([45.0, 67.0], (None, None, 75, 79.42, 0.0))
+        self.assertTrue(top)
+        self.assertAlmostEqual(frac, 0.4875, places=3)  # 결과 최솟값 45 바로 아래
+
+    def test_결과선이_바닥이면_빈_띠_가운데(self):
+        from pqr.engine.xls_fill import _legend_layout as layout
+        top, frac = layout([0.0, 1.0, 2.0], (None, None, 50, 2.35, 0.0))
+        self.assertFalse(top)                           # 가운데 기준
+        self.assertTrue(0.3 < frac < 0.7, frac)
 
     def test_범례_비율은_항상_0과_1_사이(self):
-        from pqr.engine.xls_fill import _legend_fraction as frac
+        from pqr.engine.xls_fill import _legend_layout as layout
         for values, levels in (([], ()), ([0.0], (0.0,)), ([5.0], (None, "N/A")),
                                ([1.0, 2.0, 3.0], (10,))):
-            got = frac(values, levels)
+            _, got = layout(values, levels)
             self.assertTrue(0.0 <= got <= 1.0, (values, levels, got))
 
     def test_계열_수식의_끝행만_바뀐다(self):
