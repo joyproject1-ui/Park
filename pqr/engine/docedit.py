@@ -778,11 +778,24 @@ def trim_row_heights(document, floor=340, skip=()):
     return n
 
 
+NO_BORDER = ("nil", "none")
+
+
 def _has_diag(tc):
+    """칸에 사선이 실제로 그어져 있는지 본다.
+
+    Word 는 '사선 없음'도 <w:tr2bl w:val="nil"/> 로 적어 둔다. 요소가 있는지만 보면
+    사선이 없는 칸을 있다고 잘못 읽으므로 w:val 까지 확인한다.
+    """
     pr = tc.find(qn("w:tcPr"))
     b = pr.find(qn("w:tcBorders")) if pr is not None else None
-    return b is not None and (b.find(qn("w:tr2bl")) is not None
-                              or b.find(qn("w:tl2br")) is not None)
+    if b is None:
+        return False
+    for tag in ("w:tr2bl", "w:tl2br"):
+        e = b.find(qn(tag))
+        if e is not None and (e.get(qn("w:val")) or "single") not in NO_BORDER:
+            return True
+    return False
 
 
 def diag_all_empty(document, skip=()):
