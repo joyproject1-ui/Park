@@ -169,7 +169,7 @@ def build(form, out, product, lots, item="함량(%)",
     """서식(form)을 복제해 lots 를 채운 파일을 out 에 만든다.
 
     lots: [(제조번호, {"Initial": 100.5, "12M": 97.5, ...}), ...]
-    작성자·작성일은 서명란이므로 기본값은 빈칸이다.
+    작성자·작성일은 보고서 본문의 작성자·작성일자와 같게 넣는다(기본값은 빈칸).
     """
     zin = zipfile.ZipFile(form)
     names = zin.namelist()

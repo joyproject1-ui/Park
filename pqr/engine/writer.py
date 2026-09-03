@@ -86,7 +86,7 @@ def write_report(folder, product, period, out_path, today=None, recipe=None, log
         attachments += excel_attach.write_cpk_files(os.path.dirname(out_path), data, previous, day)
         attachments += excel_attach.write_stability_workbook(
             os.path.dirname(out_path), data, product, day,
-            input_dir=os.path.dirname(os.path.abspath(folder)))
+            input_dir=os.path.dirname(os.path.abspath(folder)), report_path=out_path)
         log_("첨부 엑셀: %s" % ", ".join(n for n, _ in attachments))
     except Exception as error:
         data.issues.append(("첨부", "", "첨부 엑셀 생성 실패: %s" % error))

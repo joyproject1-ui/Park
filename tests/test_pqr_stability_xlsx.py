@@ -95,3 +95,40 @@ class GroupTest(unittest.TestCase):
     def test_빈_값(self):
         from pqr.engine.excel_attach import _grouped
         self.assertEqual(_grouped({}), [])
+
+
+DOC = (
+    '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body>'
+    '<w:tbl>'
+    '<w:tr><w:tc><w:p><w:r><w:t>구 분</w:t></w:r></w:p></w:tc>'
+    '<w:tc><w:p><w:r><w:t>성 명</w:t></w:r></w:p></w:tc></w:tr>'
+    '<w:tr><w:tc><w:p><w:r><w:t>작 성 (Written by)</w:t></w:r></w:p></w:tc></w:tr>'
+    '<w:tr><w:tc><w:p><w:r><w:t>품질보증1팀</w:t></w:r></w:p></w:tc>'
+    '<w:tc><w:p><w:r><w:t>김 현</w:t></w:r><w:r><w:t> 수</w:t></w:r></w:p></w:tc></w:tr>'
+    '</w:tbl></w:body></w:document>'
+)
+
+
+class WrittenByTest(unittest.TestCase):
+    def _docx(self, document=DOC):
+        import os
+        import tempfile
+        import zipfile
+        path = os.path.join(tempfile.mkdtemp(prefix="pqr-doc-"), "r.docx")
+        with zipfile.ZipFile(path, "w") as z:
+            z.writestr("word/document.xml", document)
+        return path
+
+    def test_작성자를_읽는다(self):
+        from pqr.engine.excel_attach import written_by
+        self.assertEqual(written_by(self._docx()), "김현수")
+
+    def test_없는_파일은_빈_문자열(self):
+        from pqr.engine.excel_attach import written_by
+        self.assertEqual(written_by("/없는/경로.docx"), "")
+        self.assertEqual(written_by(None), "")
+
+    def test_작성_행이_없으면_빈_문자열(self):
+        from pqr.engine.excel_attach import written_by
+        doc = DOC.replace("작 성 (Written by)", "검 토 (Reviewed by)")
+        self.assertEqual(written_by(self._docx(doc)), "")
