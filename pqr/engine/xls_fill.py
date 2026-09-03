@@ -10,6 +10,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
 import time
 
 FIRST_DATA_ROW = 10          # B10 부터 결과값
@@ -27,8 +28,21 @@ def _last_row(n):
     return HEAD_ROW + max(n, 1)
 
 
+def _legend_fraction(values, levels):
+    """범례를 그래프 세로 어디에 둘지 — 선이 지나가지 않는 가장 넓은 빈 띠의 한가운데.
+
+    결재본도 결과선과 규격선 사이의 빈 자리에 범례를 둔다. 위에서부터의 비율을 돌려준다.
+    """
+    pts = sorted(set([0.0] + [float(v) for v in values]
+                     + [float(x) for x in levels if isinstance(x, (int, float))]))
+    axis = (max(pts) * 1.15) or 1.0
+    pts.append(axis)
+    low, high = max(zip(pts, pts[1:]), key=lambda ab: ab[1] - ab[0])
+    return (axis - (low + high) / 2.0) / axis
+
+
 # ---------------------------------------------------------------- Excel (COM)
-def _with_excel(src, dst, cells, values):
+def _with_excel(src, dst, cells, values, levels=()):
     try:
         import win32com.client
     except ImportError:
@@ -52,6 +66,20 @@ def _with_excel(src, dst, cells, values):
                     r"\$([A-Z]+)\$(\d+):\$([A-Z]+)\$\d+",
                     lambda m: "$%s$%s:$%s$%d" % (m.group(1), m.group(2), m.group(3), last),
                     series.Formula)
+        blank = "B%d:B%d" % (FIRST_DATA_ROW + len(values), FIRST_DATA_ROW + ROWS - 1)
+        if len(values) < ROWS:                           # 빈 칸 사선 (GMP 공란 없음)
+            edge = ws.Range(blank).Borders(6)            # xlDiagonalUp
+            edge.LineStyle, edge.Weight = 1, 2           # xlContinuous, xlThin
+        levels = tuple(levels) + (ws.Range("G10").Value, ws.Range("G11").Value)
+        frac = _legend_fraction(values, levels)
+        for i in range(1, ws.ChartObjects().Count + 1):
+            chart = ws.ChartObjects(i).Chart
+            try:
+                plot, legend = chart.PlotArea, chart.Legend
+                top = plot.Top + plot.Height * frac - legend.Height / 2.0
+                legend.Top = max(plot.Top, min(top, plot.Top + plot.Height - legend.Height))
+            except Exception:
+                pass
         wb.Application.CalculateFull()
         wb.SaveAs(os.path.abspath(dst), FileFormat=56)        # xlExcel8 (.xls)
         wb.Close(False)
@@ -89,11 +117,12 @@ def _soffice_listener(port):
         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 
-def _with_uno(src, dst, cells, values, port=2103):
+def _with_uno(src, dst, cells, values, levels=(), port=2103):
     try:
         import uno
         from com.sun.star.beans import PropertyValue
-        from com.sun.star.table import CellRangeAddress
+        from com.sun.star.table import BorderLine2, CellRangeAddress
+        from com.sun.star.awt import Point
     except ImportError:
         return False
     desktop = _uno_desktop(port)
@@ -112,8 +141,7 @@ def _with_uno(src, dst, cells, values, port=2103):
         return p
 
     # 한글·공백이 든 경로는 LibreOffice 의 형식 인식이 실패한다 — ASCII 이름으로 다룬다.
-    work = os.path.join(os.path.dirname(os.path.abspath(dst)), "_cpk_work")
-    os.makedirs(work, exist_ok=True)
+    work = tempfile.mkdtemp(prefix="pqr-cpk-")
     plain_src = os.path.join(work, "in.xls")
     plain_dst = os.path.join(work, "out.xls")
     shutil.copyfile(src, plain_src)
@@ -144,7 +172,29 @@ def _with_uno(src, dst, cells, values, port=2103):
                 a.EndColumn, a.EndRow = c2, last
                 areas.append(a)
             chart.Ranges = tuple(areas)
+
+        line = BorderLine2()                              # 빈 칸 사선 (GMP 공란 없음)
+        line.LineStyle, line.LineWidth, line.Color = 0, 18, 0
+        for i in range(len(values), ROWS):
+            sheet.getCellByPosition(1, FIRST_DATA_ROW - 1 + i).setPropertyValue(
+                "DiagonalBLTR", line)
+
         doc.calculateAll()
+
+        marks = tuple(levels) + (sheet.getCellRangeByName("G10").getValue(),
+                                 sheet.getCellRangeByName("G11").getValue())
+        frac = _legend_fraction(values, marks)            # 범례는 선이 없는 빈 띠에
+        for name in sheet.Charts.ElementNames:
+            try:
+                obj = sheet.Charts.getByName(name).EmbeddedObject
+                dia, leg = obj.getDiagram(), obj.getLegend()
+                x = dia.Position.X + dia.Size.Width - leg.Size.Width - 150
+                y = int(dia.Position.Y + dia.Size.Height * frac - leg.Size.Height / 2)
+                y = min(max(y, dia.Position.Y),
+                        dia.Position.Y + dia.Size.Height - leg.Size.Height)
+                leg.setPosition(Point(max(x, dia.Position.X), y))
+            except Exception:
+                pass
         if os.path.exists(plain_dst):
             os.remove(plain_dst)
         doc.storeToURL(uno.systemPathToFileUrl(plain_dst),
@@ -159,9 +209,13 @@ def _with_uno(src, dst, cells, values, port=2103):
 
 
 def fill(src, dst, cells, values):
-    """src(.xls) 서식에 cells 와 결과값을 채워 dst(.xls) 로 저장한다. 쓴 방법을 돌려준다."""
-    if sys.platform == "win32" and _with_excel(src, dst, cells, values):
+    """src(.xls) 서식에 cells 와 결과값을 채워 dst(.xls) 로 저장한다. 쓴 방법을 돌려준다.
+
+    빈 결과 칸에는 사선을, 범례는 자료를 가리지 않는 자리에 놓는다.
+    """
+    levels = tuple(cells.get(ref) for ref in ("N6", "O6", "P6"))
+    if sys.platform == "win32" and _with_excel(src, dst, cells, values, levels):
         return "excel"
-    if _with_uno(src, dst, cells, values):
+    if _with_uno(src, dst, cells, values, levels):
         return "soffice"
     raise FillError("Cpk 계산 파일을 채우려면 Excel 또는 LibreOffice 가 필요합니다.")

@@ -68,7 +68,7 @@ class ChartTest(unittest.TestCase):
         out = S._rebuild_chart(CHART.encode("utf-8"),
                                "함량", [("OEV301", {"Initial": 100.5})], 90, 110).decode("utf-8")
         self.assertIn("<c:v>100.5</c:v>", out)
-        self.assertEqual(out.count("#N/A"), 9)                 # 10 시점 중 9 개가 빈칸
+        self.assertEqual(out.count("#N/A"), 7)                 # 8 시점 중 7 개가 빈칸
 
     def test_숨은_계열_목록은_지운다(self):
         out = S._rebuild_chart(CHART.encode("utf-8"),
@@ -140,6 +140,21 @@ class XlsFillTest(unittest.TestCase):
         self.assertEqual(xls_fill._last_row(17), 26)     # 9 행 머리 + 17 Lot
         self.assertEqual(xls_fill._last_row(1), 10)
         self.assertEqual(xls_fill._last_row(0), 10)      # Lot 이 없어도 한 행은 남긴다
+
+    def test_범례는_선이_없는_빈_띠_가운데에(self):
+        from pqr.engine.xls_fill import _legend_fraction as frac
+        # 함량: 결과 100~110, 규격 90·110 → 0~90 이 빈 띠라 아래쪽
+        self.assertGreater(frac([102.8, 107.4], (90, "N/A", 110, 110.31, 101.19)), 0.5)
+        # 금속성이물: 결과 0~2, 규격 50 → 그 사이가 빈 띠
+        self.assertGreater(frac([0.0, 1.0, 2.0], (None, None, 50, 2.35, 0.0)), 0.4)
+        self.assertLess(frac([0.0, 1.0, 2.0], (None, None, 50, 2.35, 0.0)), 0.8)
+
+    def test_범례_비율은_항상_0과_1_사이(self):
+        from pqr.engine.xls_fill import _legend_fraction as frac
+        for values, levels in (([], ()), ([0.0], (0.0,)), ([5.0], (None, "N/A")),
+                               ([1.0, 2.0, 3.0], (10,))):
+            got = frac(values, levels)
+            self.assertTrue(0.0 <= got <= 1.0, (values, levels, got))
 
     def test_계열_수식의_끝행만_바뀐다(self):
         import re
@@ -243,3 +258,23 @@ class DiagonalStyleTest(unittest.TestCase):
         twice, second = S.diagonal_styles(once, (0, 1))
         self.assertEqual(first, second)
         self.assertEqual(once, twice)          # 두 번 돌려도 늘어나지 않는다
+
+
+class PointsShownTest(unittest.TestCase):
+    def test_기본은_36M_까지(self):
+        self.assertEqual(S.points_shown([("A", {"Initial": 100.0})]), 8)
+        self.assertEqual(S.points_shown([("A", {"Initial": 100.0, "36M": 101.0})]), 8)
+
+    def test_36M_뒤에_결과가_있으면_늘린다(self):
+        self.assertEqual(S.points_shown([("A", {"48M": 99.0})]), 9)
+        self.assertEqual(S.points_shown([("A", {"Initial": 1.0}), ("B", {"60M": 2.0})]), 10)
+
+    def test_Lot_이_없어도_36M_까지(self):
+        self.assertEqual(S.points_shown([]), 8)
+
+    def test_그래프_범위가_36M_열까지_잡힌다(self):
+        lots = [("OEV301", {"Initial": 100.5, "36M": 102.8})]
+        out = S._rebuild_chart(CHART.encode("utf-8"), "함량", lots, 90, 110).decode("utf-8")
+        self.assertIn("함량!$C$72:$J$72", out)          # J = 36M
+        self.assertIn('<c:ptCount val="8"/>', out)
+        self.assertNotIn("$L$71", out)

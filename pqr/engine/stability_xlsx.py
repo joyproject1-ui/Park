@@ -25,6 +25,7 @@ FIRST_ROW = 38            # 제조번호·결과 첫 행
 ROWS = 30                 # 서식이 가진 행 수
 MIRROR_ROW = 72           # 그래프가 참조하는 미러 행 (=B38 …)
 LCL_ROW, UCL_ROW = 103, 104
+DEFAULT_POINTS = 8        # 그래프에 기본으로 그리는 시점 수 (Initial ~ 36M)
 LOT_STYLE = 5             # 제조번호 칸 서식
 VALUE_STYLE = 6           # 결과값 칸 서식
 
@@ -146,16 +147,28 @@ def diagonal_styles(styles_xml, sources):
     return xml.encode("utf-8"), mapping
 
 
-def _cat(sheet):
-    pts = "".join('<c:pt idx="%d"><c:v>%s</c:v></c:pt>' % (i, p) for i, p in enumerate(POINTS))
-    return ('<c:cat><c:strRef><c:f>%s!$C$71:$L$71</c:f><c:strCache>'
-            '<c:ptCount val="10"/>%s</c:strCache></c:strRef></c:cat>' % (sheet, pts))
+def points_shown(lots):
+    """그래프에 그릴 시점 수 — 기본 36M 까지, 그 뒤 결과가 있으면 거기까지 늘린다."""
+    last = DEFAULT_POINTS
+    for _, vals in lots:
+        for k, p in enumerate(POINTS):
+            if vals.get(p) is not None:
+                last = max(last, k + 1)
+    return last
 
 
-def _ser(sheet, i, row, name, values):
+def _cat(sheet, n):
+    pts = "".join('<c:pt idx="%d"><c:v>%s</c:v></c:pt>' % (i, p)
+                  for i, p in enumerate(POINTS[:n]))
+    return ('<c:cat><c:strRef><c:f>%s!$C$71:$%s$71</c:f><c:strCache>'
+            '<c:ptCount val="%d"/>%s</c:strCache></c:strRef></c:cat>'
+            % (sheet, COLS[n - 1], n, pts))
+
+
+def _ser(sheet, i, row, name, values, n):
     color = COLORS[i % len(COLORS)]
     pts = []
-    for k, p in enumerate(POINTS):
+    for k, p in enumerate(POINTS[:n]):
         v = values.get(p)
         pts.append('<c:pt idx="%d"><c:v>%s</c:v></c:pt>'
                    % (k, "#N/A" if not isinstance(v, (int, float)) else v))
@@ -168,15 +181,15 @@ def _ser(sheet, i, row, name, values):
         '<c:marker><c:symbol val="circle"/><c:size val="5"/><c:spPr>'
         '<a:solidFill>%s</a:solidFill><a:ln w="9525"><a:solidFill>%s</a:solidFill></a:ln>'
         '<a:effectLst/></c:spPr></c:marker>%s'
-        '<c:val><c:numRef><c:f>%s!$C$%d:$L$%d</c:f><c:numCache>'
-        '<c:formatCode>0.0_);[Red]\\(0.0\\)</c:formatCode><c:ptCount val="10"/>%s'
+        '<c:val><c:numRef><c:f>%s!$C$%d:$%s$%d</c:f><c:numCache>'
+        '<c:formatCode>0.0_);[Red]\\(0.0\\)</c:formatCode><c:ptCount val="%d"/>%s'
         '</c:numCache></c:numRef></c:val><c:smooth val="0"/></c:ser>'
-        % (i, i, sheet, row, _esc(name), color, color, color, _cat(sheet),
-           sheet, row, row, "".join(pts)))
+        % (i, i, sheet, row, _esc(name), color, color, color, _cat(sheet, n),
+           sheet, row, COLS[n - 1], row, n, "".join(pts)))
 
 
-def _limit(sheet, idx, row, name, value, rgb):
-    pts = "".join('<c:pt idx="%d"><c:v>%s</c:v></c:pt>' % (k, value) for k in range(10))
+def _limit(sheet, idx, row, name, value, rgb, n):
+    pts = "".join('<c:pt idx="%d"><c:v>%s</c:v></c:pt>' % (k, value) for k in range(n))
     return (
         '<c:ser><c:idx val="%d"/><c:order val="%d"/>'
         '<c:tx><c:strRef><c:f>%s!$B$%d</c:f><c:strCache><c:ptCount val="1"/>'
@@ -184,10 +197,11 @@ def _limit(sheet, idx, row, name, value, rgb):
         '<c:spPr><a:ln w="28575" cap="rnd"><a:solidFill><a:srgbClr val="%s"/></a:solidFill>'
         '<a:prstDash val="sysDash"/><a:round/></a:ln><a:effectLst/></c:spPr>'
         '<c:marker><c:symbol val="none"/></c:marker>%s'
-        '<c:val><c:numRef><c:f>%s!$C$%d:$L$%d</c:f><c:numCache>'
-        '<c:formatCode>0;\\-0;;@</c:formatCode><c:ptCount val="10"/>%s'
+        '<c:val><c:numRef><c:f>%s!$C$%d:$%s$%d</c:f><c:numCache>'
+        '<c:formatCode>0;\\-0;;@</c:formatCode><c:ptCount val="%d"/>%s'
         '</c:numCache></c:numRef></c:val><c:smooth val="0"/></c:ser>'
-        % (idx, idx, sheet, row, _esc(name), rgb, _cat(sheet), sheet, row, row, pts))
+        % (idx, idx, sheet, row, _esc(name), rgb, _cat(sheet, n),
+           sheet, row, COLS[n - 1], row, n, pts))
 
 
 def _rebuild_chart(xml_bytes, sheet, lots, lcl, ucl):
@@ -203,10 +217,11 @@ def _rebuild_chart(xml_bytes, sheet, lots, lcl, ucl):
         line.remove(s)
     for ext in line.findall(C + "extLst"):      # 숨겨 둔 계열 목록은 버린다
         line.remove(ext)
-    blocks = [_ser(sheet, i, MIRROR_ROW + i, name, vals)
+    n = points_shown(lots)
+    blocks = [_ser(sheet, i, MIRROR_ROW + i, name, vals, n)
               for i, (name, vals) in enumerate(lots[:ROWS])]
-    blocks.append(_limit(sheet, 30, LCL_ROW, "하한관리\n기준(LCL)", lcl, "C00000"))
-    blocks.append(_limit(sheet, 31, UCL_ROW, "상한관리\n기준(UCL)", ucl, "0000FF"))
+    blocks.append(_limit(sheet, 30, LCL_ROW, "하한관리\n기준(LCL)", lcl, "C00000", n))
+    blocks.append(_limit(sheet, 31, UCL_ROW, "상한관리\n기준(UCL)", ucl, "0000FF", n))
     for off, b in enumerate(blocks):
         el = etree.fromstring('<root xmlns:c="%s" xmlns:a="%s">%s</root>'
                               % (NS_C, NS_A, b))[0]
