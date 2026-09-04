@@ -75,6 +75,48 @@ def _doc_from_zip(zip_path, workdir):
         return target
 
 
+def _plain(text):
+    return re.sub(r"[\s()（）\[\]·ㆍ・,.-]", "", text or "")
+
+
+def other_product(base_docx, product, shown=None):
+    """전년도 결재본이 이 제품 것이 아니면 그 이유 문장을, 맞으면 None 을 돌려준다.
+
+    제품명(계획서 이름)의 앞 네 글자나 제품코드가 머리글·본문 앞부분에 있어야 한다.
+    '퀴노비드안연고' 결재본으로 '디겐타안연고' 를 만드는 일을 막는다(담당자 지적 2026-09-04).
+    """
+    name = _plain(product.get("name") or "")
+    code = _plain(product.get("code") or "").upper()      # 하이픈을 뺀 꼴로 견준다 (QC1-7014 → QC17014)
+    if not name and not code:
+        return None
+    try:
+        import docx
+        d = docx.Document(base_docx)
+    except Exception:
+        return None
+    parts = []
+    for section in d.sections:
+        for part in (section.header, section.first_page_header):
+            try:
+                parts.append(" ".join(p.text for p in part.paragraphs))
+                parts.append(" ".join(E_cell(c) for t in part.tables for r in t.rows for c in r.cells))
+            except Exception:
+                pass
+    parts.append(" ".join(p.text for p in d.paragraphs[:120]))
+    parts.append(" ".join(c.text for t in d.tables[:4] for r in t.rows for c in r.cells))
+    hay = _plain(" ".join(parts))
+    key = name[:4]
+    if (key and key in hay) or (code and code in hay.upper()):
+        return None
+    return ("전년도 결재본(%s)에 이 제품(%s %s)의 이름이 없습니다 — 다른 제품의 결재본으로 보입니다. "
+            "제품 폴더의 '16. 전년도 PQR' 파일을 확인하세요."
+            % (shown or os.path.basename(base_docx), (product.get("code") or "").strip(), product.get("name") or ""))
+
+
+def E_cell(cell):
+    return cell.text
+
+
 def attachment_source(folder, workdir=None):
     """첨부 Cpk 엑셀을 물려받을 곳 — 항목 16 의 .zip, 아니면 결재본(과 같은 폴더의 .xls)."""
     data_files = collect_module.discover(folder, workdir)
@@ -113,6 +155,11 @@ def write_report(folder, product, period, out_path, today=None, recipe=None, log
     base = os.path.join(work, "base.docx")
     how = convert.to_docx(source, base)
     log_("바탕 문서: %s — %s (%s)" % (os.path.basename(source), why, how))
+    if source is previous:
+        # 다른 제품의 결재본으로 쓰면 제품명·규격·표 구성이 통째로 남의 것이 된다 — 여기서 막는다.
+        wrong = other_product(base, product, os.path.basename(source))
+        if wrong:
+            raise EngineError(wrong)
     if form and source is previous:
         log_("EDMS 서식: %s — 채운 뒤 이 서식에 옮겨 담음" % (
             "프로그램에 든 E-HLF-32 껍데기" if edms.is_shipped(form) else os.path.basename(form)))

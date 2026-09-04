@@ -34,6 +34,31 @@ def avg(vals, digits=2):
     return ("%%.%df" % digits) % (sum(vals) / len(vals))
 
 
+DEFAULT_LIMITS = {"particle": 75.0, "assay": (90.0, 110.0), "metal": 50.0}   # 퀴노비드안연고 값 — 9.1 을 못 읽을 때만
+
+
+def parse_limits(spec_texts):
+    """9.1 시험결과표의 허용기준 글에서 Cpk 한계를 읽는다. {'particle': usl, 'assay': (lsl, usl), 'metal': usl}
+
+    spec_texts: {'particle': '75 ㎛ 이하', 'assay': '90.0 ~ 110.0%', 'metal': '… 합계 50개 이하 …'}.
+    못 읽은 항목은 넣지 않는다 — 부르는 쪽이 기본값을 쓰고 문의 목록에 남긴다.
+    """
+    out = {}
+    t = spec_texts.get("particle") or ""
+    m = re.search(r"(\d+(?:\.\d+)?)\s*(?:㎛|um|µm|μm)", t)
+    if m:
+        out["particle"] = float(m.group(1))
+    t = spec_texts.get("assay") or ""
+    m = re.search(r"(\d+(?:\.\d+)?)\s*[~∼～-]\s*(\d+(?:\.\d+)?)\s*%", t)
+    if m:
+        out["assay"] = (float(m.group(1)), float(m.group(2)))
+    t = spec_texts.get("metal") or ""
+    m = re.search(r"(\d+)\s*개\s*이하", t)
+    if m:
+        out["metal"] = float(m.group(1))
+    return out
+
+
 def cpk_uni(vals, usl):
     m = sum(vals) / len(vals)
     s = statistics.stdev(vals) if len(vals) > 1 else 0
@@ -304,8 +329,29 @@ def fill(document, data, product, period, today=None, log=None):
                     ri += 1
 
     # ---------- 9항 ----------
+    def spec_of(t91, words):
+        for row in t91.rows:
+            cells = [E.cell_text(c) for c in E.raw_cells(row)]
+            if any(all(w in c for w in words) for c in cells[:2]):
+                return cells[-2]
+        return ""
+
     def rec(lot, key):
         return (data.coa.get(lot) or {}).get(key) or {}
+
+    # Cpk 한계는 이 제품의 9.1 허용기준에서 읽는다 — 퀴노비드 숫자를 다른 제품에 쓰지 않는다
+    limits = dict(DEFAULT_LIMITS)
+    t91_all = _tables(document, "9.1")
+    if t91_all:
+        found = parse_limits({"particle": spec_of(t91_all[0], ("입자도",)),
+                              "assay": spec_of(t91_all[0], ("함량",)),
+                              "metal": spec_of(t91_all[0], ("금속성",))})
+        limits.update(found)
+        missing = [k for k in ("particle", "assay", "metal") if k not in found]
+        if missing:
+            issues.append(("9.1", "", "허용기준에서 %s 한계를 읽지 못해 기본값(퀴노비드안연고)으로 Cpk 를 계산함 — 확인 필요"
+                           % ", ".join({"particle": "입자도", "assay": "함량", "metal": "금속성이물"}[k] for k in missing)))
+    log("Cpk 한계: %s" % limits)
 
     def app(lots):
         for l in lots:
@@ -322,13 +368,6 @@ def fill(document, data, product, period, today=None, log=None):
                 "fa": g("923", "mass_avg"),
                 "flo": [_rng(rec(l, "923").get("mass_each"))[0] for l in lots if _rng(rec(l, "923").get("mass_each"))],
                 "fhi": [_rng(rec(l, "923").get("mass_each"))[1] for l in lots if _rng(rec(l, "923").get("mass_each"))]}
-
-    def spec_of(t91, words):
-        for row in t91.rows:
-            cells = [E.cell_text(c) for c in E.raw_cells(row)]
-            if any(all(w in c for w in words) for c in cells[:2]):
-                return cells[-2]
-        return ""
 
     def bio_text(lot):
         b = rec(lot, "922").get("bioburden") or ""
@@ -466,7 +505,7 @@ def fill(document, data, product, period, today=None, log=None):
             put(t_metal, l + 2, (2, 3), "%.0f" % min(ms), "%.0f" % min(mi))
             if qc.cpk_applies(len(lots)):
                 put(t_metal, l + 3, (2, 3), "%.2f" % (sum(ms) / len(ms)), "%.2f" % (sum(mi) / len(mi)))
-                cpk["metal"] = cpk_uni(ms, 50.0)
+                cpk["metal"] = cpk_uni(ms, limits["metal"])
                 if cpk["metal"] is not None:
                     put(t_metal, l + 4, (2,), "%.2f" % cpk["metal"]); put(t_metal, l + 5, (2,), "충분" if cpk["metal"] >= 1 else "부족")
             else:
@@ -480,7 +519,7 @@ def fill(document, data, product, period, today=None, log=None):
                 E.set_cell(c[2], "검액은 표준액과 동일한 주 피크 유지시간을 나타냄"); E.set_cell(c[3], "검액과 표준액의 주 피크 UV spectrum은 동일함")
             base2 = la_ + 6
             fb_, lb_ = E.fit_rows(t, base2 + 2, len(t.rows) - 6, len(lots))
-            _fill_numbers(t, fb_, lb_, lots, n, cpk, rec, put, is_dom)
+            _fill_numbers(t, fb_, lb_, lots, n, cpk, rec, put, is_dom, limits)
         else:
             if t_ident:
                 def s_ident(c, no, lot):
@@ -494,7 +533,7 @@ def fill(document, data, product, period, today=None, log=None):
                 fill_detail(t_ident, 2, lots, s_ident)
             if t_numb and n.get("ct"):
                 f, l = E.fit_rows(t_numb, 2, len(t_numb.rows) - 6, len(lots))
-                _fill_numbers(t_numb, f, l, lots, n, cpk, rec, put, is_dom)
+                _fill_numbers(t_numb, f, l, lots, n, cpk, rec, put, is_dom, limits)
         if t_last:
             def s_last(c, no, lot):
                 r = rec(lot, "924")
@@ -688,7 +727,7 @@ def fill(document, data, product, period, today=None, log=None):
     # ---------- 13항 ----------
     stab = getattr(data, "stability", None)
     if stab:
-        _fill_stability(document, stab, log)
+        _fill_stability(document, stab, log, limits["assay"])
     else:
         for prefix in ("13.1", "13.2"):
             for tb in _tables(document, prefix):
@@ -736,7 +775,8 @@ def fill(document, data, product, period, today=None, log=None):
     return {"issues": issues, "cover_title": (cover.text.strip() if cover is not None else None), "cpk": cpk_dom}
 
 
-def _fill_numbers(t, f, l, lots, n, cpk, rec, put, is_dom):
+def _fill_numbers(t, f, l, lots, n, cpk, rec, put, is_dom, limits=None):
+    limits = limits or DEFAULT_LIMITS
     for i, lot in enumerate(lots):
         r = rec(lot, "924"); c = E.raw_cells(t.rows[f + i])
         E.set_cell(c[0], str(i + 1)); E.set_cell(c[1], lot)
@@ -748,13 +788,13 @@ def _fill_numbers(t, f, l, lots, n, cpk, rec, put, is_dom):
     put(t, l + 2, (1, 2, 3, 4), "%.2f" % min(pt), "%.2f" % min(pa), "%.2f" % min(pi), "%.1f" % min(ct))
     put(t, l + 3, (1, 2, 3, 4), "%.2f" % (sum(pt) / len(pt)), "%.2f" % (sum(pa) / len(pa)), "", "%.1f" % (sum(ct) / len(ct)))
     if qc.cpk_applies(len(lots)):
-        cpk["particle"] = cpk_uni(pt, 75.0); cpk["assay"] = cpk_bi(ct, 90.0, 110.0)
+        cpk["particle"] = cpk_uni(pt, limits["particle"]); cpk["assay"] = cpk_bi(ct, *limits["assay"])
         if cpk["particle"] is not None and cpk["assay"] is not None:
             put(t, l + 4, (1, 4), "%.2f" % cpk["particle"], "%.2f" % cpk["assay"])
             put(t, l + 5, (1, 4), "충분" if cpk["particle"] >= 1 else "부족", "충분" if cpk["assay"] >= 1 else "부족")
 
 
-def _fill_stability(document, stab, log):
+def _fill_stability(document, stab, log, assay_limits=None):
     """stab: {"post_dom": [...], "post_exp": [...], "long_dom": [...], "long_exp": [...],
     "trend_dom": [...], "trend_exp": [...]} — 손글씨 판독(비전) 결과. 형식은 kynobuild/data.py 와 같다."""
     def fill_post(table, rows):
@@ -787,6 +827,8 @@ def _fill_stability(document, stab, log):
                 if head:
                     prev_year = yr
 
+    lo_hi = assay_limits or DEFAULT_LIMITS["assay"]
+
     def fill_trend(table, rows, note, comment):
         f, l = E.fit_rows(table, 1, len(table.rows) - 6, max(1, len(rows)))
         prev = None
@@ -796,7 +838,7 @@ def _fill_stability(document, stab, log):
             E.set_cell(c[1], yr); E.set_cell(c[2], val); prev = grp
         lows = [float(r[2].split("~")[0]) for r in rows if "~" in r[2]]
         highs = [float(r[2].split("~")[1]) for r in rows if "~" in r[2]]
-        for ri, v in ((l + 1, "90.0~110.0"), (l + 2, "%.1f" % min(lows) if lows else ""), (l + 3, "%.1f" % max(highs) if highs else ""), (l + 4, "적합")):
+        for ri, v in ((l + 1, "%.1f~%.1f" % tuple(lo_hi)), (l + 2, "%.1f" % min(lows) if lows else ""), (l + 3, "%.1f" % max(highs) if highs else ""), (l + 4, "적합")):
             E.set_cell(E.raw_cells(table.rows[ri])[1], v)
         E.set_cell_plain(E.raw_cells(table.rows[-1])[0], "특이사항 (Comment)", note, comment)
 

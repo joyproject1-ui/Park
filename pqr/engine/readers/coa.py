@@ -70,7 +70,17 @@ def read_fp(path):
     out["metal_total"] = _first(r"합계는\s*(\d+)\s*개\s*,\s*개개는 8개를 초과하는 것", text)
     out["metal_each"] = _first(r"이\s*(\d+)\s*매\s*$", text, flags=re.M)
     out["particle"] = _first(r"입자도.*?(\d+)\s*um\s*이하", text, flags=re.S)
-    out["assay"] = _first(r"90\.0 ~ 110\.0%\s+.*?([\d]+\.\d)\s*%", text, flags=re.S)
+    # 함량: '<하한> ~ <상한>%  <결과>%' — 규격 숫자는 제품마다 다르므로 글에서 읽는다
+    # (퀴노비드 90.0~110.0, 다른 제품은 95.0~105.0 등). 함량 항목이 둘 이상이면 차례로 assays 에 둔다.
+    assays = []
+    for m in re.finditer(r"(\d+(?:\.\d)?)\s*~\s*(\d+(?:\.\d)?)\s*%\s+.*?([\d]+\.\d)\s*%", text, flags=re.S):
+        lo, hi, val = m.group(1), m.group(2), m.group(3)
+        if float(lo) < float(hi) and float(lo) <= float(val) <= float(hi) + 20:
+            assays.append({"lo": lo, "hi": hi, "value": val})
+    if assays:
+        out["assay"] = assays[0]["value"]
+        out["assay_spec"] = "%s ~ %s%%" % (assays[0]["lo"], assays[0]["hi"])
+        out["assays"] = assays
     m = re.search(r"평균\s*:\s*([\d\.]+)\s*g\s*,\s*개개\s*:\s*([\d\.]+)\s*g\s*이상", text)
     if m:
         out["mass_avg"], out["mass_each_min"] = m.group(1), m.group(2)
