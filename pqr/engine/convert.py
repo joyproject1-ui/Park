@@ -5,9 +5,11 @@
 가장 정확하다. Word 가 없으면 LibreOffice(soffice) 를 찾아 쓴다. 둘 다 없으면 담당자가
 Word 에서 '다른 이름으로 저장 → .docx' 로 만들어 두도록 안내한다.
 """
+import io
 import os
 import shutil
 import subprocess
+import tempfile
 import sys
 
 
@@ -18,54 +20,111 @@ class ConvertError(Exception):
 last_error = []          # 변환에 실패했을 때 마지막 오류 — 안내 문구에 붙인다
 
 
-def _powershell(script):
-    """PowerShell 로 COM 자동화를 돌린다 — pywin32 가 없는 PC 에서도 Word·Excel 을 쓸 수 있다."""
-    exe = shutil.which("powershell") or shutil.which("pwsh")
-    if not exe:
-        return False
+def _run(cmd, why):
+    """명령을 돌리고 성공 여부를 돌려준다. 실패하면 까닭을 last_error 에 남긴다."""
     try:
-        run = subprocess.run([exe, "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass",
-                              "-Command", script],
-                             stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=300)
+        run = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=300)
     except (OSError, subprocess.TimeoutExpired) as error:
-        last_error.append(str(error))
+        last_error.append("%s: %s" % (why, error))
         return False
     if run.returncode != 0:
-        last_error.append((run.stdout or b"").decode("utf-8", "replace").strip()[:400])
+        text = (run.stdout or b"").decode("utf-8", "replace")
+        if not text.strip():
+            text = (run.stdout or b"").decode("cp949", "replace")
+        last_error.append("%s: %s" % (why, " ".join(text.split())[:300] or "코드 %d" % run.returncode))
     return run.returncode == 0
+
+
+def _script_run(text, suffix, cmd_for):
+    """스크립트를 임시 파일에 써서 돌린다.
+
+    명령줄에 통째로 넘기면(-Command) 따옴표·한글 경로에서 잘리는 PC 가 있어 파일로 넘긴다.
+    """
+    work = tempfile.mkdtemp(prefix="pqr-conv-")
+    path = os.path.join(work, "convert" + suffix)
+    try:
+        with io.open(path, "w", encoding="utf-8-sig" if suffix == ".ps1" else "utf-8") as handle:
+            handle.write(text)
+        return _run(cmd_for(path), suffix.lstrip("."))
+    finally:
+        shutil.rmtree(work, ignore_errors=True)
+
+
+def _powershell(script):
+    """PowerShell 로 COM 자동화 — pywin32 가 없는 PC 에서도 Word·Excel 을 쓸 수 있다."""
+    exe = shutil.which("powershell") or shutil.which("pwsh")
+    if not exe:
+        last_error.append("PowerShell 을 찾지 못했습니다")
+        return False
+    return _script_run(script, ".ps1", lambda path: [
+        exe, "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", path])
+
+
+def _vbscript(script):
+    """VBScript(cscript) 로 COM 자동화 — PowerShell 이 막힌 회사 PC 에서도 대개 돈다."""
+    exe = shutil.which("cscript")
+    if not exe:
+        last_error.append("cscript 를 찾지 못했습니다")
+        return False
+    return _script_run(script, ".vbs", lambda path: [exe, "//nologo", "//B", path])
+
+
+def _vbs_path(path):
+    return '"' + os.path.abspath(path).replace('"', '""') + '"'
+
+
+def _word_via_vbscript(src, dst, fmt=16):
+    """Word 를 VBScript 로 불러 문서를 다른 형식으로 저장한다."""
+    return _vbscript(
+        'On Error Resume Next\n'
+        'Set w = CreateObject("Word.Application")\n'
+        'If Err.Number <> 0 Then WScript.StdErr.WriteLine "Word 를 열지 못함: " & Err.Description : WScript.Quit 1\n'
+        'w.Visible = False\n'
+        'w.DisplayAlerts = 0\n'
+        'Set d = w.Documents.Open(%s, False, True)\n'
+        'If Err.Number <> 0 Then WScript.StdErr.WriteLine "문서를 열지 못함: " & Err.Description : w.Quit : WScript.Quit 1\n'
+        'd.SaveAs %s, %d\n'
+        'If Err.Number <> 0 Then WScript.StdErr.WriteLine "저장하지 못함: " & Err.Description : d.Close False : w.Quit : WScript.Quit 1\n'
+        'd.Close False\n'
+        'w.Quit\n'
+        'WScript.Quit 0\n' % (_vbs_path(src), _vbs_path(dst), fmt))
 
 
 def _ps_path(path):
     return "'" + os.path.abspath(path).replace("'", "''") + "'"
 
 
-def _word_via_powershell(src, dst):
-    """Word 를 PowerShell COM 으로 불러 .doc → .docx. 실패하면 마지막 오류를 last_error 에 남긴다."""
+def _word_via_powershell(src, dst, fmt=16):
+    """Word 를 PowerShell COM 으로 불러 문서를 다른 형식으로 저장한다."""
     script = (
-        "$ErrorActionPreference='Stop'; "
-        "$w = New-Object -ComObject Word.Application; "
-        "$w.Visible = $false; $w.DisplayAlerts = 0; "
-        "try { "
-        "  $d = $w.Documents.Open([ref]%s, [ref]$false, [ref]$true); "
-        "  $d.SaveAs([ref]%s, [ref]16); "
-        "  $d.Close([ref]$false) "
-        "} finally { $w.Quit() }" % (_ps_path(src), _ps_path(dst)))
-    if _powershell(script) and os.path.isfile(dst):
-        return True
-    # SaveAs2 가 있는 새 Word 에서는 이쪽이 더 잘 돈다
-    script2 = (
-        "$ErrorActionPreference='Stop'; "
-        "$w = New-Object -ComObject Word.Application; $w.Visible = $false; $w.DisplayAlerts = 0; "
-        "try { $d = $w.Documents.Open(%s); $d.SaveAs2(%s, 16); $d.Close(0) } "
-        "finally { $w.Quit() }" % (_ps_path(src), _ps_path(dst)))
-    return _powershell(script2) and os.path.isfile(dst)
+        "$ErrorActionPreference='Stop'\n"
+        "$w = New-Object -ComObject Word.Application\n"
+        "$w.Visible = $false\n"
+        "$w.DisplayAlerts = 0\n"
+        "try {\n"
+        "  $d = $w.Documents.Open(%s, $false, $true)\n"
+        "  $d.SaveAs(%s, %d)\n"
+        "  $d.Close($false)\n"
+        "} finally { $w.Quit() }\n" % (_ps_path(src), _ps_path(dst), fmt))
+    return _powershell(script) and os.path.isfile(dst)
+
+
+def _word_convert(src, dst, fmt=16):
+    """Word 로 변환 — PowerShell 을 먼저, 막혀 있으면 VBScript 로. 하나라도 되면 True."""
+    for how in (_word_via_powershell, _word_via_vbscript):
+        try:
+            if how(src, dst, fmt) and os.path.isfile(dst):
+                return True
+        except Exception as error:                 # 한 방법이 터져도 다음 방법을 본다
+            last_error.append("%s: %s" % (how.__name__, error))
+    return False
 
 
 def _with_word(src, dst):
     try:
         import win32com.client  # pywin32
     except ImportError:
-        return _word_via_powershell(src, dst)
+        return _word_convert(src, dst, 16)
     word = win32com.client.DispatchEx("Word.Application")
     word.Visible = False
     try:
@@ -119,19 +178,32 @@ def to_docx(src, dst):
         "제품 폴더에 두고 '보고서 작성' 을 다시 누르세요." % detail)
 
 
-def _excel_via_powershell(src, dst):
-    script = (
-        "$x = New-Object -ComObject Excel.Application; $x.Visible = $false; $x.DisplayAlerts = $false; "
-        "try { $b = $x.Workbooks.Open(%s, 0, $true); $b.SaveAs(%s, 51); $b.Close($false) } "
-        "finally { $x.Quit() }" % (_ps_path(src), _ps_path(dst)))
-    return _powershell(script) and os.path.isfile(dst)
+def _excel_convert(src, dst):
+    """엑셀도 같은 두 경로로 — .xls → .xlsx (51 = xlOpenXMLWorkbook)."""
+    ps = ("$ErrorActionPreference='Stop'\n"
+          "$x = New-Object -ComObject Excel.Application\n"
+          "$x.Visible = $false\n$x.DisplayAlerts = $false\n"
+          "try { $b = $x.Workbooks.Open(%s, 0, $true); $b.SaveAs(%s, 51); $b.Close($false) } "
+          "finally { $x.Quit() }\n" % (_ps_path(src), _ps_path(dst)))
+    if _powershell(ps) and os.path.isfile(dst):
+        return True
+    vbs = ('On Error Resume Next\n'
+           'Set x = CreateObject("Excel.Application")\n'
+           'If Err.Number <> 0 Then WScript.Quit 1\n'
+           'x.Visible = False\nx.DisplayAlerts = False\n'
+           'Set b = x.Workbooks.Open(%s, 0, True)\n'
+           'If Err.Number <> 0 Then x.Quit : WScript.Quit 1\n'
+           'b.SaveAs %s, 51\n'
+           'If Err.Number <> 0 Then b.Close False : x.Quit : WScript.Quit 1\n'
+           'b.Close False\nx.Quit\nWScript.Quit 0\n' % (_vbs_path(src), _vbs_path(dst)))
+    return _vbscript(vbs) and os.path.isfile(dst)
 
 
 def _xls_with_excel(src, dst):
     try:
         import win32com.client
     except ImportError:
-        return _excel_via_powershell(src, dst)
+        return _excel_convert(src, dst)
     excel = win32com.client.DispatchEx("Excel.Application")
     excel.Visible = False
     excel.DisplayAlerts = False
