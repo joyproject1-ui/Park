@@ -83,19 +83,27 @@ class 서식찾기(unittest.TestCase):
         got = edms.find_form(self.product)
         self.assertTrue(edms.is_shipped(got), got)       # 결과물은 건너뛰고 프로그램 껍데기로
 
-    def test_폴더에_없으면_프로그램에_든_껍데기를_쓴다(self):
+    def test_폴더에_없으면_프로그램에_든_서식을_쓴다(self):
         got = edms.find_form(self.product)
         self.assertTrue(edms.is_shipped(got), got)
         self.assertTrue(edms.is_edms_form(got))
         self.assertIsNone(edms.find_form(os.path.join(self.root, "없는폴더")))
 
-    def test_프로그램에_든_껍데기는_본문이_없다(self):
+    def test_프로그램에_든_서식은_목차와_항별_빈_표를_갖춘다(self):
+        # 전년도 결재본을 못 읽는 PC 에서도 이 서식만으로 결재본 양식이 나와야 한다.
         d = docx.Document(edms.SHIPPED_FORM)
         texts = [p.text.strip() for p in d.paragraphs if p.text.strip()]
         self.assertEqual(texts[0], "목차 (Table of Contents)")
-        self.assertTrue(texts[-1].startswith("1."))
-        self.assertEqual(len(texts), 2)                      # 제품 고유 글이 없다
-        self.assertEqual(len(d.tables), 1)                   # 목차 표뿐
+        self.assertTrue(any(t.startswith("16.") for t in texts))     # 16 항까지 있다
+        self.assertGreater(len(d.tables), 25)                        # 항별 빈 표
+
+    def test_프로그램에_든_서식에_다른_제품의_글이_없다(self):
+        # 서식 원본에 다른 제품(아이퓨어점안액) 예시가 남아 있었다 — 그대로 두면 모든 보고서에 섞인다.
+        d = docx.Document(edms.SHIPPED_FORM)
+        whole = "\n".join(p.text for p in d.paragraphs)
+        whole += "\n".join(c.text for t in d.tables for r in t.rows for c in r.cells)
+        for word in ("아이퓨어", "MF-5087", "250423"):
+            self.assertNotIn(word, whole)
 
     def test_바탕_고르기(self):
         self.assertEqual(edms.choose_base("form.docx", "prev.doc")[0], "form.docx")

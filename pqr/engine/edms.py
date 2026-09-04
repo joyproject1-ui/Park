@@ -81,14 +81,17 @@ def find_form(folder, depth=2):
     return shipped_form()
 
 
-SHIPPED_FORM = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "edms_shell.docx")
+SHIPPED_FORM = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "edms_form.docx")
 
 
 def shipped_form():
-    """프로그램에 든 EDMS 서식 껍데기(목차·머리글·바닥글·쪽 설정만, 본문 없음).
+    """프로그램에 든 EDMS 결재본 서식(E-HLF-32) 빈 서식 — 목차·머리글·바닥글과 항별 빈 표까지.
 
     담당자가 서식을 따로 두지 않아도 '보고서 작성' 이 EDMS 양식으로 나오게 한다. 폴더에 회사
     서식(.docx)이 있으면 그것이 먼저다 — 서식이 개정되면 공통 폴더에 새 것을 두면 된다.
+
+    빈 표까지 들어 있어야 전년도 결재본을 못 읽는 때(옛 .doc 를 바꿀 길이 없는 PC)에도 이
+    서식만으로 결재본 양식의 보고서를 만들 수 있다.
     """
     return SHIPPED_FORM if os.path.isfile(SHIPPED_FORM) and is_edms_form(SHIPPED_FORM) else None
 

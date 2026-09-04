@@ -126,12 +126,52 @@ def attachment_source(folder, workdir=None):
     return find_previous(folder, workdir)
 
 
+BLANK_MARKS = re.compile(r"[☐■□☑✔]|Yes|No")     # 서식에 원래 있는 표시 — 값이 아니다
+
+
+def _row_text(row_el):
+    from docx.oxml.ns import qn
+    cells = row_el.findall(qn("w:tc"))
+    out = []
+    for tc in cells[1:]:                      # 연번 칸(1,2,3…)은 서식에 이미 있다
+        out.append("".join(t.text or "" for t in tc.iter(qn("w:t"))))
+    text = " ".join(out)
+    return BLANK_MARKS.sub("", text).strip()
+
+
+def blank_sections(document):
+    """값이 하나도 안 들어간 표의 항 번호 목록. EDMS 빈 서식만으로 만들었을 때 무엇이 비었는지 알린다.
+
+    전년도 결재본이 있으면 표 구조(제품마다 다른 시험항목·설비 목록)가 거기서 오지만, 빈 서식만
+    있으면 채울 자리가 없어 그대로 빈 표가 남는다. 담당자가 그 항을 직접 써야 하므로 짚어 준다.
+    """
+    from docx.oxml.ns import qn
+    from .locate import headings_of_tables
+    heads = headings_of_tables(document)
+    blank = []
+    for i, table in enumerate(document.tables):
+        titles = heads.get(i) or []
+        head = next((t for t in titles if re.match(r"^\d", t)), None)
+        if not head:
+            continue
+        rows = table._tbl.findall(qn("w:tr"))
+        if len(rows) < 2:
+            continue
+        if any(_row_text(r) for r in rows[1:]):
+            continue
+        number = re.match(r"^\d{1,2}(\.\d+)*", head).group(0).rstrip(".")
+        if number not in blank:
+            blank.append(number)
+    return blank
+
+
 def write_report(folder, product, period, out_path, today=None, recipe=None, log=None, vision=None):
     """folder: 제품 폴더 · product: {"code","name","group"} · period: {"from","to"} · out_path: 저장할 .docx
 
     돌려주는 값: {"path", "issues": [(항, 파일, 설명)], "log": [...]}
     """
     lines = []
+    blank = []
 
     def log_(msg):
         lines.append(msg)
@@ -153,7 +193,24 @@ def write_report(folder, product, period, out_path, today=None, recipe=None, log
     else:
         raise EngineError(edms.choose_base(None, None)[1])
     base = os.path.join(work, "base.docx")
-    how = convert.to_docx(source, base)
+    try:
+        how = convert.to_docx(source, base)
+    except convert.ConvertError as error:
+        # 옛 워드(.doc)를 바꿀 길이 없는 PC 가 있다(Word COM 이 막힌 회사 PC). 예전에는 여기서
+        # 멈춰 결재본 양식 대신 요약본이 나왔다. 이제는 EDMS 빈 서식으로 바탕을 바꿔 결재본
+        # 양식은 지키고, 전년도 결재본에서만 얻을 수 있는 것(전년도 시정사항 등)을 문의로 남긴다.
+        if source is not previous or not form:
+            raise
+        log_("전년도 결재본을 읽지 못해 EDMS 빈 서식으로 만듭니다 — %s" % error)
+        shown = os.path.basename(previous)
+        source, why = form, "EDMS 서식(전년도 결재본을 .docx 로 바꾸지 못함)"
+        previous = None
+        how = convert.to_docx(source, base)
+        data_issue = ("16", shown,
+                      "전년도 결재본(.doc)을 읽지 못해 EDMS 빈 서식으로 만들었습니다 — "
+                      "16항 전년도 시정사항과 전년도 문안을 직접 확인하세요. "
+                      "그 파일을 Word 에서 '다른 이름으로 저장 → Word 문서(*.docx)' 로 저장해 "
+                      "제품 폴더에 두면 다음부터는 전년도 결재본을 그대로 물려받습니다.")
     log_("바탕 문서: %s — %s (%s)" % (os.path.basename(source), why, how))
     if source is previous:
         # 다른 제품의 결재본으로 쓰면 제품명·규격·표 구성이 통째로 남의 것이 된다 — 여기서 막는다.
@@ -162,7 +219,7 @@ def write_report(folder, product, period, out_path, today=None, recipe=None, log
             raise EngineError(wrong)
     if form and source is previous:
         log_("EDMS 서식: %s — 채운 뒤 이 서식에 옮겨 담음" % (
-            "프로그램에 든 E-HLF-32 껍데기" if edms.is_shipped(form) else os.path.basename(form)))
+            "프로그램에 든 E-HLF-32 빈 서식" if edms.is_shipped(form) else os.path.basename(form)))
     elif not form:
         log_("EDMS 서식 없음 — 제품 폴더나 공통 폴더에 E-HLF-32 서식(.docx)을 두면 그 서식으로 만듭니다")
         data_issue = ("서식", "", "EDMS 결재본 서식(E-HLF-32)이 없어 전년도 양식 그대로 만들었음 — 제품 폴더나 '공통' 폴더에 서식을 두세요")
@@ -191,6 +248,16 @@ def write_report(folder, product, period, out_path, today=None, recipe=None, log
         document = docx.Document(housed)
     elif data_issue:
         data.issues.append(data_issue)
+    if previous is None:
+        # 전년도 결재본 없이 빈 서식만으로 만들면 표 구조가 없어 못 채우는 항이 남는다 — 짚어 준다.
+        empty = blank_sections(document)
+        blank[:] = empty
+        if empty:
+            log_("빈 서식만으로 만들어 채우지 못한 항: %s" % ", ".join(empty))
+            data.issues.append(("서식", "", "%s 항의 표를 채우지 못했습니다 — 이 항들은 제품마다 표 구성이 "
+                                "달라 전년도 결재본에서 표를 물려받아야 합니다. 직접 작성하시거나, "
+                                "전년도 결재본을 .docx 로 제품 폴더에 두고 다시 만드세요."
+                                % ", ".join(empty)))
     layout.apply(document, log=log_, product_title=(ctx or {}).get("cover_title"))
     document.save(out_path)
     polish.polish(out_path)
@@ -220,4 +287,4 @@ def write_report(folder, product, period, out_path, today=None, recipe=None, log
         data.issues.append(("첨부", "", "첨부 엑셀 생성 실패: %s" % error))
     shutil.rmtree(work, ignore_errors=True)
     return {"path": out_path, "issues": data.issues + list((ctx or {}).get("issues", [])), "log": lines,
-            "data": data, "attachments": attachments}
+            "data": data, "attachments": attachments, "blank_sections": blank}

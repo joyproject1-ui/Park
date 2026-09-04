@@ -409,10 +409,17 @@ class PriorReportTest(ServerTest):
         self.assertTrue(os.path.isfile(
             os.path.join(folder, "HLF-QC-126-06 안정성 경향 2025.xlsx")))
 
-    def test_without_previous_pqr_it_still_makes_a_summary(self):
+    def test_without_previous_pqr_it_makes_an_edms_form_draft(self):
+        """전년도 결재본이 없어도 EDMS 서식으로 만든다 — 다만 채우지 못한 항이 있으니 초안이다."""
         result = self.report()
         self.assertTrue(result["ok"], result.get("error"))
-        self.assertIsNone(result["based_on"])
+        base = result["based_on"]
+        self.assertTrue(base["engine"])
+        self.assertIsNone(base["previous"])                  # 물려받을 전년도 결재본이 없다
+        self.assertTrue(base["blank_sections"])              # 직접 써야 하는 항을 알려 준다
+        self.assertIn("9.1", base["blank_sections"])
+        kinds = [i[0] for i in result["issues"]]
+        self.assertIn("서식", kinds)
 
 
 class ItemFileListTest(ItemUploadTest):

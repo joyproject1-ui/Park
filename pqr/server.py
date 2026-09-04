@@ -829,13 +829,14 @@ class Handler(BaseHTTPRequestHandler):
                 previous = engine_writer.find_previous(folder)
             except Exception:
                 previous = None
-        # 엔진은 전년도 결재본이 있을 때만 돈다 — 제품마다 다른 항·표 구조가 거기 있다.
-        # 서식(EDMS 껍데기)만으로는 빈 문서가 나오므로, 결재본이 없으면 자료 상태 요약본을 만든다.
+        # 엔진은 전년도 결재본이나 EDMS 서식이 있으면 돈다. 전년도 결재본이 있으면 제품마다 다른
+        # 항·표 구조를 거기서 물려받고, 없으면(첫해 제품·옛 .doc 를 못 바꾸는 PC) EDMS 빈 서식으로
+        # 만든다 — 채우지 못한 항은 문의 목록에 남는다. 둘 다 없을 때만 자료 상태 요약본이다.
         form = edms_module.find_form(folder)
         based_on = None
         engine_result = None
         issues = []
-        if previous:
+        if previous or form:
             period = self.workspace.data.get("period") or {}
             year = None
             for key in ("from", "to"):
@@ -852,9 +853,16 @@ class Handler(BaseHTTPRequestHandler):
                     log=None, vision=_vision_hook())
                 issues = engine_result.get("issues") or []
                 final = target
-                build_module.unmark_auto_draft(folder, target)   # 예전 초안 표시가 남아 있으면 완성본으로 안 보인다
-                based_on = {"previous": os.path.basename(previous or form), "previous_year": year,
+                if engine_result.get("blank_sections"):
+                    # 전년도 결재본 없이 빈 서식으로 만든 보고서는 담당자가 마저 써야 한다 —
+                    # '완성본' 으로 세우면 덜 채운 보고서가 그대로 나갈 수 있다.
+                    build_module.mark_auto_draft(folder, target)
+                else:
+                    build_module.unmark_auto_draft(folder, target)   # 예전 초안 표시가 남아 있으면 완성본으로 안 보인다
+                based_on = {"previous": os.path.basename(previous) if previous else None,
+                            "previous_year": year,
                             "form": os.path.basename(form) if form else None,
+                            "blank_sections": engine_result.get("blank_sections") or [],
                             "changed": 0, "engine": True, "log": engine_result.get("log") or []}
                 write_issue_list(folder, product, issues)
             except Exception as error:                     # 엔진이 못 돌면 예전 방식(연도만 바꾼 사본)

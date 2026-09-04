@@ -1420,9 +1420,15 @@ async function makeReport(code, button){
     const base = payload.based_on;
     const issues = payload.issues || [];
     let head;
+    const blank = (base && base.blank_sections) || [];
     if (payload.engine) {
-      head = `✅ 결재본 양식으로 제출용 보고서를 완성했습니다 — 제품 폴더가 열립니다`
-        + `<br><span class="muted">기준 본: ${esc(base.previous || "")} · 올린 자료 값으로 채우고 회사 조판 규칙을 적용했습니다.</span>`
+      head = blank.length
+        ? `EDMS 결재본 서식으로 <b>초안</b>을 만들었습니다 — 전년도 결재본이 없어 채우지 못한 항이 있습니다`
+          + `<br><span class="muted">직접 써야 하는 항: ${esc(blank.join(", "))}`
+          + `<br>전년도 PQR 을 <b>.docx</b> 로 16 항목에 올리면 그 표 구성을 물려받아 완성합니다.</span>`
+        : `✅ 결재본 양식으로 제출용 보고서를 완성했습니다 — 제품 폴더가 열립니다`
+          + `<br><span class="muted">기준 본: ${esc(base.previous || "")} · 올린 자료 값으로 채우고 회사 조판 규칙을 적용했습니다.</span>`;
+      head = head
         + (issues.length
             ? `<br><b>확인 필요 ${issues.length}건</b> — 제품 폴더의 <code>PQR 문의 목록</code> 파일에도 있습니다:`
               + `<ul class="issue-list">` + issues.slice(0,6).map(i=>`<li>[${esc(i[0])}항] ${esc(i[1] ? i[1]+" — " : "")}${esc(i[2])}</li>`).join("")
