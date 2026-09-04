@@ -139,3 +139,35 @@ def carry(document, old_document, log=None):
     if log:
         log("전년도에서 이어받은 칸: %d" % done)
     return done
+
+
+# 제조번호는 여섯 자(OGY301). 여러 개가 줄바꿈 없이 붙어 있어도 갈라내려고 낱말 경계를 쓰지 않는다.
+LOT = re.compile(r"[A-Z]{2}[A-Z0-9]{4}")
+
+
+def pv_reasons(document):
+    """10.1 공정밸리데이션 표에서 {제조번호: 실시 사유}.
+
+    안정성 시험의 '실시 사유' 는 그 Lot 을 다시 시험하게 만든 변경, 곧 공정밸리데이션의
+    사유다(담당자 2026-09: "실시 사유는 작년 내용 것을 그대로 가져오면 돼"). 전년도 결재본의
+    10.1 에는 그해 PV 대상 Lot 과 사유가 적혀 있어, 지난해 Lot 의 사유를 거기서 물려받는다.
+    """
+    out = {}
+    for section, tables in _tables_by_section(document).items():
+        if not section.startswith("10.1"):
+            continue
+        for table in tables:
+            head = _headers(table)
+            lot_col = next((k for k, h in enumerate(head) if "Lot" in h or "제조번호" in h), None)
+            why_col = next((k for k, h in enumerate(head) if "비고" in h), None)
+            if lot_col is None or why_col is None:
+                continue
+            for cells in _rows(table):
+                if lot_col not in cells or why_col not in cells:
+                    continue
+                why = " ".join(E.cell_text(cells[why_col]).split())
+                if not why or why.upper() in ("N/A", "-"):
+                    continue
+                for lot in LOT.findall(E.cell_text(cells[lot_col]).replace("\n", " ")):
+                    out.setdefault(lot, why)
+    return out

@@ -137,7 +137,7 @@ def apply(document, log=None, product_title=None, edms=None):
     # 표는 모두 '창에 자동으로 맞춤' — 본문 폭을 넘거나 모자라지 않게 (담당자 지시 2026-09)
     page = E.text_width(document)
     log("표 폭을 창에 맞춤: %d" % sum(1 for ti, t in enumerate(T) if ti != toc and E.fit_to_window(t, page)))
-    log("표 안 글씨 굴림 10: %d" % E.table_font_size(document, 20))
+    log("표 안 글씨 굴림 10: %d" % E.table_font_size(document, 20, skip=(toc,)))
     from .ooxml_order import get_or_add
     small = 0
     for ti in narrative_tables:                     # 일탈·변경 표 데이터 행은 9 pt
@@ -219,6 +219,7 @@ def apply(document, log=None, product_title=None, edms=None):
     log("빈 문단 뭉치 정리: %d" % E.collapse_blank_runs(document, keep=1, min_run=2, protect_before=protect))
     log("각주 뒤 빈 줄 정리: %d" % E.drop_blank_after_note(document))
     log("사선 칸의 N/A 삭제: %d" % E.drop_na_in_diag_cells(document))
+    log("항 제목 줄맞춤: %d" % E.align_section_titles(document))
     log("‘확인 필요’ 노랑 표시: %d" % E.highlight(document, "확인 필요"))
     log("행 분할 금지: %d" % E.no_split_rows(document))
     keep = 0

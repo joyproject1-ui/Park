@@ -12,6 +12,7 @@ import statistics
 
 from docx.oxml.ns import qn
 
+from . import carry as CARRY
 from . import detail92 as D
 from . import docedit as E
 from . import lotcode, qc
@@ -1273,7 +1274,10 @@ def fill(document, data, product, period, today=None, log=None):
     logs = getattr(data, "stability_logs", None)
     if logs:
         spec = {r["part"]: r["text"] for r in rules if "함량" in r["item"] and r["part"]}
-        _fill_stability26(document, logs, period, spec, log, issues)
+        # 실시 사유는 그 Lot 의 공정밸리데이션 사유 — 올해 10.1 을 먼저, 없으면 전년도 것을 쓴다
+        why = dict(getattr(data, "pv_reasons", None) or {})
+        why.update(CARRY.pv_reasons(document))
+        _fill_stability26(document, logs, period, spec, log, issues, why)
     elif stab:
         _fill_stability(document, stab, log, limits["assay"])
     else:
@@ -1424,7 +1428,7 @@ def brief_change(text):
     return out
 
 
-def _fill_stability26(document, logs, period, spec, log, issues):
+def _fill_stability26(document, logs, period, spec, log, issues, why_of=None):
     """2026 양식의 13항 — 13.1 장기 안정성 실시 내역 · 13.3 경향 분석.
 
     logs: [{"lot", "year", "pack", "store", "why",
@@ -1465,15 +1469,15 @@ def _fill_stability26(document, logs, period, spec, log, issues):
         f, _ = E.fit_rows(table, 1, len(table.rows) - 2, len(rows))
         for i, (one, taken) in enumerate(rows):
             cells = E.raw_cells(table.rows[f + i])
+            why = one.get("why") or (why_of or {}).get(one["lot"]) or ""
             put = [str(i + 1), one.get("year") or "", [p["period"] for p in taken], one["lot"],
-                   one.get("pack") or "", one.get("store") or "", [p["done"] for p in taken],
-                   one.get("why") or ""]
+                   one.get("pack") or "", one.get("store") or "", [p["done"] for p in taken], why]
             for k, value in enumerate(put):
                 if k >= len(cells):
                     break
                 E.set_cell(cells[k], *(value if isinstance(value, list) else str(value).split("\n")))
                 E.set_vmerge(cells[k], False)
-        if not any(one.get("why") for one, _ in rows):
+        if not any(one.get("why") or (why_of or {}).get(one["lot"]) for one, _ in rows):
             issues.append(("13.1", "", "장기 안정성 시험의 ‘실시 사유’ 는 시험일지에 없습니다 — "
                                        "변경관리·PV 내용을 보고 직접 적으세요"))
 
@@ -1510,6 +1514,7 @@ def _fill_stability26(document, logs, period, spec, log, issues):
                 continue
             values[k] += got
             E.set_cell(cells[k], "%s ~ %s" % (_trim(min(got)), _trim(max(got))))
+    bold_rows = set()
     for ri in heads:
         cells = _grid_cells_of(table.rows[ri], len(labels))
         head = D.squeeze(E.cell_text(cells[0])) if cells.get(0) is not None else ""
@@ -1518,6 +1523,7 @@ def _fill_stability26(document, logs, period, spec, log, issues):
                 continue
             if "관리규격" in head:
                 E.set_cell(cells[k], re.sub(r"\s*%$", "", spec.get(part, "")))
+                bold_rows.add(ri)
             elif "최소" in head:
                 E.set_cell(cells[k], _trim(min(values[k])))
             elif "최대" in head:
@@ -1526,6 +1532,8 @@ def _fill_stability26(document, logs, period, spec, log, issues):
                 lo_hi = re.findall(r"\d+(?:\.\d+)?", spec.get(part, ""))
                 ok = len(lo_hi) < 2 or (float(lo_hi[0]) <= min(values[k]) and max(values[k]) <= float(lo_hi[1]))
                 E.set_cell(cells[k], "적합" if ok else "부적합")
+    for ri in bold_rows:                          # 관리 규격은 굵게 (담당자 지시 2026-09)
+        E.bold_row(table, ri)
     log("13항: 장기 안정성 실시 %d Lot · 경향 분석 %d Lot × 성분 %d" % (len(rows), len(trend), len(parts)))
 
 

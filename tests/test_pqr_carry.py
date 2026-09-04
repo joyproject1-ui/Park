@@ -65,5 +65,34 @@ class 줄_열쇠가_해마다_다른_표(unittest.TestCase):
         self.assertEqual([c.text for c in new.tables[0].rows[1].cells][3], "")
 
 
+class 밸리데이션_사유(unittest.TestCase):
+    """안정성 시험 '실시 사유' 는 그 Lot 의 공정밸리데이션 사유다 (담당자 2026-09)."""
+
+    def _doc(self, rows):
+        document = docx.Document()
+        document.add_paragraph("10.1 공정밸리데이션")
+        table = document.add_table(rows=len(rows), cols=len(rows[0]))
+        for ri, cells in enumerate(rows):
+            for ci, text in enumerate(cells):
+                lines = text.split("\n")
+                table.cell(ri, ci).text = lines[0]
+                for extra in lines[1:]:            # 칸 안의 줄바꿈은 문단으로 — 결재본과 같은 꼴
+                    table.cell(ri, ci).add_paragraph(extra)
+        return document
+
+    def test_대상_Lot_마다_비고를_돌려준다(self):
+        got = carry.pv_reasons(self._doc([
+            ["No.", "사유", "대상Lot", "문서번호", "완료일", "비고"],
+            ["1", "변경", "OGW701\nOGWN01", "PV24-2-DGTO1-FR", "2024.10.29", "Lot size 축소,\n용액 멸균 조건 변경"]]))
+        self.assertEqual(got, {"OGW701": "Lot size 축소, 용액 멸균 조건 변경",
+                               "OGWN01": "Lot size 축소, 용액 멸균 조건 변경"})
+
+    def test_비고가_비었거나_NA_면_넣지_않는다(self):
+        got = carry.pv_reasons(self._doc([
+            ["No.", "사유", "대상Lot", "문서번호", "완료일", "비고"],
+            ["1", "변경", "OGY301", "PV25", "2025.05.22", "N/A"]]))
+        self.assertEqual(got, {})
+
+
 if __name__ == "__main__":
     unittest.main()

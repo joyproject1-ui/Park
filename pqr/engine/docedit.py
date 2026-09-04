@@ -896,7 +896,66 @@ def zero_cell_spacing(document, skip=()):
                 ind = pr.find(qn("w:ind"))             # 첫 줄·내어쓰기 들여쓰기는 칸마다 달라 지운다
                 if ind is not None:
                     pr.remove(ind)
+                # Word 의 '같은 스타일의 단락 사이에 공백 삽입 안 함' — 한 칸 안에서 줄을 나눠
+                # 적은 값(완료 일자 여러 줄)이 스타일이 물려준 간격만큼 벌어지지 않게 한다
+                # (담당자 2026-09: "이런식으로 간격 조정해줘").
+                get_or_add(pr, "contextualSpacing")
                 n += 1
+    return n
+
+
+def bold_row(table, row_index, first_col=1):
+    """그 행 first_col 이후 칸의 글씨를 굵게. 굵게 한 런 수를 돌려준다.
+
+    담당자 지시(2026-09): "관리 규격 글씨는 굵은 글씨로 작성해줘" — 13.3 경향 분석에서 값과
+    기준을 한눈에 가른다.
+    """
+    if row_index >= len(table.rows):
+        return 0
+    n = 0
+    for k, cell in grid_cells(table.rows[row_index]).items():
+        if k < first_col:
+            continue
+        for run in cell._tc.iter(qn("w:r")):
+            if run.find(qn("w:t")) is None:
+                continue
+            rpr = run.get_or_add_rPr()
+            for tag in ("b", "bCs"):
+                el = get_or_add(rpr, tag)
+                el.set(qn("w:val"), "1")
+            n += 1
+    return n
+
+
+TOP_HEADING = re.compile(r"^([ \u00a0]*)(\d)\.([ \u00a0]+)(?=\S)")
+
+
+def align_section_titles(document, gap="  "):
+    """본문 항 제목의 번호 뒤 빈칸을 하나로 맞춘다. 고친 문단 수를 돌려준다.
+
+    담당자 지시(2026-09): "1, 3항 제목은 줄맞춤." 서식마다 '1. 목 적' 은 빈칸 하나,
+    '2.  배 경' 은 둘이라 제목 글자가 들쭉날쭉했다. 한 자리 항만 손대고 두 자리(10~18)는
+    번호가 한 칸 더 넓으므로 그대로 둔다. 번호와 제목이 다른 런에 나뉘어 있어도 되도록,
+    글자 자리로 찾아 그 자리를 가진 런만 고친다.
+    """
+    n = 0
+    for p in document.element.body.findall(qn("w:p")):
+        texts = [t for t in p.iter(qn("w:t"))]
+        if not texts:
+            continue
+        whole = "".join(t.text or "" for t in texts)
+        m = TOP_HEADING.match(whole)
+        if not m or m.group(3) == gap or len(whole) > 80:
+            continue
+        start, end, at = m.start(3), m.end(3), 0
+        for t in texts:                              # 빈칸이 든 런을 찾아 그 자리만 바꾼다
+            body = t.text or ""
+            if at <= start and end <= at + len(body):
+                t.text = body[:start - at] + gap + body[end - at:]
+                t.set(qn("xml:space"), "preserve")
+                n += 1
+                break
+            at += len(body)
     return n
 
 
@@ -1135,11 +1194,18 @@ def diag_empty_in_column(table, header):
     return n
 
 
-def table_font_size(document, half_points=20, keep_smaller=True):
+def table_font_size(document, half_points=20, keep_smaller=True, skip=()):
     """표 안 글씨를 굴림 10(sz 20)으로 맞춘다.
-    keep_smaller 이면 이미 10보다 작게 줄여 둔 칸(일탈·변경 서술)은 그대로 둔다."""
+
+    keep_smaller 이면 이미 10보다 작게 줄여 둔 칸(일탈·변경 서술)은 그대로 둔다.
+    skip 은 손대지 않을 표 번호 — 목차는 점선(‘------’)이 글자라, 글씨를 줄이면 점선이
+    짧아져 쪽 번호 앞에 빈 자리가 생긴다(담당자 2026-09: "목차는 왼쪽과 동일하게").
+    """
     n = 0
+    skip_tbls = {document.tables[i]._tbl for i in skip}
     for tbl in document.element.body.iter(qn("w:tbl")):
+        if tbl in skip_tbls:
+            continue
         for r in tbl.iter(qn("w:r")):
             if not any(t.text for t in r.findall(qn("w:t"))):
                 continue

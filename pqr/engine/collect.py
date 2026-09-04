@@ -40,6 +40,7 @@ class ProductData(object):
         self.api_chain = {}
         self.stability_files = []   # 스캔 PDF (손글씨) — 비전 판독 대상
         self.stability_logs = []    # 13항 시험일지 판독 결과 (비전 또는 담당자가 적은 .json)
+        self.pv_reasons = {}        # {제조번호: 밸리데이션 실시 사유} — 전년도 결재본 10.1 에서
         self.previous_report = None
         self.files = {}           # item -> [paths]
         self.issues = []          # [(항, 파일, 설명)]

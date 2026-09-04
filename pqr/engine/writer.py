@@ -260,7 +260,11 @@ def write_report(folder, product, period, out_path, today=None, recipe=None, log
         try:
             prev_docx = os.path.join(work, "prev.docx")
             convert.to_docx(previous, prev_docx)
-            carry_module.carry(document, docx.Document(prev_docx), log_)
+            old_document = docx.Document(prev_docx)
+            carry_module.carry(document, old_document, log_)
+            data.pv_reasons = carry_module.pv_reasons(old_document)
+            if data.pv_reasons:
+                log_("전년도 10.1 에서 밸리데이션 사유 %d Lot" % len(data.pv_reasons))
         except Exception as error:
             log_("전년도 결재본을 참고하지 못했습니다 — %s" % error)
             data.issues.append(("16", os.path.basename(previous),
