@@ -349,6 +349,14 @@ def _program_root():
     return os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
+def cmd_doctor(args):
+    """옛 워드(.doc) 변환·엑셀 채우기가 이 PC 에서 되는지 알아봅니다."""
+    from .doctor import report
+    for line in report():
+        _print(line)
+    return 0
+
+
 def cmd_update(args):
     """최신 버전을 내려받아 프로그램 파일을 바꿉니다.
 
@@ -608,6 +616,10 @@ def build_parser():
     narrate_cmd.add_argument("--dry-run", action="store_true",
                              help="전송될 내용만 출력하고 API 를 호출하지 않음")
     narrate_cmd.set_defaults(func=cmd_narrate)
+
+    doctor_cmd = subparsers.add_parser(
+        "doctor", help="이 PC 에서 무엇이 되고 무엇이 막혔는지 알아봅니다")
+    doctor_cmd.set_defaults(func=cmd_doctor)
 
     update_cmd = subparsers.add_parser(
         "update", help="프로그램을 최신 버전으로 바꿉니다 (입력 폴더는 건드리지 않습니다)")
