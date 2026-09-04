@@ -332,3 +332,91 @@ def to_pdf(src, dst):
     if _pdf_with_soffice(src, dst):
         return "soffice"
     raise ConvertError("보고서를 화면에 띄우려면 Word 또는 LibreOffice 가 필요합니다.")
+
+
+# ---------- 목차 쪽수 등 필드 다시 계산 ----------
+def _fields_via_vbscript(path):
+    return _vbscript(
+        'On Error Resume Next\n'
+        'Set w = CreateObject("Word.Application")\n'
+        'If Err.Number <> 0 Then WScript.Quit 1\n'
+        'w.Visible = False\n'
+        'w.DisplayAlerts = 0\n'
+        'Set d = w.Documents.Open(%s, False, False, False)\n'
+        'If Err.Number <> 0 Then w.Quit : WScript.Quit 1\n'
+        'For pass = 1 To 2\n'
+        '  d.Repaginate\n'
+        '  For Each s In d.StoryRanges\n'
+        '    s.Fields.Update\n'
+        '    Do While Not (s.NextStoryRange Is Nothing)\n'
+        '      Set s = s.NextStoryRange\n'
+        '      s.Fields.Update\n'
+        '    Loop\n'
+        '  Next\n'
+        'Next\n'
+        'd.Save\n'
+        'If Err.Number <> 0 Then d.Close 0 : w.Quit : WScript.Quit 1\n'
+        'd.Close 0\n'
+        'w.Quit\n'
+        'WScript.Quit 0\n' % _vbs_path(path))
+
+
+def _fields_via_powershell(path):
+    return _powershell(
+        "$ErrorActionPreference='Stop'\n"
+        "$w = New-Object -ComObject Word.Application\n"
+        "$w.Visible = $false\n"
+        "$w.DisplayAlerts = 0\n"
+        "try {\n"
+        "  $d = $w.Documents.Open(%s, $false, $false, $false)\n"
+        "  for ($i = 0; $i -lt 2; $i++) {\n"
+        "    $d.Repaginate()\n"
+        "    foreach ($s in $d.StoryRanges) {\n"
+        "      $r = $s\n"
+        "      while ($r -ne $null) { $r.Fields.Update() | Out-Null; $r = $r.NextStoryRange }\n"
+        "    }\n"
+        "  }\n"
+        "  $d.Save()\n"
+        "  $d.Close(0)\n"
+        "} finally { $w.Quit() }\n" % _ps_path(path))
+
+
+def _fields_via_pywin32(path):
+    import win32com.client
+    word = win32com.client.DispatchEx("Word.Application")
+    word.Visible = False
+    word.DisplayAlerts = 0
+    try:
+        doc = word.Documents.Open(os.path.abspath(path), False, False, False)
+        try:
+            for _ in range(2):
+                doc.Repaginate()
+                for story in doc.StoryRanges:
+                    here = story
+                    while here is not None:
+                        here.Fields.Update()
+                        here = here.NextStoryRange
+            doc.Save()
+        finally:
+            doc.Close(0)
+    finally:
+        word.Quit()
+    return True
+
+
+def refresh_fields(path):
+    """Word 로 열어 쪽 나눔을 다시 하고 모든 필드(목차 쪽수·머리글 Page)를 계산해 저장한다.
+
+    담당자 PC 에서 목차 쪽수가 전부 '1' 로 나왔다(2026-09, 디겐타안연고). 필드에
+    dirty 표시를 달아 두면 Word 가 열면서 갱신하지만, 쪽 나눔이 끝나기 전에 갱신해
+    PAGEREF 가 1 로 잡히는 일이 있다. 만든 자리에서 Word 로 한 번 계산해 두면 파일을
+    열자마자 맞는 쪽수가 보인다. Word 가 없으면(리눅스 등) 아무 일도 하지 않고 False.
+    """
+    del last_error[:]
+    for how in (_fields_via_pywin32, _fields_via_powershell, _fields_via_vbscript):
+        try:
+            if how(path):
+                return True
+        except Exception as error:
+            last_error.append("%s: %s" % (how.__name__, error))
+    return False

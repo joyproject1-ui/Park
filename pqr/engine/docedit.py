@@ -151,6 +151,49 @@ def add_diag(cell):
     el.set(qn("w:color"), "000000")
 
 
+def has_diag(cell):
+    pr = cell._tc.find(qn("w:tcPr"))
+    borders = pr.find(qn("w:tcBorders")) if pr is not None else None
+    return borders is not None and any(borders.find(qn(t)) is not None for t in ("w:tl2br", "w:tr2bl"))
+
+
+NA_ONLY = re.compile(r"^\s*(N\s*/\s*A|해당\s*없음|없음)\s*$", re.I)
+
+
+def drop_na_in_diag_cells(document):
+    """사선을 그은 칸에 남아 있는 'N/A' 를 지운다. 지운 칸 수를 돌려준다.
+
+    담당자 지시(2026-09): "비고에 사선이 그어졌으니 N/A 는 삭제해줘." 사선이 곧 '해당 없음'
+    이라 글자를 겹쳐 적지 않는다.
+    """
+    gone = 0
+    for table in document.tables:
+        for row in table.rows:
+            for cell in raw_cells(row):
+                if has_diag(cell) and NA_ONLY.match(cell_text(cell) or ""):
+                    set_cell(cell, "")
+                    gone += 1
+    return gone
+
+
+def highlight(document, needle="확인 필요", color="yellow"):
+    """그 글이 든 런에 형광펜을 칠한다. 칠한 런 수를 돌려준다.
+
+    담당자 지시(2026-09): "확인 필요 내용은 노랑 마크를 칠해줘" — 채우지 못해 담당자가
+    직접 봐야 하는 칸을 한눈에 찾게 한다.
+    """
+    n = 0
+    for run in document.element.body.iter(qn("w:r")):
+        text = "".join(t.text or "" for t in run.findall(qn("w:t")))
+        if needle not in text:
+            continue
+        rpr = run.get_or_add_rPr()
+        el = get_or_add(rpr, "highlight")
+        el.set(qn("w:val"), color)
+        n += 1
+    return n
+
+
 # ---------- 문서 전체 ----------
 def loose(text):
     """빈칸 차이를 지운 꼴 — 같은 문구라도 결재본마다 일반 공백과 \xa0(줄바꿈 없는 공백)가 섞여 있다.
@@ -220,6 +263,29 @@ def raw_cells(row):
     """python-docx 의 vMerge 해석을 거치지 않고 그 행이 실제로 가진 셀만 돌려준다."""
     from docx.table import _Cell
     return [_Cell(tc, row.table) for tc in row._tr.findall(qn("w:tc"))]
+
+
+def grid_width(table):
+    grid = table._tbl.find(qn("w:tblGrid"))
+    return len(grid.findall(qn("w:gridCol"))) if grid is not None else 0
+
+
+def grid_cells(row, width=None):
+    """그리드 열 번호 → 그 행의 칸. 가로 병합(gridSpan)은 첫 열에만 담는다.
+
+    요약 행은 첫 칸이 두 열을 덮는 일이 많아(‘최댓값’ 이 연번·Lot No. 를 함께 덮는다),
+    자리로 세면 값이 한 칸씩 밀린다 — 7항 수율에서 실제로 그렇게 나왔다.
+    """
+    width = grid_width(row.table) if width is None else width
+    out, col = {}, 0
+    for cell in raw_cells(row):
+        pr = cell._tc.find(qn("w:tcPr"))
+        span_el = pr.find(qn("w:gridSpan")) if pr is not None else None
+        span = int(span_el.get(qn("w:val"))) if span_el is not None else 1
+        if col < width:
+            out[col] = cell
+        col += span
+    return out
 
 
 def note_after(document, table, text, sample_needle="QC-126 제품품질평가규정"):
@@ -1286,6 +1352,35 @@ def strip_floating_lines(document, anchors):
             ac.getparent().remove(ac)
             n += 1
     return n
+
+
+NOTE_START = re.compile(r"^\s*(?:[*※•]|\d{1,2}\))")
+
+
+def drop_blank_after_note(document):
+    """각주 줄과 다음 항 제목 사이의 빈 줄을 없앤다. 지운 수를 돌려준다.
+
+    각주('* [RSF102] 플루오로메톨론 사용이력 없음.')는 바로 위 표에 딸린 글이라, 그 아래
+    빈 줄까지 두면 다음 항이 한 줄씩 밀려 표가 다음 쪽으로 넘어간다
+    (담당자: "쓸데없는 엔터는 지워줘").
+    """
+    body = document.element.body
+    kids = list(body)
+
+    def txt(el):
+        return "".join(t.text or "" for t in el.iter(qn("w:t"))).strip()
+
+    removed = 0
+    for i, el in enumerate(kids):
+        if not is_blank_para(el) or i == 0 or i + 1 >= len(kids):
+            continue
+        before, after = kids[i - 1], kids[i + 1]
+        if before.tag != qn("w:p") or after.tag != qn("w:p"):
+            continue
+        if NOTE_START.match(txt(before)) and re.match(r"^\d{1,2}(\.\d+)*\.?\s*\S", txt(after)):
+            body.remove(el)
+            removed += 1
+    return removed
 
 
 def collapse_blank_runs(document, keep=1, min_run=2, protect_before=()):

@@ -300,6 +300,13 @@ def write_report(folder, product, period, out_path, today=None, recipe=None, log
         raise EngineError("Word 가 열지 못할 문서입니다 — " + "; ".join(problems[:5]))
     log_("문서 검사 통과 (부품·관계·스타일·요소 차례)")
     log_("순서 검사 0 건 · 저장: %s" % os.path.basename(out_path))
+    # 목차 쪽수·머리글 Page 는 Word 가 쪽을 나눠 봐야 안다. 담당자 PC 에는 Word 가 있으므로
+    # 여기서 한 번 계산해 둔다 — 그러지 않으면 파일을 열었을 때 목차가 모두 '1' 로 보인다.
+    if convert.refresh_fields(out_path):
+        log_("목차 쪽수·머리글을 Word 로 다시 계산했습니다")
+    else:
+        log_("Word 가 없어 목차 쪽수는 파일을 열 때 계산됩니다 — 숫자가 모두 1 이면 "
+             "Ctrl+A 를 누르고 F9 를 누르세요")
     # 첨부 엑셀 — Cpk 계산 파일 4종(결재본 것을 물려받아 값 갱신) + 안정성 경향 분석
     attachments = []
     try:
@@ -309,7 +316,8 @@ def write_report(folder, product, period, out_path, today=None, recipe=None, log
                                                     attachment_source(folder, work) or previous, day)
         attachments += excel_attach.write_stability_workbook(
             os.path.dirname(out_path), data, product, day,
-            input_dir=os.path.dirname(os.path.abspath(folder)), report_path=out_path)
+            input_dir=os.path.dirname(os.path.abspath(folder)), report_path=out_path,
+            product_dir=folder)
         log_("첨부 엑셀: %s" % ", ".join(n for n, _ in attachments))
     except Exception as error:
         data.issues.append(("첨부", "", "첨부 엑셀 생성 실패: %s" % error))

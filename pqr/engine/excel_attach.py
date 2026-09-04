@@ -115,14 +115,33 @@ def write_cpk_files(folder, data, previous_path, today, lots=None):
     return out
 
 
-def _find_stability_form(folder, input_dir):
-    for base in (folder, os.path.join(input_dir or "", "서식"), input_dir or "",
+def _is_blank_form(path):
+    """제품명 칸(C3)이 비어 있으면 아직 채우지 않은 서식이다.
+
+    담당자가 올리는 서식 파일 이름에도 '결과'가 들어 있어(‘HLF-QC-126-06 안정성 시험 경향
+    분석 결과 (Rev.001).xlsx’) 이름만으로는 채운 파일과 가릴 수 없다 — 안을 보고 가린다.
+    """
+    try:
+        book = load_workbook(path, data_only=True, read_only=True)
+        try:
+            return not str(book.worksheets[0]["C3"].value or "").strip()
+        finally:
+            book.close()
+    except Exception:
+        return False
+
+
+def _find_stability_form(folder, input_dir, product_dir=None):
+    for base in (product_dir, folder, os.path.join(input_dir or "", "서식"), input_dir or "",
                  os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data")):
         if not base or not os.path.isdir(base):
             continue
-        for n in os.listdir(base):
-            if n.lower().endswith(".xlsx") and ("12606" in n.replace("-", "") or "126-06" in n) and "결과" not in n:
-                return os.path.join(base, n)
+        found = [os.path.join(base, n) for n in sorted(os.listdir(base))
+                 if n.lower().endswith(".xlsx") and not n.startswith("~$")
+                 and ("12606" in n.replace("-", "") or "126-06" in n)]
+        blank = [p for p in found if _is_blank_form(p)]
+        if blank:
+            return blank[0]
     return None
 
 
@@ -177,7 +196,8 @@ def _grouped(points):
     return [("", list(points.items()))]
 
 
-def write_stability_workbook(folder, data, product, today, input_dir=None, report_path=None):
+def write_stability_workbook(folder, data, product, today, input_dir=None, report_path=None,
+                             product_dir=None):
     """HLF-QC-126-06 — 시점별 함량을 채운다. 포장 규격이 나뉘어 있으면 파일도 나눈다.
 
     작성자(M3)·작성일(M4)은 보고서 본문의 작성자·작성일자와 같게 넣는다.
@@ -185,10 +205,13 @@ def write_stability_workbook(folder, data, product, today, input_dir=None, repor
     """
     stab = getattr(data, "stability", None)
     points = (stab or {}).get("points") or {}
-    form = _find_stability_form(folder, input_dir)
+    logs = getattr(data, "stability_logs", None)
+    form = _find_stability_form(folder, input_dir, product_dir)
     if not form:
         data.issues.append(("첨부", "", "안정성 경향 분석 서식(HLF-QC-126-06)을 찾지 못해 만들지 못함 — 제품 폴더나 입력 폴더의 '서식' 폴더에 두세요"))
         return []
+    if logs:
+        return _from_logs(form, folder, data, product, today, logs, report_path)
     if not points:
         data.issues.append(("첨부", "", "안정성 시험일지 판독값이 없어 경향 분석 파일을 만들지 못함 — 시험일지를 올리거나 담당자가 직접 기입"))
         return []
@@ -206,3 +229,57 @@ def write_stability_workbook(folder, data, product, today, input_dir=None, repor
                              prepared_by=author, prepared_on=today)
         made.append((name, dst))
     return made
+
+
+FORM_SHEETS = ("함량", "A", "B", "기타", "총", "pH", "삼투압")
+
+
+def _from_logs(form, folder, data, product, today, logs, report_path):
+    """시험일지 판독값(성분별 함량)으로 경향 분석 파일을 만든다 — 성분마다 시트 한 장.
+
+    평가 기간 안에 끝난 시점까지만 넣는다. 보고서 13.3 의 경향 범위와 같은 값이어야
+    한 벌의 자료로 읽힌다.
+    """
+    year_to = int((getattr(data, "period", None) or {}).get("to") or 0) or None
+    parts, spec = [], {}
+    for lot in data.coa.values() if isinstance(data.coa, dict) else []:
+        for a in (lot.get("924") or {}).get("assays") or []:
+            if a.get("part") and a["part"] not in parts:
+                parts.append(a["part"])
+                spec[a["part"]] = (_num(a.get("lo")) or 90, _num(a.get("hi")) or 110)
+    if not parts:
+        for one in logs:
+            for point in one.get("points", []):
+                for part in (point.get("assays") or {}):
+                    if part not in parts:
+                        parts.append(part)
+    if not parts:
+        data.issues.append(("첨부", "", "시험일지 판독값에 성분별 함량이 없어 경향 분석 파일을 만들지 못함"))
+        return []
+
+    def rows_for(part):
+        out = []
+        for one in logs:
+            vals = {}
+            for point in one.get("points", []):
+                got = re.findall(r"\d{4}", point.get("done") or "")
+                if year_to and got and int(got[0]) > year_to:
+                    continue
+                value = _num((point.get("assays") or {}).get(part))
+                if value is not None:
+                    vals[point["period"]] = float(value)
+            if vals:
+                out.append((one["lot"], vals))
+        return out
+
+    sheets = []
+    for i, part in enumerate(parts[:len(FORM_SHEETS)]):
+        lo, hi = spec.get(part, (90, 110))
+        sheets.append({"form_sheet": FORM_SHEETS[i], "name": "함량(%s)" % part,
+                       "item": "함량 - %s(%%)" % part, "lots": rows_for(part),
+                       "lcl": float(lo), "ucl": float(hi)})
+    name = "HLF-QC-126-06 안정성 시험 경향 분석 결과 - %s.xlsx" % (product.get("name") or "")
+    dst = os.path.join(folder, name)
+    stability_xlsx.build_multi(form, dst, product.get("name") or "", sheets,
+                               prepared_by=written_by(report_path), prepared_on=today)
+    return [(name, dst)]

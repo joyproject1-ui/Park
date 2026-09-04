@@ -217,6 +217,9 @@ def apply(document, log=None, product_title=None, edms=None):
             E.keep_tail_together(tbl, 6)
     protect = ("개 정 내 역", "제품품질평가 보고서") + ((product_title,) if product_title else ())
     log("빈 문단 뭉치 정리: %d" % E.collapse_blank_runs(document, keep=1, min_run=2, protect_before=protect))
+    log("각주 뒤 빈 줄 정리: %d" % E.drop_blank_after_note(document))
+    log("사선 칸의 N/A 삭제: %d" % E.drop_na_in_diag_cells(document))
+    log("‘확인 필요’ 노랑 표시: %d" % E.highlight(document, "확인 필요"))
     log("행 분할 금지: %d" % E.no_split_rows(document))
     keep = 0
     for ti in _tables_under(document, ("8.2.1", "8.2.2", "13.2")):

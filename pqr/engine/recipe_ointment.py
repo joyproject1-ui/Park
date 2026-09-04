@@ -386,20 +386,26 @@ def fill(document, data, product, period, today=None, log=None):
         summary = [(l + 1, lambda xs: "%.2f" % max(xs)),
                    (l + 2, lambda xs: "%.2f" % min(xs)),
                    (l + 3, avg)]
+        # 칸은 그리드 열 번호로 짚는다 — 요약 행은 '최댓값' 칸이 연번·Lot No. 두 열을 덮어
+        # 자리로 세면 값이 한 칸씩 밀린다(조제 자리에 사선, 비고 자리에 포장 수율).
+        width = E.grid_width(table)
         for ri, _fn in summary:
             if ri < len(table.rows):
-                for cell in E.raw_cells(table.rows[ri])[2:5]:
-                    E.set_vmerge(cell, False)
-                    E.clear_diag(cell)
+                cells = E.grid_cells(table.rows[ri], width)
+                for k in range(3):
+                    cell = cells.get(2 + k)
+                    if cell is not None:
+                        E.set_vmerge(cell, False)
+                        E.clear_diag(cell)
         stat_lots = [x for x in lots if x not in yield_out and all(v is not None for v in vals[x])]
         if stat_lots:
             cols = list(zip(*[[float(x) for x in vals[lt]] for lt in stat_lots]))
             for ri, fn in summary:
                 if ri >= len(table.rows):
                     continue
-                cells = E.raw_cells(table.rows[ri])
+                cells = E.grid_cells(table.rows[ri], width)
                 for k in range(3):
-                    if 2 + k < len(cells):
+                    if cells.get(2 + k) is not None:
                         E.set_cell(cells[2 + k], fn(cols[k]))
     if t7:
         fill_yield(t7[0], dom, True)
@@ -451,13 +457,13 @@ def fill(document, data, product, period, today=None, log=None):
                  (_key(r_.get("문서번호")).startswith(docno) or docno.startswith(_key(r_.get("문서번호")))),
                  lambda r_: bool(vendor) and len(vendor) >= 4 and _key(r_.get("공급업체명")) and
                  (vendor in _key(r_.get("공급업체명")) or _key(r_.get("공급업체명")).startswith(vendor))]
-        for test in tests:
+        for k, test in enumerate(tests):
             got = [r_ for r_ in both if test(r_)]
-            if len(got) == 1:
-                return got[0]
             if len(got) > 1:                      # 여럿이면 가장 최근에 평가한 줄
-                return max(got, key=lambda r_: _norm_date(r_.get("평가승인일")))
-        return None
+                got = [max(got, key=lambda r_: _norm_date(r_.get("평가승인일")))]
+            if got:
+                return got[0], (k == 0)           # 원료코드로 찾았는지
+        return None, False
 
     def _put(cells, col, text):
         if col is None or col >= len(cells) or not text:
@@ -476,7 +482,7 @@ def fill(document, data, product, period, today=None, log=None):
         for tb in _tables(document, prefix):
             col = _cols(tb, ("code", ("관리번호", "코드")), ("name", ("원/자재명", "원자재명", "자재명", "원료명")),
                         ("maker", ("제조원", "제조소")), ("doc", ("문서번호", "평가문서")),
-                        ("result", ("평가결과",)), ("day", ("완료일", "승인일")))
+                        ("result", ("평가결과",)), ("day", ("완료일", "승인일")), ("spec", ("규격",)))
             if col["code"] is None:
                 continue
             for row in tb.rows[1:]:
@@ -484,17 +490,27 @@ def fill(document, data, product, period, today=None, log=None):
                 if len(cells) <= col["code"]:
                     continue
                 take = lambda k: E.cell_text(cells[col[k]]).strip() if col[k] is not None and col[k] < len(cells) else ""
-                got = _supplier(take("code"), take("doc"), take("maker"))
+                got, by_code = _supplier(take("code"), take("doc"), take("maker"))
                 if not got:
                     continue
                 grade = str(got.get("평가등급") or "").strip().upper()
-                upd81 += _put(cells, col["maker"], _company(got.get("공급업체명")))
+                if by_code or not take("maker"):
+                    # 자재는 코드가 아니라 평가문서번호로 찾으므로, 목록의 업체명이 결재본의
+                    # 제조원 이름과 다를 수 있다(‘린하르트 GmbH (Pausa) Linhardt GmbH (Pausa)’).
+                    # 코드로 정확히 찾았을 때만 덮어쓰고, 아니면 쓰여 있는 이름을 둔다.
+                    upd81 += _put(cells, col["maker"], _company(got.get("공급업체명")))
                 upd81 += _put(cells, col["doc"], (got.get("문서번호") or "").strip())
                 upd81 += _put(cells, col["day"], _norm_date(got.get("평가승인일")))
                 if grade in ("A", "B"):
                     upd81 += _put(cells, col["result"], "적합")
                 elif grade:
                     grade_odd.append("%s(%s등급)" % (E.cell_text(cells[col["code"]]).strip(), grade))
+                # 포장자재(P 코드)의 규격은 자사규격이다 — 원료처럼 공정서(KP·USP …)가 없다
+                # (담당자 2026-09: "설명서, 케이스는 자사규격인데").
+                code_text = take("code")
+                if code_text.upper().startswith("P") and col["spec"] is not None \
+                        and col["spec"] < len(cells) and not take("spec"):
+                    upd81 += _put(cells, col["spec"], "자사규격")
                 if col["name"] is not None and col["name"] < len(cells) and not E.cell_text(cells[col["name"]]).strip():
                     korean = re.split(r"(?=[A-Za-z])", str(got.get("공급되는 품목") or ""), 1)[0].strip()
                     upd81 += _put(cells, col["name"], korean)
@@ -1228,11 +1244,13 @@ def fill(document, data, product, period, today=None, log=None):
                 E.set_cell(c[0], str(i + 1))
                 # 변경사항: 변경 번호와 변경 내용만 (변경 사유는 적지 않는다 — 담당자 지시 2026-09)
                 lines = ["[%s] %s" % (cc.get("doc_no"), cc.get("title") or "")]
-                lines += [x for x in (cc.get("description") or "").split("\n") if x.strip()]
+                lines += brief_change(cc.get("description") or "")
                 E.set_cell_plain(c[1], *lines)
                 # 조치사항: 변경 실행 계획의 부서별 조치사항을 간추린다. 위탁사·위수탁 줄은 뺀다.
+                # 변경통보는 위탁사·거래처에 알리는 일이라 자사 제품 PQR 에는 적지 않는다
+                # (담당자 지시 2026-09: "변경통보는 삭제해줘 … 자사 제품내용만 PQR 에 작성").
                 acts = [a for team, a in (cc.get("actions") or [])
-                        if "위수탁" not in team and not re.search(r"위탁사|위수탁", a)]
+                        if "위수탁" not in team and not re.search(r"위탁사|위수탁|변경\s*통보", a)]
                 if acts:
                     E.set_cell_plain(c[2], *["%d. %s" % (k, a) for k, a in enumerate(acts, 1)])
                     issues.append(("12", cc.get("doc_no") or "",
@@ -1369,6 +1387,41 @@ def _fill_numbers(t, f, l, lots, n, cpk, rec, put, is_dom, limits=None):
         if cpk["particle"] is not None and cpk["assay"] is not None:
             put(t, l + 4, (1, 4), "%.2f" % cpk["particle"], "%.2f" % cpk["assay"])
             put(t, l + 5, (1, 4), "충분" if cpk["particle"] >= 1 else "부족", "충분" if cpk["assay"] >= 1 else "부족")
+
+
+# 변경사항 글을 간추린다 — 담당자 지시(2026-09): "변경은 간략히 작성해주면 돼"
+ITEM = re.compile(r"^\s*(\d{1,2})[.]\s*(.+)$")            # 1. 큰 항목
+SUB = re.compile(r"^\s*(?:\d{1,2}\)|[-–●○*]|[가-힣]\))\s*")  # 1) · - 같은 잔가지
+TAIL = re.compile(r"^\s*[:：]\s*(.+)$")                     # ': 내용' — 바로 위 항목에 붙는 설명
+
+
+def brief_change(text):
+    """변경요청서의 변경 내용에서 큰 항목만 남기고 잔가지를 버린다.
+
+    큰 항목('1. 안연고 튜브 자재 시험 검체 수량 확대')과 바로 뒤의 ': …' 설명을 한 줄로 잇고,
+    그 아래 '1)'·'-' 로 시작하는 세부 개정 목록은 버린다. 큰 항목이 하나도 없으면 원문을
+    그대로 둔다(항목 번호 없이 한두 줄로 적힌 변경건).
+    """
+    lines = [x.strip() for x in (text or "").split("\n") if x.strip()]
+    items = [x for x in lines if ITEM.match(x)]
+    if not items:
+        return lines
+    out, keeping = [], False
+    for line in lines:
+        if ITEM.match(line):
+            out.append(line)
+            keeping = True
+            continue
+        if SUB.match(line):
+            keeping = False                      # 잔가지부터는 그 아래 이어진 줄도 버린다
+            continue
+        tail = TAIL.match(line)
+        if tail and out:
+            out[-1] = "%s: %s" % (out[-1].rstrip(" :："), tail.group(1))
+            keeping = True
+        elif keeping and out:
+            out[-1] = "%s %s" % (out[-1], line)  # PDF 에서 줄이 접힌 것 — 앞줄에 잇는다
+    return out
 
 
 def _fill_stability26(document, logs, period, spec, log, issues):

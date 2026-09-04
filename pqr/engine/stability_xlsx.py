@@ -44,6 +44,15 @@ def _esc(s):
     return s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
 
+def _sref(name):
+    """수식 안의 시트 이름 — 늘 작은따옴표로 감싼다.
+
+    '함량(플루오로메톨론)' 처럼 괄호가 든 이름은 감싸지 않으면 엑셀이 수식을 읽지 못한다.
+    간단한 이름을 감싸는 것은 언제나 옳으므로 가리지 않고 감싼다.
+    """
+    return "'%s'" % _esc(str(name or "").replace("'", "''"))
+
+
 def set_cell(xml, ref, value, style=None):
     """sheet XML 문자열의 한 칸을 바꾼다. 없는 칸이면 그대로 둔다."""
     m = re.search(r'<c r="%s"(?P<attrs>[^>]*?)(?P<end>/>|>)' % re.escape(ref), xml)
@@ -162,7 +171,7 @@ def _cat(sheet, n):
                   for i, p in enumerate(POINTS[:n]))
     return ('<c:cat><c:strRef><c:f>%s!$C$71:$%s$71</c:f><c:strCache>'
             '<c:ptCount val="%d"/>%s</c:strCache></c:strRef></c:cat>'
-            % (sheet, COLS[n - 1], n, pts))
+            % (_sref(sheet), COLS[n - 1], n, pts))
 
 
 def _ser(sheet, i, row, name, values, n):
@@ -184,8 +193,8 @@ def _ser(sheet, i, row, name, values, n):
         '<c:val><c:numRef><c:f>%s!$C$%d:$%s$%d</c:f><c:numCache>'
         '<c:formatCode>0.0_);[Red]\\(0.0\\)</c:formatCode><c:ptCount val="%d"/>%s'
         '</c:numCache></c:numRef></c:val><c:smooth val="0"/></c:ser>'
-        % (i, i, sheet, row, _esc(name), color, color, color, _cat(sheet, n),
-           sheet, row, COLS[n - 1], row, n, "".join(pts)))
+        % (i, i, _sref(sheet), row, _esc(name), color, color, color, _cat(sheet, n),
+           _sref(sheet), row, COLS[n - 1], row, n, "".join(pts)))
 
 
 def _limit(sheet, idx, row, name, value, rgb, n):
@@ -200,8 +209,8 @@ def _limit(sheet, idx, row, name, value, rgb, n):
         '<c:val><c:numRef><c:f>%s!$C$%d:$%s$%d</c:f><c:numCache>'
         '<c:formatCode>0;\\-0;;@</c:formatCode><c:ptCount val="%d"/>%s'
         '</c:numCache></c:numRef></c:val><c:smooth val="0"/></c:ser>'
-        % (idx, idx, sheet, row, _esc(name), rgb, _cat(sheet, n),
-           sheet, row, COLS[n - 1], row, n, pts))
+        % (idx, idx, _sref(sheet), row, _esc(name), rgb, _cat(sheet, n),
+           _sref(sheet), row, COLS[n - 1], row, n, pts))
 
 
 def _rebuild_chart(xml_bytes, sheet, lots, lcl, ucl):
@@ -274,19 +283,96 @@ def _chart_part(data, sheet_part):
     return None
 
 
-def build(form, out, product, lots, item="함량(%)",
-          storage="25±2℃\n60±5%RH", lcl=90, ucl=110, remark="N/A",
-          prepared_by="", prepared_on="", sheet_name="함량"):
-    """서식(form)을 복제해 lots 를 채운 파일을 out 에 만든다.
+def rename_sheet(data, old, new):
+    """시트 이름을 바꾼다 (workbook.xml 의 이름과 인쇄 영역 이름 안의 시트 이름)."""
+    if old == new:
+        return
+    wb = data["xl/workbook.xml"].decode("utf-8")
+    wb = re.sub(r'(<sheet name=")%s(")' % re.escape(_esc(old)),
+                lambda m: m.group(1) + _esc(new) + m.group(2), wb, count=1)
+    for quoted in ("'%s'" % _esc(old), _esc(old)):
+        wb = wb.replace(">%s!$" % quoted, ">%s!$" % _sref(new))
+    data["xl/workbook.xml"] = wb.encode("utf-8")
 
-    lots: [(제조번호, {"Initial": 100.5, "12M": 97.5, ...}), ...]
-    작성자·작성일은 보고서 본문의 작성자·작성일자와 같게 넣는다(기본값은 빈칸).
+
+def _related_parts(data, part):
+    """part 와 거기에 딸린 부품(그림·차트·프린터 설정 …) 이름을 모두 모은다."""
+    found, todo = set(), [part]
+    while todo:
+        here = todo.pop()
+        if here in found or here not in data:
+            continue
+        found.add(here)
+        rel = os.path.join(os.path.dirname(here), "_rels",
+                           os.path.basename(here) + ".rels").replace("\\", "/")
+        if rel not in data:
+            continue
+        found.add(rel)
+        for r in etree.fromstring(data[rel]):
+            target = r.get("Target") or ""
+            if r.get("TargetMode") == "External" or target.startswith("/"):
+                continue
+            todo.append(os.path.normpath(os.path.join(os.path.dirname(here), target)).replace("\\", "/"))
+    return found
+
+
+def drop_sheets(data, names, keep):
+    """keep 에 없는 시트를 통째로 뺀다. 남은 이름 목록(zip 차례)을 돌려준다.
+
+    담당자가 쓰는 서식은 시험항목마다 시트가 하나씩(pH·삼투압·함량·A·B·기타·총) 들어 있고,
+    실제 결재본에는 쓴 시트만 남긴다. 빈 시트를 그대로 두면 결재 문서로 쓸 수 없다.
     """
-    zin = zipfile.ZipFile(form)
-    names = zin.namelist()
-    data = {n: zin.read(n) for n in names}
-    zin.close()
+    wb = etree.fromstring(data["xl/workbook.xml"])
+    rels = etree.fromstring(data["xl/_rels/workbook.xml.rels"])
+    target = {r.get("Id"): r.get("Target") for r in rels}
+    sheets = wb.find("{%s}sheets" % NS_S)
+    order, drop_ids, gone, stay = [], [], set(), set()
+    for sh in list(sheets):
+        rid = sh.get("{%s}id" % NS_R)
+        part = ("xl/" + (target.get(rid) or "").lstrip("/"))
+        if sh.get("name") in keep:
+            order.append(sh.get("name"))
+            stay |= _related_parts(data, part)
+            continue
+        sheets.remove(sh)
+        drop_ids.append(rid)
+        gone |= _related_parts(data, part)
+    gone -= stay        # 로고 그림처럼 남는 시트도 함께 쓰는 부품은 지우지 않는다
+    if not drop_ids:
+        return names
+    # 인쇄 영역 같은 이름은 시트 차례(localSheetId)로 매기므로 다시 매긴다
+    defined = wb.find("{%s}definedNames" % NS_S)
+    if defined is not None:
+        index = {name: i for i, name in enumerate(order)}
+        for dn in list(defined):
+            owner = (dn.text or "").split("!")[0].strip().strip("'").replace("''", "'")
+            if owner not in index:
+                defined.remove(dn)
+            else:
+                dn.set("localSheetId", str(index[owner]))
+        if not len(defined):
+            wb.remove(defined)
+    for view in wb.iter("{%s}workbookView" % NS_S):
+        view.set("activeTab", "0")
+    data["xl/workbook.xml"] = etree.tostring(wb, xml_declaration=True, encoding="UTF-8",
+                                             standalone=True)
+    for r in list(rels):
+        if r.get("Id") in drop_ids:
+            rels.remove(r)
+    data["xl/_rels/workbook.xml.rels"] = etree.tostring(rels, xml_declaration=True,
+                                                        encoding="UTF-8", standalone=True)
+    ct = data["[Content_Types].xml"].decode("utf-8")
+    for part in gone:
+        ct = re.sub(r'<Override PartName="/%s"[^>]*/>' % re.escape(part), "", ct)
+    data["[Content_Types].xml"] = ct.encode("utf-8")
+    for part in gone:
+        data.pop(part, None)
+    return [n for n in names if n not in gone]
 
+
+def _fill_sheet(data, sheet_name, product, lots, item, storage, lcl, ucl, remark,
+                prepared_by, prepared_on):
+    """서식 한 시트에 값과 그래프를 채운다. (시트 이름, 부품 경로) 를 돌려준다."""
     sheet, part = _sheet_part(data, sheet_name)
     xml = data[part].decode("utf-8")
     xml = set_cell(xml, "C3", product)
@@ -327,7 +413,10 @@ def build(form, out, product, lots, item="함량(%)",
     drawing = _drawing_part(data, part)
     if drawing and drawing in data:
         data[drawing], _ = strip_floating_lines(data[drawing])
+    return sheet, part
 
+
+def _save(data, names, out):
     wb = data["xl/workbook.xml"].decode("utf-8")       # 열 때 수식을 다시 계산하게 한다
     if "fullCalcOnLoad" not in wb:
         wb = re.sub(r'<calcPr([^>]*?)/>', r'<calcPr\1 fullCalcOnLoad="1"/>', wb)
@@ -344,6 +433,50 @@ def build(form, out, product, lots, item="함량(%)",
 
     zout = zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED)
     for n in names:
-        zout.writestr(n, data[n])
+        if n in data:
+            zout.writestr(n, data[n])
     zout.close()
     return out
+
+
+def _open(form):
+    zin = zipfile.ZipFile(form)
+    names = zin.namelist()
+    data = {n: zin.read(n) for n in names}
+    zin.close()
+    return data, names
+
+
+def build(form, out, product, lots, item="함량(%)",
+          storage="25±2℃\n60±5%RH", lcl=90, ucl=110, remark="N/A",
+          prepared_by="", prepared_on="", sheet_name="함량"):
+    """서식(form)을 복제해 lots 를 채운 파일을 out 에 만든다.
+
+    lots: [(제조번호, {"Initial": 100.5, "12M": 97.5, ...}), ...]
+    작성자·작성일은 보고서 본문의 작성자·작성일자와 같게 넣는다(기본값은 빈칸).
+    """
+    data, names = _open(form)
+    _fill_sheet(data, sheet_name, product, lots, item, storage, lcl, ucl, remark,
+                prepared_by, prepared_on)
+    return _save(data, names, out)
+
+
+def build_multi(form, out, product, sheets, storage="25±2℃\n60±5%RH", remark="N/A",
+                prepared_by="", prepared_on=""):
+    """시험항목이 여럿인 제품 — 서식의 시트를 하나씩 써서 한 파일에 담는다.
+
+    sheets: [{"form_sheet": 서식의 시트 이름, "name": 새 시트 이름, "item": 시험항목,
+              "lots": [(제조번호, {시점: 값}), …], "lcl": 하한, "ucl": 상한}, …]
+    쓰지 않은 시트는 뺀다 — 디겐타안연고는 함량이 성분마다 하나씩(플루오로메톨론·겐타마이신
+    황산염) 이라 두 장이 필요하고, 나머지 다섯 장(pH·삼투압 …)은 이 제품에 없는 항목이다.
+    """
+    data, names = _open(form)
+    keep = []
+    for spec in sheets:
+        rename_sheet(data, spec["form_sheet"], spec["name"])
+        keep.append(spec["name"])
+        _fill_sheet(data, spec["name"], product, spec["lots"], spec.get("item", "함량(%)"),
+                    storage, spec.get("lcl", 90), spec.get("ucl", 110), remark,
+                    prepared_by, prepared_on)
+    names = drop_sheets(data, names, keep)
+    return _save(data, names, out)

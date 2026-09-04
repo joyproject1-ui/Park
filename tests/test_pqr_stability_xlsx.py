@@ -288,6 +288,7 @@ class PointsShownTest(unittest.TestCase):
     def test_그래프_범위가_36M_열까지_잡힌다(self):
         lots = [("OEV301", {"Initial": 100.5, "36M": 102.8})]
         out = S._rebuild_chart(CHART.encode("utf-8"), "함량", lots, 90, 110).decode("utf-8")
-        self.assertIn("함량!$C$72:$J$72", out)          # J = 36M
+        # 시트 이름은 늘 따옴표로 감싼다 — 괄호가 든 이름('함량(플루오로메톨론)')도 읽히게
+        self.assertIn("'함량'!$C$72:$J$72", out)        # J = 36M
         self.assertIn('<c:ptCount val="8"/>', out)
         self.assertNotIn("$L$71", out)
