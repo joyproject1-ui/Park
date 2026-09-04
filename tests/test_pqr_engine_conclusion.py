@@ -10,10 +10,11 @@ from pqr.engine import conclusion as C
 
 
 class 문안(unittest.TestCase):
-    def test_Cpk_1_미만이_없으면_종합_문장_하나(self):
+    def test_Cpk_1_미만이_없으면_번호_없는_종합_문장_하나(self):
+        # 문단이 하나뿐이면 번호를 붙이지 않는다 (담당자 확인 2026-09, 2026 디겐타 결재본).
         got = C.texts("퀴노비드안연고(오플록사신)", "퀴노비드안연고", True, 17, 2025, 2026, 4, [])
         self.assertEqual(len(got), 1)
-        self.assertTrue(got[0].startswith("16.1 퀴노비드안연고(오플록사신)에 대한 제품품질평가 결과"))
+        self.assertTrue(got[0].startswith("퀴노비드안연고(오플록사신)에 대한 제품품질평가 결과"))
         self.assertIn("해당되는 사항은 없음을 확인하였음.", got[0])
         self.assertNotIn("10 Lot", got[0])                  # 미산출 문장은 결론에 쓰지 않는다
         self.assertNotIn("Cpk", got[0])
@@ -56,7 +57,7 @@ class 문서에넣기(unittest.TestCase):
         self.assertEqual(n, 1)
         texts = [p.text for p in d.paragraphs]
         self.assertEqual(texts[1], "16. 결론")
-        self.assertTrue(texts[2].startswith("16.1 퀴노비드안연고(오플록사신)에 대한"))
+        self.assertTrue(texts[2].startswith("퀴노비드안연고(오플록사신)에 대한"))
         self.assertEqual(texts[3], "17. 참고 자료")
         self.assertEqual(len(d.tables), 0)
 
