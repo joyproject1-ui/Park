@@ -791,9 +791,13 @@ def fix_all_table_widths(document, skip=()):
 
 
 def zero_cell_spacing(document, skip=()):
-    """표 안 모든 문단의 앞·뒤 간격을 0 으로. (Style12 가 앞뒤 14pt 를 물려줘
-    칸 안 글씨가 위로 치우치고 행이 불필요하게 높아진다 — Word 의
-    '단락 앞/뒤 공백 제거' 와 같은 조치.)"""
+    """표 안 모든 문단의 줄 모양을 하나로 맞춘다 — 앞·뒤 간격 0, 줄 간격 1줄, 들여쓰기 없음.
+
+    담당자 지시(2026-09): "모든 표 안의 모든 글씨는 동일하게 맞춰줘." 전년도 결재본은 칸마다
+    줄 간격(240 exact · 315 atLeast · 360 auto …)과 들여쓰기(firstLine 600 · hanging 600 · 없음)가
+    제각각이라, 같은 글인데도 조제 성상은 두 줄 사이가 벌어지고 충전 성상은 붙어 보였다.
+    Style12 가 물려주는 앞뒤 14pt 도 함께 지운다(Word 의 '단락 앞/뒤 공백 제거').
+    """
     n = 0
     skip_tbls = {document.tables[i]._tbl for i in skip}
     for tbl in document.element.body.iter(qn("w:tbl")):
@@ -808,9 +812,14 @@ def zero_cell_spacing(document, skip=()):
                 sp = get_or_add(pr, "spacing")
                 sp.set(qn("w:before"), "0")
                 sp.set(qn("w:after"), "0")
+                sp.set(qn("w:line"), "240")            # 1줄 — 칸마다 다르던 줄 높이를 맞춘다
+                sp.set(qn("w:lineRule"), "auto")
                 for k in ("w:beforeLines", "w:afterLines", "w:beforeAutospacing", "w:afterAutospacing"):
                     if sp.get(qn(k)) is not None:
                         del sp.attrib[qn(k)]
+                ind = pr.find(qn("w:ind"))             # 첫 줄·내어쓰기 들여쓰기는 칸마다 달라 지운다
+                if ind is not None:
+                    pr.remove(ind)
                 n += 1
     return n
 
