@@ -362,20 +362,30 @@ def fill(document, data, product, period, today=None, log=None):
 
     # ---------- 8.2 시험성적 ----------
     def group_fill(table, records):
-        """records: [(원료 코드, 원료명, 시험번호, [Lot ...]), ...] — 시험번호마다 Lot 수만큼 행."""
-        total = sum(len(x[3]) for x in records)
-        if not total:
+        """records: [(원료 코드, 원료명, 시험번호, [Lot ...]), ...] — Lot 하나가 한 줄.
+
+        2026 결재본 차림새: **연번은 줄마다** 매기고, **원료 코드·원료명은 같은 원료끼리**,
+        시험 성적 번호는 같은 번호끼리 세로로 합친다. 결과(적합)와 적용 Lot 은 줄마다 적는다.
+        담당자 지적: "같은 원료 및 코드는 셀병합해줘."
+        """
+        rows = [(code, item, test, lot) for code, item, test, lots in records for lot in lots]
+        if not rows:
             return
-        f, l = E.fit_rows(table, 1, len(table.rows) - 1, total)
-        ri = f
-        for gi, (code, item, test_no, lots) in enumerate(records, start=1):
-            for li, lot in enumerate(lots):
-                r = E.raw_cells(table.rows[ri]); head = (li == 0)
-                for k, v in ((0, str(gi)), (1, code), (2, item), (3, test_no)):
-                    E.set_cell(r[k], v if head else ""); E.set_vmerge(r[k], "restart" if head else None)
-                E.set_cell(r[4], lot); E.set_vmerge(r[4], False)
-                E.set_cell(r[5], "적합" if head else ""); E.set_vmerge(r[5], "restart" if head else None)
-                ri += 1
+        f, l = E.fit_rows(table, 1, len(table.rows) - 1, len(rows))
+        prev = None
+        for i, (code, item, test, lot) in enumerate(rows):
+            r = E.raw_cells(table.rows[f + i])
+            # 열마다 '같은 묶음' 의 기준이 다르다 — 원료명은 원료가 바뀌면, 시험번호는 원료나
+            # 번호가 바뀌면 새로 시작한다.
+            keys = (code, (code, item), (code, test))
+            E.set_cell(r[0], str(i + 1)); E.set_vmerge(r[0], False)
+            for k, value in ((1, code), (2, item), (3, test)):
+                head = prev is None or keys[k - 1] != prev[k - 1]
+                E.set_cell(r[k], value if head else "")
+                E.set_vmerge(r[k], "restart" if head else None)
+            E.set_cell(r[4], lot); E.set_vmerge(r[4], False)
+            E.set_cell(r[5], "적합"); E.set_vmerge(r[5], False)
+            prev = keys
 
     def material_names(table):
         """결재본 8.2 표에 적힌 {원료 코드: 원료명} — 코드에 붙일 한글 이름은 여기에만 있다."""
@@ -411,23 +421,13 @@ def fill(document, data, product, period, today=None, log=None):
         tbl = t822[0]
         base_rows = {E.cell_text(E.raw_cells(r)[1]).strip(): E.cell_text(E.raw_cells(r)[2]).strip()
                      for r in tbl.rows[1:] if len(E.raw_cells(r)) > 2}
-        total = sum(len(ls) for _, _, ls in data.pkg_tests if any(l in dom + exp for l in ls))
-        if total:
-            f, l = E.fit_rows(tbl, 1, len(tbl.rows) - 1, total)
-            ri = f; gi = 0
-            for code, test, ls in data.pkg_tests:
-                ls = [x for x in ls if x in dom + exp]
-                if not ls:
-                    continue
-                gi += 1
-                for li, lot in enumerate(ls):
-                    r = E.raw_cells(tbl.rows[ri]); head = (li == 0)
-                    item = base_rows.get(code, "튜브 (수출용)" if lot in exp else "튜브 (내수용)")
-                    for k, v in ((0, str(gi)), (1, code), (2, item), (3, test)):
-                        E.set_cell(r[k], v if head else ""); E.set_vmerge(r[k], "restart" if head else None)
-                    E.set_cell(r[4], lot); E.set_vmerge(r[4], False)
-                    E.set_cell(r[5], "적합" if head else ""); E.set_vmerge(r[5], "restart" if head else None)
-                    ri += 1
+        recs = []
+        for code, test, ls in data.pkg_tests:
+            ls = [x for x in ls if x in dom + exp]
+            if ls:
+                item = base_rows.get(code) or ("튜브 (수출용)" if ls[0] in exp else "튜브 (내수용)")
+                recs.append((code, item, test, ls))
+        group_fill(tbl, recs)                  # 1차 포장 자재도 같은 차림새다 (담당자 지적)
 
     # ---------- 9항 ----------
     def spec_of(t91, words):

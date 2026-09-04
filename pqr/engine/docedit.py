@@ -567,6 +567,61 @@ def fix_table_widths(table):
     return n
 
 
+def text_width(document, section=0):
+    """본문 폭(dxa) — 쪽 폭에서 좌우 여백을 뺀 값."""
+    sect = document.sections[section]
+    pg = sect._sectPr.find(qn("w:pgSz"))
+    mar = sect._sectPr.find(qn("w:pgMar"))
+    if pg is None or mar is None:
+        return 0
+    try:
+        return int(pg.get(qn("w:w"))) - int(mar.get(qn("w:left"))) - int(mar.get(qn("w:right")))
+    except (TypeError, ValueError):
+        return 0
+
+
+def fit_to_window(table, width):
+    """표를 '창에 자동으로 맞춤' 으로 — 본문 폭에 딱 맞춘다. 바꿨으면 True.
+
+    담당자 지시(2026-09): "표 크기는 창에 자동으로 맞춤으로 조정해줘. 모든 표에 해당이 돼."
+    전년도 결재본에서 물려받은 표는 본문 폭(9978)보다 넓은 것이 있어(10105) 오른쪽 여백을
+    넘었다. 그리드를 본문 폭에 비례로 다시 나누고, 표 너비를 100%(pct 5000)로 둔다 —
+    2026 결재본도 pct 로 되어 있다.
+    """
+    tbl = table._tbl
+    grid = tbl.find(qn("w:tblGrid"))
+    if grid is None or width <= 0:
+        return False
+    gcols = grid.findall(qn("w:gridCol"))
+    cols = [int(g.get(qn("w:w")) or 0) for g in gcols]
+    if not cols or not all(cols):
+        return False
+    total = sum(cols)
+    new = [max(1, int(round(c * width / float(total)))) for c in cols]
+    new[-1] = max(1, new[-1] + width - sum(new))          # 반올림 오차는 마지막 열에서 맞춘다
+    for g, w in zip(gcols, new):
+        g.set(qn("w:w"), str(w))
+    for tr in tbl.findall(qn("w:tr")):
+        col = 0
+        for tc in tr.findall(qn("w:tc")):
+            tcpr = _tcpr(tc)
+            span_el = tcpr.find(qn("w:gridSpan"))
+            span = int(span_el.get(qn("w:val"))) if span_el is not None else 1
+            w = get_or_add(tcpr, "tcW")
+            w.set(qn("w:w"), str(sum(new[col:col + span]) or new[-1]))
+            w.set(qn("w:type"), "dxa")
+            col += span
+    pr = get_or_add(tbl, "tblPr")
+    tw = get_or_add(pr, "tblW")
+    tw.set(qn("w:w"), "5000")
+    tw.set(qn("w:type"), "pct")
+    get_or_add(pr, "tblLayout").set(qn("w:type"), "autofit")
+    ind = get_or_add(pr, "tblInd")
+    ind.set(qn("w:w"), "0")
+    ind.set(qn("w:type"), "dxa")
+    return True
+
+
 UNIT = 92           # 반각 한 자의 폭(twip) — 굴림 10pt 를 Word 로 재어 맞춤. 한글·전각은 2 단위
 CELL_MARGIN = 220   # 칸 좌우 여백(108×2) + 여유
 KEY_HEADS = ("연번", "no.", "lot no", "lot", "구분")
@@ -1257,6 +1312,20 @@ def split_year_by_lot(table, year_col, lot_col, max_rows):
 
 
 _VML_ID = [1000]
+
+
+def collapse_empty_block(table, first, last):
+    """비어 있는 first..last 행을 한 줄만 남기고 지운다. 지운 줄 수를 돌려준다.
+
+    담당자 지시(2026-09): "내용이 없으면 1행만 남겨두고 사선처리해줘." 2026 결재본의 8.2.3
+    신규 납품 제조원도 머리행 + 빈 줄 하나뿐이다. 빈 줄 셋에 사선을 걸치면 자리만 차지한다.
+    """
+    trs = table._tbl.findall(qn("w:tr"))
+    gone = 0
+    for tr in trs[first + 1:last + 1]:
+        tr.getparent().remove(tr)
+        gone += 1
+    return gone
 
 
 def draw_block_line(table, first, last, weight="0.5pt"):

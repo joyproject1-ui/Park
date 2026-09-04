@@ -136,7 +136,36 @@ def discover(folder, workdir=None, depth=3):
             items.setdefault(item, []).extend(paths)
 
     scan(folder, depth)
-    return items
+    root = os.path.abspath(folder)
+    return {item: _dedupe(paths, root) for item, paths in items.items()}
+
+
+def _dedupe(paths, root):
+    """같은 파일을 두 번 세지 않는다 — 이름과 크기가 같으면 한 번만.
+
+    담당자는 자료를 압축으로 올린 뒤 제품 폴더에서 압축을 풀어 두는 일이 흔하다. 그러면
+    같은 파일이 '…필요 자료/' 와 '…필요 자료.zip' 양쪽에 있어 두 번 읽히고, 8.2 시험결과표에
+    같은 줄이 두 벌 실린다(디겐타안연고 2026: 주원료 4줄이 8줄로).
+
+    남기는 것은 **제품 폴더 안에 실제로 있는 파일**이다 — 담당자가 열어 고치는 것이 그쪽이고,
+    압축 안의 것은 올릴 때 그대로 굳은 사본이라 손대면 어긋난다. 그래서 폴더와 압축을 둘 다
+    두어도 되고, 어느 한쪽만 두어도 된다.
+    """
+    def outside(path):
+        return not os.path.abspath(path).startswith(root)      # 압축에서 꺼낸 것은 밖에 있다
+
+    best, order = {}, []
+    for path in paths:
+        try:
+            key = (os.path.basename(path).lower(), os.path.getsize(path))
+        except OSError:
+            key = (path, None)
+        if key not in best:
+            best[key] = path
+            order.append(key)
+        elif outside(best[key]) and not outside(path):         # 폴더 안의 것이 나오면 그것으로
+            best[key] = path
+    return [best[key] for key in order]
 
 
 def _lot_from_name(name):

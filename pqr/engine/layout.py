@@ -133,6 +133,9 @@ def apply(document, log=None, product_title=None, edms=None):
     # 9.2 세부표는 열마다 글 길이가 달라, 한 열만 여러 줄로 늘어지면 줄 수가 같아지도록 다시 나눈다
     balanced = sum(1 for ti in _tables_under(document, ("9.2",)) if E.balance_columns(T[ti]) is not None)
     log("9.2 표 열 폭 균등 배분: %d" % balanced)
+    # 표는 모두 '창에 자동으로 맞춤' — 본문 폭을 넘거나 모자라지 않게 (담당자 지시 2026-09)
+    page = E.text_width(document)
+    log("표 폭을 창에 맞춤: %d" % sum(1 for ti, t in enumerate(T) if ti != toc and E.fit_to_window(t, page)))
     log("표 안 글씨 굴림 10: %d" % E.table_font_size(document, 20))
     from .ooxml_order import get_or_add
     small = 0
@@ -168,6 +171,12 @@ def apply(document, log=None, product_title=None, edms=None):
         if kind == "h":
             anchors.append(el)
     log("그리기 개체 선 제거: %d" % E.strip_floating_lines(document, anchors))
+    # 내용이 없으면 빈 줄을 하나만 남긴다 (담당자 지시 2026-09) — 그 한 줄에 사선을 긋는다.
+    gone = 0
+    for ti, (a, b) in list(empty_blocks.items()):
+        gone += E.collapse_empty_block(T[ti], a, b)
+        empty_blocks[ti] = (a, a)
+    log("빈 줄 정리(한 줄만 남김): %d" % gone)
     log("빈 블록 가로지르는 선: %d" % sum(E.draw_block_line(T[ti], a, b) for ti, (a, b) in empty_blocks.items()))
     no_diag = set(empty_blocks)
     log("비고 사선: %d" % sum(E.diag_empty_remarks(t) for ti, t in enumerate(T) if ti not in no_diag))
