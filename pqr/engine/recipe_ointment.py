@@ -109,6 +109,38 @@ def _avg_text(values, fmt="%.2f", unit_on_avg=True):
         sum(values) / len(values), min(values), max(values))
 
 
+# 안연고 라인에서 디겐타안연고만 건열멸균기를 더 쓴다 — 다른 연고 보고서에서는 뺀다
+# (담당자 2026-09). 설비명·관리번호 어느 쪽으로도 알아본다.
+DRY_HEAT = re.compile(r"건열\s*멸균|DAE5030")
+
+
+def drop_equipment(table, pattern, keep=(), name=""):
+    """설비 표에서 이 제품이 쓰지 않는 설비 줄을 지운다. 지운 대수를 돌려준다.
+
+    설비 한 대가 두 줄(문서번호 줄 + 완료일 줄)이라 두 줄을 함께 지운다. keep 에 든 제품
+    이름이면 그대로 둔다.
+    """
+    if any(k and k in (name or "") for k in keep):
+        return 0
+    trs = table._tbl.findall(qn("w:tr"))
+    hit = [i for i, tr in enumerate(trs) if pattern.search(_text(tr))]
+    if not hit:
+        return 0
+    # 설비 한 대가 여러 줄(문서번호 줄 + 완료일 줄)이라 연번이 같은 줄을 함께 지운다
+    drop, machines = set(), set()
+    for i in hit:
+        drop.add(i)
+        no = _text(trs[i].findall(qn("w:tc"))[0]).strip()
+        machines.add(no or i)
+        for j in range(i + 1, len(trs)):
+            if _text(trs[j].findall(qn("w:tc"))[0]).strip() not in ("", no):
+                break
+            drop.add(j)
+    for i in sorted(drop, reverse=True):
+        trs[i].getparent().remove(trs[i])
+    return len(machines)
+
+
 def _deviation_lines(dev):
     """11항 일탈사항 칸의 글 — 2026 결재본 차림새로 요점만.
 
@@ -865,6 +897,9 @@ def fill(document, data, product, period, today=None, log=None):
     upd = 0
     for prefix in ("10.2",):
         for t in _tables(document, prefix):
+            gone = drop_equipment(t, DRY_HEAT, keep=("디겐타",), name=name)
+            if gone:
+                log("10.2: 이 제품에 쓰지 않는 설비 %d대를 뺌" % gone)
             upd += update_pq(t, eq_lookup)
     for prefix in ("10.3", "10.4", "10.5"):
         for t in _tables(document, prefix):

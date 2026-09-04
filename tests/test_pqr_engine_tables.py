@@ -194,3 +194,40 @@ class 비고_빈_칸(unittest.TestCase):
         self.assertIsNotNone(first.find(qn("w:tcPr")).find(qn("w:tcBorders")).find(qn("w:tr2bl")))
         borders = second.find(qn("w:tcPr")).find(qn("w:tcBorders"))
         self.assertTrue(borders is None or borders.find(qn("w:tr2bl")) is None)
+
+
+class 건열멸균기(unittest.TestCase):
+    """안연고 라인에서 디겐타안연고만 건열멸균기를 더 쓴다 (담당자 2026-09)."""
+
+    def _table(self):
+        d = docx.Document()
+        t = d.add_table(rows=5, cols=3)
+        rows = [("No.", "관리번호", "설비명"),
+                ("1", "DAA5114", "MAINMIXER"), ("1", "DAA5114", "2018.10.16"),
+                ("2", "DAE5030", "건열멸균기 8호"), ("2", "DAE5030", "2018.09.07")]
+        for row, vals in zip(t.rows, rows):
+            for cell, v in zip(row.cells, vals):
+                cell.text = v
+        return t
+
+    def test_디겐타안연고는_그대로_둔다(self):
+        from pqr.engine.recipe_ointment import drop_equipment, DRY_HEAT
+        t = self._table()
+        self.assertEqual(drop_equipment(t, DRY_HEAT, keep=("디겐타",), name="디겐타안연고"), 0)
+        self.assertEqual(len(t.rows), 5)
+
+    def test_다른_연고에서는_뺀다(self):
+        from pqr.engine.recipe_ointment import drop_equipment, DRY_HEAT
+        t = self._table()
+        # 설비 한 대가 두 줄(문서번호 줄 + 완료일 줄)이라 두 줄을 함께 지운다.
+        self.assertEqual(drop_equipment(t, DRY_HEAT, keep=("디겐타",), name="루브리칸트안연고"), 1)
+        self.assertEqual(len(t.rows), 3)
+        self.assertNotIn("건열", " ".join(c.text for r in t.rows for c in r.cells))
+
+    def test_없으면_손대지_않는다(self):
+        from pqr.engine.recipe_ointment import drop_equipment, DRY_HEAT
+        d = docx.Document()
+        t = d.add_table(rows=2, cols=3)
+        t.rows[1].cells[2].text = "MAINMIXER"
+        self.assertEqual(drop_equipment(t, DRY_HEAT, keep=("디겐타",), name="엔클안연고"), 0)
+        self.assertEqual(len(t.rows), 2)
