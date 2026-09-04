@@ -370,6 +370,20 @@ def drop_sheets(data, names, keep):
     return [n for n in names if n not in gone]
 
 
+def style_at(xml, ref, default):
+    """서식이 그 칸에 쓰던 셀 서식 번호. 없으면 default.
+
+    서식 개정마다 번호가 다르다(Rev.001 은 제조번호 9·결과 10, 예전 서식은 5·6). 번호를
+    박아 두면 표선 없는 서식으로 값이 찍혀 줄이 사라지고 가운데 맞춤도 풀린다
+    (담당자 2026-09: "표선 추가해주고 제조번호 가운데 맞춤 추가해줘").
+    """
+    m = re.search(r'<c r="%s"([^>]*?)(?:/>|>)' % re.escape(ref), xml)
+    if not m:
+        return default
+    got = re.search(r'\bs="(\d+)"', m.group(1))
+    return int(got.group(1)) if got else default
+
+
 def _fill_sheet(data, sheet_name, product, lots, item, storage, lcl, ucl, remark,
                 prepared_by, prepared_on):
     """서식 한 시트에 값과 그래프를 채운다. (시트 이름, 부품 경로) 를 돌려준다."""
@@ -383,18 +397,20 @@ def _fill_sheet(data, sheet_name, product, lots, item, storage, lcl, ucl, remark
     xml = set_cell(xml, "M3", prepared_by)
     xml = set_cell(xml, "M4", prepared_on)
     xml = set_cell(xml, "A27", remark)
+    lot_style = style_at(xml, "B%d" % FIRST_ROW, LOT_STYLE)
+    value_style = style_at(xml, "C%d" % FIRST_ROW, VALUE_STYLE)
     data["xl/styles.xml"], diag = diagonal_styles(data["xl/styles.xml"],
-                                                  (LOT_STYLE, VALUE_STYLE))
+                                                  (lot_style, value_style))
     for i in range(ROWS):
         row = FIRST_ROW + i
         name = lots[i][0] if i < len(lots) else None
         vals = lots[i][1] if i < len(lots) else {}
         xml = set_cell(xml, "B%d" % row, name,
-                       style=str(LOT_STYLE if name else diag[LOT_STYLE]))
+                       style=str(lot_style if name else diag[lot_style]))
         for col, p in zip(COLS, POINTS):               # 빈 칸에는 사선 (GMP 공란 없음)
             v = vals.get(p)
             xml = set_cell(xml, "%s%d" % (col, row), v,
-                           style=str(VALUE_STYLE if v is not None else diag[VALUE_STYLE]))
+                           style=str(value_style if v is not None else diag[value_style]))
     for i in range(ROWS):                              # 그래프가 보는 미러 행의 캐시값
         row = MIRROR_ROW + i
         name = lots[i][0] if i < len(lots) else None
