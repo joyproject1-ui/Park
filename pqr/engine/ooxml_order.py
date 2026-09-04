@@ -43,8 +43,38 @@ TBL = ["tblPr", "tblGrid", "tr"]
 
 TBLBORDERS = ["top", "start", "left", "bottom", "end", "right", "insideH", "insideV"]
 
+SETTINGS = ["writeProtection", "view", "zoom", "removePersonalInformation",
+            "removeDateAndTime", "doNotDisplayPageBoundaries", "displayBackgroundShape",
+            "printPostScriptOverText", "printFractionalCharacterWidth", "printFormsData",
+            "embedTrueTypeFonts", "embedSystemFonts", "saveSubsetFonts", "saveFormsData",
+            "mirrorMargins", "alignBordersAndEdges", "bordersDoNotSurroundHeader",
+            "bordersDoNotSurroundFooter", "gutterAtTop", "hideSpellingErrors",
+            "hideGrammaticalErrors", "activeWritingStyle", "proofState", "formsDesign",
+            "attachedTemplate", "linkStyles", "stylePaneFormatFilter", "stylePaneSortMethod",
+            "documentType", "mailMerge", "revisionView", "trackRevisions", "doNotTrackMoves",
+            "doNotTrackFormatting", "documentProtection", "autoFormatOverride",
+            "styleLockTheme", "styleLockQFSet", "defaultTabStop", "autoHyphenation",
+            "consecutiveHyphenLimit", "hyphenationZone", "doNotHyphenateCaps", "showEnvelope",
+            "summaryLength", "clickAndTypeStyle", "defaultTableStyle", "evenAndOddHeaders",
+            "bookFoldRevPrinting", "bookFoldPrinting", "bookFoldPrintingSheets",
+            "drawingGridHorizontalSpacing", "drawingGridVerticalSpacing",
+            "displayHorizontalDrawingGridEvery", "displayVerticalDrawingGridEvery",
+            "doNotUseMarginsForDrawingGridOrigin", "drawingGridHorizontalOrigin",
+            "drawingGridVerticalOrigin", "doNotShadeFormData", "noPunctuationKerning",
+            "characterSpacingControl", "printTwoOnOne", "strictFirstAndLastChars",
+            "noLineBreaksAfter", "noLineBreaksBefore", "savePreviewPicture",
+            "doNotValidateAgainstSchema", "saveInvalidXml", "ignoreMixedContent",
+            "alwaysShowPlaceholderText", "doNotDemarcateInvalidXml", "saveXmlDataOnly",
+            "useXSLTWhenSaving", "saveThroughXslt", "showXMLTags", "alwaysMergeEmptyNamespace",
+            "updateFields", "hdrShapeDefaults", "footnotePr", "endnotePr", "compat", "docVars",
+            "rsids", "mathPr", "attachedSchema", "themeFontLang", "clrSchemeMapping",
+            "doNotIncludeSubdocsInStats", "doNotAutoCompressPictures", "forceUpgrade",
+            "captions", "readModeInkLockDown", "smartTagType", "schemaLibrary",
+            "shapeDefaults", "doNotEmbedSmartTags", "decimalSymbol", "listSeparator"]
+
 _SEQ = {"pPr": PPR, "rPr": RPR, "tcPr": TCPR, "trPr": TRPR,
-        "tcBorders": TCBORDERS, "tblPr": TBLPR, "tbl": TBL, "tblBorders": TBLBORDERS}
+        "tcBorders": TCBORDERS, "tblPr": TBLPR, "tbl": TBL, "tblBorders": TBLBORDERS,
+        "settings": SETTINGS}
 
 
 def _local(el):

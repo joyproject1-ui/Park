@@ -179,6 +179,30 @@ def add_doc_defaults(xml):
     return xml
 
 
+def set_update_fields(xml):
+    """settings.xml 에 <w:updateFields w:val="true"/> 를 스키마가 정한 자리에 넣는다."""
+    from lxml import etree
+    from .ooxml_order import SETTINGS
+    root = etree.fromstring(xml.encode("utf-8") if isinstance(xml, str) else xml)
+    W = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
+    for el in root:
+        if el.tag == W + "updateFields":
+            el.set(W + "val", "true")
+            break
+    else:
+        el = etree.Element(W + "updateFields")
+        el.set(W + "val", "true")
+        rank = {n: i for i, n in enumerate(SETTINGS)}
+        mine = rank["updateFields"]
+        for sib in root:
+            if rank.get(etree.QName(sib).localname, 999) > mine:
+                sib.addprevious(el)
+                break
+        else:
+            root.append(el)
+    return etree.tostring(root, xml_declaration=True, encoding="UTF-8", standalone=True).decode("utf-8")
+
+
 def polish(path):
     tmp = path + ".tmp"
     with zipfile.ZipFile(path) as src, zipfile.ZipFile(tmp, "w", zipfile.ZIP_DEFLATED) as dst:
@@ -200,9 +224,11 @@ def polish(path):
                     if name == "word/styles.xml":
                         xml = add_doc_defaults(xml)
                         xml = fix_default_font(xml)
-                    if name == "word/settings.xml" and "w:updateFields" not in xml:
-                        # 열 때 Word 가 목차 PAGEREF 를 다시 계산하도록
-                        xml = xml.replace("</w:settings>", '<w:updateFields w:val="true"/></w:settings>')
+                    if name == "word/settings.xml":
+                        # 열 때 Word 가 목차 PAGEREF 를 다시 계산하도록. settings.xml 은 자식 순서가
+                        # 스키마로 정해져 있어(updateFields 는 compat·rsids 보다 앞) 끝에 붙이면
+                        # Word 가 "일부 콘텐츠를 읽을 수 없습니다" 로 거부한다.
+                        xml = set_update_fields(xml)
                     xml, fixed = fix_order(xml)
                     if fixed:
                         print(f"  순서 바로잡음 {name}: {fixed}")
