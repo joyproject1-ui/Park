@@ -110,7 +110,13 @@ def fill(document, data, product, period, today=None, log=None):
     p = find_para(document, "월까지 생산된")
     if p is not None and "년 1월" in p.text:
         text = re.sub(r"\d{4}년 1월", "%d년 1월" % year_from, p.text)
-        text = re.sub(r"\d{4}년도 (상반기|하반기|\d분기)", "%d년도 %d분기" % (write_year, _quarter(today)), text)
+        due = None
+        try:
+            due = _dt.date(*[int(x) for x in re.findall(r"\d+", str(product.get("due") or ""))[:3]])
+        except (TypeError, ValueError):
+            due = None
+        q_year, q = (due.year, _quarter(due)) if due else (write_year, _quarter(today))
+        text = re.sub(r"\d{4}년도 (상반기|하반기|\d분기)", "%d년도 %d분기" % (q_year, q), text)
         E.set_para_text(p, text)
 
     # ---------- 6항 제조내역 ----------
@@ -706,7 +712,9 @@ def fill(document, data, product, period, today=None, log=None):
         issues.append(("13", "", "안정성 시험(13.1~13.3) 값을 읽지 못해 '확인 필요' 로 두었음 — 시험일지 판독 필요"))
 
     # ---------- 14·15항 ----------
-    for prefix, msg in (("14.1", "점검기간 내 사용기한 경과로 인한 반품 외 특이사항 없음"),
+    us_export = "미국" in (name or "")           # 계획서 비고로 갈라진 '(미국 수출용)' 건
+    returns = "평가 년도 내 반품 이력 없음." if us_export else "사용기한 경과 외 반품이력 없음"
+    for prefix, msg in (("14.1", returns),
                         ("14.2", "평가 년도 내 불만 이력 없음."), ("14.3", "평가 년도 내 회수 이력 없음."),
                         ("15.", "평가 년도 내 시정조치사항 이력 없음.")):
         for tb in _tables(document, prefix):
@@ -714,51 +722,15 @@ def fill(document, data, product, period, today=None, log=None):
             if E.cell_text(last).lstrip().startswith("특이사항"):
                 E.set_cell_plain(last, "특이사항 (Comment)", msg)
 
-    # ---------- 16항 ----------
-    p = find_para(document, "16.1.")
-    full = full_name
-    if p is not None:
-        E.set_para_text(p, "16.1. %s 내수용%s에 대한 제품품질평가 결과, 출발물질, 포장자재, IPC Test 그리고 제품 시험 결과 모두 정해진 규격에 만족하며, "
-                        "기준에 적합한 제품이 일관되게 제조되고 있어 표준제조공정이 적절하다고 판단됨." % (full, ", 수출용" if exp else ""))
-    p = find_para(document, "16.2.")
-    if p is not None:
-        texts = []
-        if devs:
-            texts.append("16.2. 점검기간 동안 발생한 내수용 제품의 일탈 %d건(%s)은 조치사항이 적절하게 완료되었음을 확인하였음. 수출용 제품의 중요 일탈 및 기준 일탈, 경향 일탈 이력은 없음."
-                         % (len(devs), ", ".join(d.get("doc_no") or "" for d in devs)))
-        else:
-            texts.append("16.2. 점검기간 동안 중요 일탈 및 기준 일탈, 경향 일탈 이력은 없음.")
-        if yield_out:
-            texts.append("16.3. 수율 현황 검토 결과, 내수용 %d개 Lot(%s)의 충전 수율이 자가기준을 벗어나 최댓값·최솟값·평균 계산에서 제외하였음."
-                         % (len(yield_out), ", ".join(yield_out)))
-        cp = {k: v for k, v in cpk_dom.items() if v is not None}
-        if not qc.cpk_applies(len(dom)):
-            # 10 Lot 미만 — QC-126 에 따라 Cpk 를 산출하지 않는다(모든 PQR 공통)
-            s = "16.%d. %s" % (len(texts) + 2, qc.not_applied_sentence("내수용", len(dom)))
-            if exp and not qc.cpk_applies(len(exp)):
-                s += " " + qc.not_applied_sentence("수출용", len(exp))
-            texts.append(s)
-        elif cp:
-            names = {"metal": "금속성이물(합계)", "particle": "입자도", "assay": "함량"}
-            good = ["%s %.2f" % (names[k], v) for k, v in cp.items() if v >= 1]
-            bad = ["%s %.2f" % (names[k], v) for k, v in cp.items() if v < 1]
-            s = "16.%d. 내수용 제품의 공정능력지수(Cpk) 산출 결과, " % (len(texts) + 2)
-            if bad:
-                s += ("%s 은 공정능력이 충분하였으나 " % ", ".join(good) if good else "") + "%s 으로 1 미만이므로 ‘QC-126 제품품질평가 규정’의 판정 기준에 따라 공정 개선 검토가 필요함." % ", ".join(bad)
-            else:
-                s += "%s 으로 공정능력이 충분함." % ", ".join(good)
-            if exp and not qc.cpk_applies(len(exp)):
-                s += " " + qc.not_applied_sentence("수출용", len(exp))
-            texts.append(s)
-        texts.append("16.%d. 시판 후 안정성 시험 및 장기 안정성 시험의 경향 분석 결과, 모두 관리 규격 범위 내에 있어 경시 변화에 따른 특이사항은 없는 것으로 판단됨." % (len(texts) + 2))
-        # 기존 16.2 이후 문단 제거 후 새로 넣는다
-        el = p._p
-        nxt = el.getnext()
-        while nxt is not None and nxt.tag == qn("w:p") and re.match(r"^16\.\d", _text(nxt)):
-            gone = nxt; nxt = nxt.getnext(); gone.getparent().remove(gone)
-        E.set_para_text(p, texts[0]); anchor = el
-        for txt in texts[1:]:
-            np_ = copy.deepcopy(el); anchor.addnext(np_); E.set_para_text(np_, txt); anchor = np_
+    # ---------- 16항 ---------- 배포본 'PQR 작성방법 공유의 건'(2026-09-04) 문안 그대로.
+    # 10 Lot 미만이라 Cpk 를 산출하지 않았다는 말은 당연한 것이라 결론에 적지 않는다(담당자 지시).
+    from . import conclusion
+    plan_year, plan_q = conclusion.plan_quarter(today)      # 계획서 기한 = 작성일의 다음 분기
+    written = conclusion.apply(
+        document, full_name, name or full_name, produced=bool(dom or exp), n_lots=len(dom),
+        year=year_from, write_year=plan_year, quarter=plan_q, cpk=cpk_dom)
+    if not written:
+        issues.append(("16", "", "'16. 결론' 제목을 찾지 못해 결론을 다시 쓰지 못함 — 확인 필요"))
     log("16항 완료")
     cover = find_para(document, name[:5]) if name else None
     return {"issues": issues, "cover_title": (cover.text.strip() if cover is not None else None), "cpk": cpk_dom}

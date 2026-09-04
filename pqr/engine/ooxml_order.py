@@ -41,8 +41,10 @@ TBLPR = ["tblStyle", "tblpPr", "tblOverlap", "bidiVisual", "tblStyleRowBandSize"
 
 TBL = ["tblPr", "tblGrid", "tr"]
 
+TBLBORDERS = ["top", "start", "left", "bottom", "end", "right", "insideH", "insideV"]
+
 _SEQ = {"pPr": PPR, "rPr": RPR, "tcPr": TCPR, "trPr": TRPR,
-        "tcBorders": TCBORDERS, "tblPr": TBLPR, "tbl": TBL}
+        "tcBorders": TCBORDERS, "tblPr": TBLPR, "tbl": TBL, "tblBorders": TBLBORDERS}
 
 
 def _local(el):
