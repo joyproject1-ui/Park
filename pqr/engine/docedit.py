@@ -437,6 +437,75 @@ def diag_empty_remarks(table, header="비고"):
     return n
 
 
+def _tc_at(tr, index):
+    """그 행에서 그리드 index 열을 차지하는 칸. 가로 병합(gridSpan)을 세어 찾는다."""
+    col = 0
+    for tc in tr.findall(qn("w:tc")):
+        pr = tc.find(qn("w:tcPr"))
+        span_el = pr.find(qn("w:gridSpan")) if pr is not None else None
+        span = int(span_el.get(qn("w:val"))) if span_el is not None else 1
+        if col <= index < col + span:
+            return tc
+        col += span
+    return None
+
+
+def merge_empty_runs(table, header="비고"):
+    """머리행에서 header 열을 찾아, **내용이 없는 연속 칸을 하나로 합치고** 사선을 하나 긋는다.
+
+    담당자 지시(2026-09): 3항 대상 제품표의 비고 칸은 빈 줄끼리 이어 붙여 병합하고 사선 하나만
+    긋는다 — 줄마다 'N/A' 를 적거나 사선을 여러 개 긋지 않는다.
+    돌려주는 값: (합친 묶음 수, 합친 줄 수)
+    """
+    from docx.table import _Cell
+    trs = table._tbl.findall(qn("w:tr"))
+    if len(trs) < 2:
+        return 0, 0
+    # 머리글은 '비 고' 처럼 사이가 벌어져 있는 것이 많다 — 빈칸을 아예 지우고 견준다.
+    squeeze = lambda text: re.sub(r"[\s\u00a0]+", "", text or "")
+    want = squeeze(header)
+    index = None
+    col = 0
+    for tc in trs[0].findall(qn("w:tc")):
+        pr = tc.find(qn("w:tcPr"))
+        span_el = pr.find(qn("w:gridSpan")) if pr is not None else None
+        span = int(span_el.get(qn("w:val"))) if span_el is not None else 1
+        if squeeze("".join(t.text or "" for t in tc.iter(qn("w:t")))) == want:
+            index = col
+            break
+        col += span
+    if index is None:
+        return 0, 0
+
+    cells = []
+    for tr in trs[1:]:
+        tc = _tc_at(tr, index)
+        cells.append(tc)
+    groups, run = [], []
+    for tc in cells:
+        empty = tc is not None and not "".join(t.text or "" for t in tc.iter(qn("w:t"))).strip()
+        if empty:
+            run.append(tc)
+        else:
+            if run:
+                groups.append(run)
+            run = []
+    if run:
+        groups.append(run)
+
+    merged_rows = 0
+    for run in groups:
+        for i, tc in enumerate(run):
+            cell = _Cell(tc, table)
+            set_vmerge(cell, "restart" if i == 0 else None)
+            if i == 0:
+                add_diag(cell)
+            else:
+                clear_diag(cell)
+        merged_rows += len(run)
+    return len(groups), merged_rows
+
+
 def _keep_next(row):
     for tc in row._tr.findall(qn("w:tc")):
         for p in tc.findall(qn("w:p")):

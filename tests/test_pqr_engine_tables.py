@@ -152,3 +152,45 @@ class 목차_쪽수(unittest.TestCase):
         names = set(re.findall(r'w:bookmarkStart[^>]*w:name="(_pqr_toc_[^"]+)"', xml))
         refs = set(re.findall(r"PAGEREF (_pqr_toc_\S+)", xml))
         self.assertEqual(names, refs)
+
+
+class 비고_빈_칸(unittest.TestCase):
+    """담당자 지시(2026-09): 3항 비고는 빈 줄끼리 합치고 사선 하나만 — 줄마다 N/A 를 적지 않는다."""
+
+    def _doc(self):
+        d = docx.Document()
+        t = d.add_table(rows=5, cols=4)
+        for k, v in enumerate(("No.", "점검 항목", "내  용", "비 고")):
+            t.rows[0].cells[k].text = v
+        t.rows[3].cells[3].text = "<주성분> 겐타마이신황산염"     # 가운데 한 줄만 내용이 있다
+        return d, t
+
+    def test_빈_줄끼리_합치고_사선_하나(self):
+        d, t = self._doc()
+        blocks, rows = E.merge_empty_runs(t, "비고")
+        self.assertEqual((blocks, rows), (2, 3))               # 1~2행 묶음, 4행 묶음
+        marks = []
+        for tr in t._tbl.findall(qn("w:tr"))[1:]:
+            tc = tr.findall(qn("w:tc"))[3]
+            pr = tc.find(qn("w:tcPr"))
+            vm = pr.find(qn("w:vMerge"))
+            marks.append("-" if vm is None else (vm.get(qn("w:val")) or "continue"))
+        self.assertEqual(marks, ["restart", "continue", "-", "restart"])
+
+    def test_머리글_사이가_벌어져_있어도_찾는다(self):
+        # 머리글이 '비 고' 처럼 사이가 벌어져 있는 표가 많다.
+        d, t = self._doc()
+        self.assertEqual(E.merge_empty_runs(t, "비고")[0], 2)
+
+    def test_없는_열이면_손대지_않는다(self):
+        d, t = self._doc()
+        self.assertEqual(E.merge_empty_runs(t, "있을리없는열"), (0, 0))
+
+    def test_합친_묶음의_첫_칸에만_사선(self):
+        d, t = self._doc()
+        E.merge_empty_runs(t, "비고")
+        first = t._tbl.findall(qn("w:tr"))[1].findall(qn("w:tc"))[3]
+        second = t._tbl.findall(qn("w:tr"))[2].findall(qn("w:tc"))[3]
+        self.assertIsNotNone(first.find(qn("w:tcPr")).find(qn("w:tcBorders")).find(qn("w:tr2bl")))
+        borders = second.find(qn("w:tcPr")).find(qn("w:tcBorders"))
+        self.assertTrue(borders is None or borders.find(qn("w:tr2bl")) is None)

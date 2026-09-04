@@ -168,11 +168,11 @@ def fill(document, data, product, period, today=None, log=None):
     # ---------- 3항 대상 제품 ----------
     t3 = _tables(document, "3.")
     if t3:
-        # 2026 결재본은 비고 칸이 빈 곳 없이 모두 'N/A' 다 — 빈칸은 '안 적은 것' 처럼 보인다.
-        for row in t3[0].rows[1:]:
-            cells = E.raw_cells(row)
-            if len(cells) >= 4 and not E.cell_text(cells[-1]).strip():
-                E.set_cell(cells[-1], "N/A")
+        # 비고 칸은 빈 줄끼리 이어 붙여 병합하고 사선 하나만 긋는다 (담당자 지시 2026-09)
+        # — 줄마다 'N/A' 를 적거나 사선을 여러 개 긋지 않는다.
+        blocks, rows_ = E.merge_empty_runs(t3[0], "비고")
+        if blocks:
+            log("3항 비고: 빈 칸 %d줄을 %d 묶음으로 합치고 사선" % (rows_, blocks))
         # 결론(16항)의 제품명은 정식 이름(성분명까지)이다 — 머리글이 비어 있으면 여기서 가져온다.
         for row in t3[0].rows[1:]:
             cells = E.raw_cells(row)
@@ -181,6 +181,23 @@ def fill(document, data, product, period, today=None, log=None):
                 if got and (not full_name or full_name == name):
                     full_name = got
                 break
+
+    # ---------- 5항 책임과 권한 ----------
+    # 담당자 지시(2026-09): "품질보증 1팀은 AQA 팀으로 변경해줘." EDMS 서식과 2026 결재본
+    # 모두 'AQA팀 담당' · 'AQA팀 팀장' 이다. 전년도 결재본은 옛 이름이라 그대로 물려받는다.
+    # '품질보증부서장' 은 팀이 아니므로 건드리지 않는다.
+    t5 = _tables(document, "5.")
+    if t5:
+        renamed = 0
+        for row in t5[0].rows[1:]:
+            for cell in E.raw_cells(row):
+                text = E.cell_text(cell)
+                new_text = re.sub(r"품질보증\s*\d*\s*팀", "AQA팀", text)
+                if new_text != text:
+                    E.set_cell(cell, *new_text.split("\n"))
+                    renamed += 1
+        if renamed:
+            log("5항: 품질보증n팀 → AQA팀 %d칸" % renamed)
 
     # ---------- 4항 ----------
     # 1항 '목적' 도 "제품품질평가는" 으로 시작하므로 평가 기간 문장만 집어 찾는다.
@@ -298,14 +315,27 @@ def fill(document, data, product, period, today=None, log=None):
                     yield_dev.append(lot)
                 if len(r) > 5:
                     E.set_cell(r[5], "1)" if lot in dev_lots else "2)")
+        # 최댓값·최솟값·평균 — 세 줄 모두 채우고 그 칸의 사선은 지운다 (담당자 지시 2026-09).
+        # raw_cells 로 그 행이 실제로 가진 칸을 쓴다: .cells 는 세로 병합을 하나로 합쳐 돌려주어
+        # 세 줄이 같은 칸을 가리키고, 마지막에 쓴 평균만 남는다(최댓값 자리에 평균이 찍혔다).
+        summary = [(l + 1, lambda xs: "%.2f" % max(xs)),
+                   (l + 2, lambda xs: "%.2f" % min(xs)),
+                   (l + 3, avg)]
+        for ri, _fn in summary:
+            if ri < len(table.rows):
+                for cell in E.raw_cells(table.rows[ri])[2:5]:
+                    E.set_vmerge(cell, False)
+                    E.clear_diag(cell)
         stat_lots = [x for x in lots if x not in yield_out and all(v is not None for v in vals[x])]
         if stat_lots:
             cols = list(zip(*[[float(x) for x in vals[lt]] for lt in stat_lots]))
-            for ri, fn in ((l + 1, max), (l + 2, min)):
+            for ri, fn in summary:
+                if ri >= len(table.rows):
+                    continue
+                cells = E.raw_cells(table.rows[ri])
                 for k in range(3):
-                    E.set_cell(table.rows[ri].cells[2 + k], "%.2f" % fn(cols[k]))
-            for k in range(3):
-                E.set_cell(table.rows[l + 3].cells[2 + k], avg(cols[k]))
+                    if 2 + k < len(cells):
+                        E.set_cell(cells[2 + k], fn(cols[k]))
     if t7:
         fill_yield(t7[0], dom, True)
         if len(t7) > 1 and exp:

@@ -178,8 +178,10 @@ def write_work_log(folder, product, lines, error=None, trace=None):
     엔진이 어디서 멈췄는지는 아무 데도 남지 않았습니다. 이제 이 파일을 그대로 보내면 됩니다.
     """
     path = os.path.join(folder, WORK_LOG_NAME % product.get("code", ""))
+    # 프로그램 버전을 함께 남긴다 — 고친 것이 담당자 PC 에 닿았는지 이 파일 하나로 알 수 있다.
     out = ["[%s] %s — 자동 작성 기록" % (product.get("code", ""), product.get("name", "")),
-           "만든 때: %s" % _dt.datetime.now().strftime("%Y-%m-%d %H:%M"), ""]
+           "만든 때: %s" % _dt.datetime.now().strftime("%Y-%m-%d %H:%M"),
+           "프로그램 버전: %s" % (program_version() or "(알 수 없음)"), ""]
     if error:
         out += ["■ 보고서를 결재본 양식으로 만들지 못했습니다:", "   %s" % error, "",
                 "이 파일을 그대로 보내 주시면 무엇이 막았는지 알 수 있습니다.", ""]
