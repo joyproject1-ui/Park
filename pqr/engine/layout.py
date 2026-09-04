@@ -131,8 +131,9 @@ def apply(document, log=None, product_title=None, edms=None):
     # 칸 폭은 그리드대로 — 단위가 뒤섞인 tcW 를 Word 가 자동 맞춤에 섞어 쓰면 결과가 두 줄로 갈린다
     log("칸 폭을 그리드에 맞춤: %d" % E.fix_all_table_widths(document, skip=(toc,)))
     # 9.2 세부표는 열마다 글 길이가 달라, 한 열만 여러 줄로 늘어지면 줄 수가 같아지도록 다시 나눈다
-    balanced = sum(1 for ti in _tables_under(document, ("9.2",)) if E.balance_columns(T[ti]) is not None)
-    log("9.2 표 열 폭 균등 배분: %d" % balanced)
+    # 13.1 도 같이 — 빈 양식의 완료 일자 열이 좁아 '2025.03.2 / 5' 로 잘렸다
+    balanced = sum(1 for ti in _tables_under(document, ("9.2", "13.1")) if E.balance_columns(T[ti]) is not None)
+    log("9.2·13.1 표 열 폭 균등 배분: %d" % balanced)
     # 표는 모두 '창에 자동으로 맞춤' — 본문 폭을 넘거나 모자라지 않게 (담당자 지시 2026-09)
     page = E.text_width(document)
     log("표 폭을 창에 맞춤: %d" % sum(1 for ti, t in enumerate(T) if ti != toc and E.fit_to_window(t, page)))

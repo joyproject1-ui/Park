@@ -5,6 +5,7 @@
 "9.2.3 충전 완료 후 - ERP.zip", "13 안정성 시험 - … 시험일지.pdf"). 압축은 풀어서 본다.
 읽지 못한 것은 버리지 않고 `issues` 에 남겨 담당자 문의 목록으로 보여 준다.
 """
+import json
 import os
 import re
 import tempfile
@@ -38,6 +39,7 @@ class ProductData(object):
         self.suppliers_mat = []
         self.api_chain = {}
         self.stability_files = []   # 스캔 PDF (손글씨) — 비전 판독 대상
+        self.stability_logs = []    # 13항 시험일지 판독 결과 (비전 또는 담당자가 적은 .json)
         self.previous_report = None
         self.files = {}           # item -> [paths]
         self.issues = []          # [(항, 파일, 설명)]
@@ -258,16 +260,27 @@ def collect(folder, product_name=None, log=None):
                 data.pv_exp = master_module.read_pv_master(p, (product_name or "") + "(수출용)")
             except Exception:
                 data.pv_exp = None
-    for p in got.get("10.2", []):
-        if p.lower().endswith(".xlsx"):
+    # 마스터파일이 여럿이면(‘…_OLD’ 와 최신본, IQ·OQ 파일과 PQ 파일) 옛것에 덮이지 않게 합친다.
+    # 디겐타안연고 2026 폴더에서 실제로 옛 파일이 최신본을 덮어 PQ 가 2022년 것으로 나왔다.
+    def _newest_first(paths):
+        keep = [p_ for p_ in paths if p_.lower().endswith(".xlsx")
+                and "old" not in os.path.basename(p_).lower() and "구버전" not in os.path.basename(p_)]
+        keep = keep or [p_ for p_ in paths if p_.lower().endswith(".xlsx")]
+        return sorted(keep, key=lambda p_: os.path.getmtime(p_), reverse=True)
+
+    for p in _newest_first(got.get("10.2", [])):
+        try:
+            for key, entry in masters.equipment_docs(p).items():
+                data.equipment.setdefault(key, entry)
+        except Exception as e:
+            note("10.2", p, str(e))
+    for p in _newest_first(got.get("10.3-5", []) + got.get("10.3", [])):
             try:
-                data.equipment = masters.equipment_docs(p)
-            except Exception as e:
-                note("10.2", p, str(e))
-    for p in got.get("10.3-5", []) + got.get("10.3", []):
-        if p.lower().endswith(".xlsx"):
-            try:
-                data.support = masters.support_docs(p)
+                for key, entry in masters.support_docs(p).items():
+                    have = data.support.setdefault(key, entry)
+                    for kind in ("DQ", "IQ", "OQ", "PQ"):
+                        if not have.get(kind) and entry.get(kind):
+                            have[kind] = entry[kind]   # PQ 만 든 파일과 IQ·OQ 만 든 파일을 합친다
             except Exception as e:
                 note("10.3-5", p, str(e))
     # 11 · 12
@@ -283,10 +296,18 @@ def collect(folder, product_name=None, log=None):
                 data.changes.append(change.read_change(p))
             except PdfTextError as e:
                 note("12", p, str(e))
-    # 13 안정성 — 스캔이면 비전 판독 대상
+    # 13 안정성 — 스캔이면 비전 판독 대상. 판독 결과(.json)가 있으면 그것을 먼저 쓴다.
     for p in got.get("13", []):
         if p.lower().endswith(".pdf"):
             data.stability_files.append((p, is_scanned(p)))
+        elif p.lower().endswith(".json"):
+            try:
+                with open(p, encoding="utf-8") as fh:
+                    got_json = json.load(fh)
+                data.stability_logs += got_json if isinstance(got_json, list) else got_json.get("logs", [])
+                log("  [13] %s — 안정성 시험일지 판독 결과 %d Lot" % (os.path.basename(p), len(data.stability_logs)))
+            except Exception as error:
+                note("13", p, "안정성 판독 파일을 읽지 못했습니다 — %s" % error)
     # 16 전년도 결재본
     for p in got.get("16", []):
         if p.lower().endswith((".doc", ".docx")):

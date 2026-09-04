@@ -12,6 +12,7 @@ import statistics
 
 from docx.oxml.ns import qn
 
+from . import detail92 as D
 from . import docedit as E
 from . import lotcode, qc
 from .locate import find_tables, find_para, _text
@@ -420,39 +421,107 @@ def fill(document, data, product, period, today=None, log=None):
             E.set_para_text(note, "")
     log("7항: 이탈 %s / 일탈 %s" % (yield_out, yield_dev))
 
-    # ---------- 8.1.3 공급업체 평가일 ----------
+    # ---------- 8.1 공급업체 평가 (8.1.1 주원료 · 8.1.2 공급망 · 8.1.3 부원료·포장자재) ----------
     def _norm_date(v):
         m = re.findall(r"\d+", str(v or ""))
         return "%s.%02d.%02d" % (m[0], int(m[1]), int(m[2])) if len(m) >= 3 else ""
-    upd813 = 0
-    for tb in _tables(document, "8.1.3"):
-        hdr = [re.sub(r"\s+", "", E.cell_text(c)) for c in E.raw_cells(tb.rows[0])]
-        dcol = next((i for i, h in enumerate(hdr) if "완료일" in h or "승인일" in h), None)
-        ncol = next((i for i, h in enumerate(hdr) if "문서번호" in h or "평가문서" in h), None)
-        ccol = next((i for i, h in enumerate(hdr) if "코드" in h), None)
-        if dcol is None:
+
+    def _cols(table, *groups):
+        """{이름: 열 번호} — 머리행 낱말로 짚는다. 열 차례는 제품·연도마다 다르다."""
+        head = [re.sub(r"\s+", "", E.cell_text(c)) for c in E.raw_cells(table.rows[0])]
+        out = {}
+        for name, words in groups:
+            out[name] = next((i for i, h in enumerate(head) if any(w in h for w in words)), None)
+        return out
+
+    def _key(v):
+        return re.sub(r"[^a-z0-9가-힣]", "", str(v or "").lower())
+
+    def _supplier(code, docno="", vendor=""):
+        """공급업체 목록에서 그 줄 — 원료코드 → 평가문서번호 → 업체명 차례로 짚는다.
+
+        자재 목록에는 자재코드 칸이 없어(2026 Rev.26) 코드로는 못 찾는다. 전년도 결재본에서
+        이어받은 평가문서번호(VAR-P-Linhardt 등)가 그 줄을 가리키는 열쇠가 된다.
+        """
+        both = list(data.suppliers_raw) + list(data.suppliers_mat)
+        code, docno, vendor = (code or "").strip(), _key(docno), _key(vendor)
+        tests = [lambda r_: bool(code) and code == str(r_.get("원료코드") or "").strip(),
+                 lambda r_: bool(docno) and _key(r_.get("문서번호")) == docno,
+                 lambda r_: bool(docno) and _key(r_.get("문서번호")) and
+                 (_key(r_.get("문서번호")).startswith(docno) or docno.startswith(_key(r_.get("문서번호")))),
+                 lambda r_: bool(vendor) and len(vendor) >= 4 and _key(r_.get("공급업체명")) and
+                 (vendor in _key(r_.get("공급업체명")) or _key(r_.get("공급업체명")).startswith(vendor))]
+        for test in tests:
+            got = [r_ for r_ in both if test(r_)]
+            if len(got) == 1:
+                return got[0]
+            if len(got) > 1:                      # 여럿이면 가장 최근에 평가한 줄
+                return max(got, key=lambda r_: _norm_date(r_.get("평가승인일")))
+        return None
+
+    def _put(cells, col, text):
+        if col is None or col >= len(cells) or not text:
+            return 0
+        if E.cell_text(cells[col]).strip() == str(text).strip():
+            return 0
+        E.set_cell(cells[col], *str(text).split("\n"))
+        return 1
+
+    def _company(text):
+        """'FUAN … CO., LTD / China' → 'FUAN … CO., LTD' (나라 이름은 뗀다)."""
+        return re.split(r"\s*/\s*", str(text or ""))[0].strip()
+
+    upd81, grade_odd = 0, []
+    for prefix in ("8.1.1", "8.1.3"):
+        for tb in _tables(document, prefix):
+            col = _cols(tb, ("code", ("관리번호", "코드")), ("name", ("원/자재명", "원자재명", "자재명", "원료명")),
+                        ("maker", ("제조원", "제조소")), ("doc", ("문서번호", "평가문서")),
+                        ("result", ("평가결과",)), ("day", ("완료일", "승인일")))
+            if col["code"] is None:
+                continue
+            for row in tb.rows[1:]:
+                cells = E.raw_cells(row)
+                if len(cells) <= col["code"]:
+                    continue
+                take = lambda k: E.cell_text(cells[col[k]]).strip() if col[k] is not None and col[k] < len(cells) else ""
+                got = _supplier(take("code"), take("doc"), take("maker"))
+                if not got:
+                    continue
+                grade = str(got.get("평가등급") or "").strip().upper()
+                upd81 += _put(cells, col["maker"], _company(got.get("공급업체명")))
+                upd81 += _put(cells, col["doc"], (got.get("문서번호") or "").strip())
+                upd81 += _put(cells, col["day"], _norm_date(got.get("평가승인일")))
+                if grade in ("A", "B"):
+                    upd81 += _put(cells, col["result"], "적합")
+                elif grade:
+                    grade_odd.append("%s(%s등급)" % (E.cell_text(cells[col["code"]]).strip(), grade))
+                if col["name"] is not None and col["name"] < len(cells) and not E.cell_text(cells[col["name"]]).strip():
+                    korean = re.split(r"(?=[A-Za-z])", str(got.get("공급되는 품목") or ""), 1)[0].strip()
+                    upd81 += _put(cells, col["name"], korean)
+    for tb in _tables(document, "8.1.2"):
+        col = _cols(tb, ("code", ("관리번호", "코드")), ("maker", ("제조업체", "제조 업체")),
+                    ("supply", ("공급", "납품")), ("other", ("기타",)))
+        if col["code"] is None:
             continue
         for row in tb.rows[1:]:
             cells = E.raw_cells(row)
-            if len(cells) <= dcol:
+            if len(cells) <= col["code"]:
                 continue
-            code = E.cell_text(cells[ccol]).strip() if ccol is not None else ""
-            docno = E.cell_text(cells[ncol]).strip() if ncol is not None else ""
-            vendor = E.cell_text(cells[4]).strip() if len(cells) > 4 else ""
-            key = lambda v: re.sub(r"[^a-z0-9가-힣]", "", str(v or "").lower())
-            hit = None
-            both = list(data.suppliers_raw) + list(data.suppliers_mat)
-            tests = [lambda r_: bool(code) and code in (r_.get("원료코드") or ""),
-                     lambda r_: bool(docno) and key(r_.get("문서번호")) and (key(r_.get("문서번호")).startswith(key(docno)) or key(docno).startswith(key(r_.get("문서번호")))),
-                     lambda r_: bool(vendor) and key(r_.get("공급업체명")) and (key(vendor)[:6] in key(r_.get("공급업체명")) or key(r_.get("공급업체명"))[:6] in key(vendor))]
-            for test in tests:                       # 코드 → 문서번호 → 업체명 순
-                hit = next((r_ for r_ in both if test(r_)), None)
-                if hit:
-                    break
-            day = _norm_date(hit.get("평가승인일")) if hit else ""
-            if day and day != E.cell_text(cells[dcol]).strip():
-                E.set_cell(cells[dcol], day); upd813 += 1
-    log("8.1.3 평가일 갱신: %d" % upd813)
+            chain = data.api_chain.get(E.cell_text(cells[col["code"]]).strip())
+            if not chain:
+                continue
+            maker = _company(chain.get("manufacturer"))
+            links = [_company(x) for x in (chain.get("chain") or [])]
+            # '제조소 납품' 은 제조소에서 바로 받는다는 뜻 — 납품 업체 칸에 제조소를 적는다
+            # '제조소 납품' 은 제조소에서 바로 받는다는 뜻 — 업체 이름이 아니다
+            links = [maker if x.startswith("제조소") else x for x in links]
+            upd81 += _put(cells, col["maker"], maker)
+            upd81 += _put(cells, col["supply"], links[0] if links else "")
+            upd81 += _put(cells, col["other"], ", ".join(links[1:]))
+    if grade_odd:
+        issues.append(("8.1", ", ".join(sorted(set(grade_odd))),
+                       "공급업체 평가등급이 A·B 가 아니어서 평가결과 칸을 비웠습니다 — 확인해 적으세요"))
+    log("8.1 공급업체 정보 채움: %d 칸" % upd81)
 
     # ---------- 8.2 시험성적 ----------
     def group_fill(table, records):
@@ -525,10 +594,12 @@ def fill(document, data, product, period, today=None, log=None):
 
     # ---------- 9항 ----------
     def spec_of(t91, words):
+        """그 시험항목의 허용기준 글. '자가)·허가)' 가 붙은 칸을 찾는다 — 칸 수는 줄마다 다르다
+        (금속성이물 줄은 기준 뒤에 '합계·개개' 칸이 하나 더 붙어 cells[-2] 가 기준이 아니다)."""
         for row in t91.rows:
             cells = [E.cell_text(c) for c in E.raw_cells(row)]
             if any(all(w in c for w in words) for c in cells[:2]):
-                return cells[-2]
+                return next((c for c in cells if D.PREFIX.search(c or "")), cells[-2])
         return ""
 
     def rec(lot, key):
@@ -685,8 +756,15 @@ def fill(document, data, product, period, today=None, log=None):
                            "원본에서 확인해 적으세요"))
         return n
     t91 = _tables(document, "9.1")
-    n_dom = fill_91(t91[0], dom, True) if t91 else {}
-    n_exp = fill_91(t91[1], exp, False) if len(t91) > 1 and exp else {}
+    # 2026 양식(공정별 9.2 표)이면 9.1·9.2 를 모두 머리글·허용기준으로 짚어 채운다.
+    rules = D.criteria(t91[0]) if t91 else []
+    pairs = D.tables_92(document)
+    labelled = bool(pairs) and not exp and all(st for _, st in pairs) and all(D.simple(t) for t, _ in pairs)
+    if labelled:
+        n_dom, n_exp = numbers(dom), {}
+    else:
+        n_dom = fill_91(t91[0], dom, True) if t91 else {}
+        n_exp = fill_91(t91[1], exp, False) if len(t91) > 1 and exp else {}
 
     # 9.2 세부표 — 항 아래 표들을 머리행 낱말로 고른다
     def fill_detail(table, first, lots, setter, n_summary=5):
@@ -779,8 +857,182 @@ def fill(document, data, product, period, today=None, log=None):
                 E.set_cell(c[4], "각 규격에 적합함")
             fill_detail(t_last, 1, lots, s_last)
         return cpk
-    cpk_dom = fill_92("9.2.1", dom, n_dom, True) or {}
-    cpk_exp = fill_92("9.2.2", exp, n_exp, False) if exp else {}
+    def bio_full(lot):
+        m = re.match(r"(\d+)\s*(미만|이하)", bio_text(lot))
+        return ("%s CFU/g %s" % (m.group(1), m.group(2))) if m else bio_text(lot)
+
+    def _plain(value, fmt=None):
+        v = _num(value)
+        if v is None:
+            return (str(value).strip() or None) if value else None
+        f = float(v)
+        if fmt:
+            return fmt % f
+        return ("%d" % round(f)) if abs(f - round(f)) < 1e-9 else ("%g" % f)
+
+    makers = []
+
+    def maker_of(process):
+        return makers[0](process) if makers else (lambda lab, lot, i: None)
+
+    def fill_92_labelled(pairs, rules, lots, n):
+        """9.2 표를 머리글 이름으로 채운다 (2026 양식: 조제·충전·포장 공정별 표)."""
+        parts = [r["part"] for r in rules if r["part"]]
+        found = {}
+
+        def maker(process):
+            def value(lab, lot, i):
+                r923, r924 = rec(lot, "923"), rec(lot, "924")
+                mine = r923 if process == "충전" else r924
+                part = next((p for p in parts if p and p in lab), "")
+                if "성상" in lab:
+                    return app(lots) or D.criterion_for(rules, process, "성상")
+                if "바이오버든" in lab or "생균수" in lab:
+                    return bio_full(lot)
+                if "함량" in lab:
+                    got = [a for a in (r924.get("assays") or [])
+                           if not part or D.squeeze(a.get("part") or "") in part or part in D.squeeze(a.get("part") or "")]
+                    v = _num(got[0].get("value")) if got else _num(r924.get("assay"))
+                    if v is None and part:
+                        found.setdefault("assay_miss", set()).add(part)
+                    return ("%.1f" % float(v)) if v is not None else None
+                if "입자도" in lab:
+                    return _plain(r924.get("particle"))
+                if "금속성이물" in lab:
+                    return _plain(r924.get("metal_total") if "합계" in lab else r924.get("metal_each"))
+                if "질량" in lab or "용량" in lab:
+                    if "평균" in lab:
+                        return _plain(mine.get("mass_avg"))
+                    if "개개" in lab:
+                        if process == "충전":
+                            got = re.findall(r"\d+(?:\.\d+)?", str(mine.get("mass_each") or ""))
+                            return (" ~ ".join(got[:2])) if len(got) >= 2 else _plain(mine.get("mass_each"))
+                        return ("%s 이상" % _plain(mine.get("mass_each_min"))) if mine.get("mass_each_min") else None
+                if "무균" in lab:
+                    return r924.get("sterility") or D.criterion_for(rules, process, "무균")
+                if "기밀도" in lab:
+                    return mine.get("leak") or D.criterion_for(rules, process, "기밀도")
+                for key in ("튜브개봉", "튜브인쇄", "확인", "포장규격"):
+                    if key in lab:
+                        return D.criterion_for(rules, process, key, part)
+                return None
+            return value
+
+        def cpk_of(lab, texts):
+            if not qc.cpk_applies(len(lots)):
+                return None
+            vals = [float(x) for x in (_num(t) for t in texts) if x is not None]
+            if len(vals) != len(texts):
+                return None
+            if "함량" in lab:
+                got = cpk_bi(vals, *limits["assay"])
+            elif "입자도" in lab:
+                got = cpk_uni(vals, limits["particle"])
+            elif "금속성이물" in lab:
+                got = cpk_uni(vals, limits["metal"])
+            else:
+                return None
+            if got is None:
+                return None
+            found[lab] = got
+            return ("%.2f" % got, "충분" if got >= 1 else "부족")
+
+        makers.append(maker)
+        for table, process in pairs:
+            D.fill(table, lots, maker(process), cpk=cpk_of)
+        miss = found.pop("assay_miss", None)
+        if miss:
+            issues.append(("9.2", ", ".join(sorted(miss)),
+                           "이 성분의 함량을 성적서에서 찾지 못해 칸을 비웠습니다 — 원본에서 확인해 적으세요"))
+        out = {}
+        for lab, v in found.items():
+            key = "assay" if "함량" in lab else "particle" if "입자도" in lab else "metal"
+            out[key] = v
+        return out
+
+    NUMERIC = re.compile(r"[\s\d.,~]+(?:\s*(?:이상|이하|미만|초과))?$")
+    UNIT = re.compile(r"\d[\d.,]*\s*(㎛|um|μm|%|kg|mg|mL|g|개|매)")
+
+    def unit_of(crit, item, sub):
+        if "금속성" in item:
+            return "매" if "개개" in sub else "개"
+        m = UNIT.search(crit or "")
+        return m.group(1) if m else ""
+
+    def summarize(texts, crit, item, sub, unit):
+        """9.1 결과 칸 글. 한림 결재본이 쓰는 차림새 그대로.
+
+        자료가 범위면 범위, 허용기준이 한쪽만 정한 값(‘75㎛ 이하’·‘3.60 g 이상’)이면 그 쪽,
+        모두 같으면 그 값, 그 밖이면 ‘Av. 평균(최솟값 ~ 최댓값)’.
+        """
+        texts = [t for t in texts if t]
+        if not texts:
+            return None
+        if not all(NUMERIC.match(t) for t in texts):
+            return max(set(texts), key=texts.count)          # 글로 적는 항목 — 가장 많이 나온 글
+        tail = (" " + unit) if unit else ""
+        if any("~" in t for t in texts):
+            top, bottom, _ = D._stats("", texts)
+            return "%s ~ %s%s" % (bottom, top, tail)
+        if len(set(texts)) == 1:
+            return "%s%s" % (texts[0].strip(), tail)
+        one_low = ("이상" in (crit or "") or any("이상" in t for t in texts)) and "평균" not in sub
+        one_high = ("이하" in (crit or "") or any("이하" in t for t in texts)) and "평균" not in sub
+        top, bottom, mean = D._stats("이상" if one_low else "이하" if one_high else "", texts)
+        if one_low and not one_high:
+            return "%s%s 이상" % (bottom, tail)
+        if one_high and not one_low:
+            return "%s%s 이하" % (top, tail)
+        if top == bottom:
+            return "%s%s" % (top, tail)
+        return "Av. %s%s(%s ~ %s%s)" % (mean, tail, bottom, top, tail)
+
+    def fill_91_labelled(t91, rules, lots, n, maker):
+        """9.1 결과 칸을 9.2 와 같은 판독값으로 채운다 (2026 양식)."""
+        done, k, follow = 0, 0, []
+        for row in t91.rows[1:]:
+            cells = E.raw_cells(row)
+            texts = [E.cell_text(c) for c in cells]
+            ci = next((i for i, t in enumerate(texts) if D.PREFIX.search(t or "")), None)
+            if ci is None:
+                # 허용기준 칸이 위 줄과 병합된 줄(금속성이물 ‘개개’) — 위 줄의 기준을 이어 쓴다
+                sub = "".join(D.squeeze(t) for t in texts[1:-1])
+                if not follow or not sub or len(cells) < 2:
+                    continue
+                prev, crit_text = follow[-1]
+                hit = dict(prev, sub=sub)
+                ci = None
+            elif ci >= len(cells) - 1:
+                continue
+            else:
+                crit_text = texts[ci]
+                hit = rules[k] if k < len(rules) else None       # criteria() 와 같은 차례로 훑는다
+                k += 1
+                if hit is None:
+                    continue
+                follow.append((hit, crit_text))
+            lab = hit["item"] + hit["part"] + hit["sub"]
+            value = maker(hit["process"])
+            got = [value(lab, lot, i) for i, lot in enumerate(lots)]
+            crit = D.PREFIX.sub("", crit_text or "")
+            out = summarize([g for g in got if g], crit, hit["item"], hit["sub"],
+                            unit_of(crit, hit["item"], hit["sub"]))
+            if "포장규격" in hit["item"] and out:
+                out = "각 규격에 적합함"
+            if out:
+                E.set_cell(cells[-1], *out.split("\n"))
+                done += 1
+        return done
+
+    if labelled:
+        cpk_dom = fill_92_labelled(pairs, rules, dom, n_dom)
+        if t91:
+            log("9.1항: 결과 칸 %d줄을 판독값으로 채움" % fill_91_labelled(t91[0], rules, dom, n_dom, maker_of))
+        cpk_exp = {}
+        log("9.2항: 머리글로 짚어 표 %d개 채움 (%s)" % (len(pairs), ", ".join(st for _, st in pairs)))
+    else:
+        cpk_dom = fill_92("9.2.1", dom, n_dom, True) or {}
+        cpk_exp = fill_92("9.2.2", exp, n_exp, False) if exp else {}
     log("9항: Cpk %s" % {k: round(v, 2) for k, v in cpk_dom.items() if v is not None})
 
     # 각주 — 번호는 위에서 센 것을 쓴다
@@ -888,9 +1140,19 @@ def fill(document, data, product, period, today=None, log=None):
     sp_lookup = {}
     for k, v in data.support.items():
         pq = [(d.split(" (")[0].strip(), dt.split("/")[0].strip()) for d, dt in v.get("PQ", []) if d and dt]
-        if not pq:                              # 설비 행에 PQ 가 없으면 같은 시스템의 PQ 를 쓴다
+        if not pq:
+            # 설비 행에 PQ 가 없으면 같은 시스템의 PQ 를 쓴다. 시스템 칸이 비었거나 'N/A' 인
+            # 줄(클린에어 분배 시스템)은 설비 이름의 낱말로 같은 무리를 찾는다 — 그러지 않으면
+            # 바로 위의 남남(질소 분배 시스템) 것을 가져온다.
+            system = (v.get("system") or "").strip()
+            words = [w for w in re.findall(r"[가-힣A-Za-z]{2,}", v.get("name") or "")
+                     if w not in ("시스템", "분배", "라인")][:2]
             for k2, v2 in data.support.items():
-                if v2.get("system") == v.get("system") and v2.get("PQ"):
+                if k2 == k or not v2.get("PQ"):
+                    continue
+                same = bool(system) and system.upper() != "N/A" and v2.get("system") == system
+                like = any(w in (v2.get("name") or "") or w in (v2.get("system") or "") for w in words)
+                if same or like:
                     pq = [(d.split(" (")[0].strip(), dt.split("/")[0].strip()) for d, dt in v2["PQ"] if d and dt]
                     break
         sp_lookup[k] = {"PQ": pq}
@@ -990,7 +1252,11 @@ def fill(document, data, product, period, today=None, log=None):
 
     # ---------- 13항 ----------
     stab = getattr(data, "stability", None)
-    if stab:
+    logs = getattr(data, "stability_logs", None)
+    if logs:
+        spec = {r["part"]: r["text"] for r in rules if "함량" in r["item"] and r["part"]}
+        _fill_stability26(document, logs, period, spec, log, issues)
+    elif stab:
         _fill_stability(document, stab, log, limits["assay"])
     else:
         for prefix in ("13.1", "13.2"):
@@ -1103,6 +1369,135 @@ def _fill_numbers(t, f, l, lots, n, cpk, rec, put, is_dom, limits=None):
         if cpk["particle"] is not None and cpk["assay"] is not None:
             put(t, l + 4, (1, 4), "%.2f" % cpk["particle"], "%.2f" % cpk["assay"])
             put(t, l + 5, (1, 4), "충분" if cpk["particle"] >= 1 else "부족", "충분" if cpk["assay"] >= 1 else "부족")
+
+
+def _fill_stability26(document, logs, period, spec, log, issues):
+    """2026 양식의 13항 — 13.1 장기 안정성 실시 내역 · 13.3 경향 분석.
+
+    logs: [{"lot", "year", "pack", "store", "why",
+            "points": [{"period", "done", "assays": {성분: 값}}, …]}, …]
+    평가 기간 안에 끝난 시점만 13.1 에 적고, 경향(13.3)도 그 시점까지의 값으로 낸다 —
+    아직 하지 않은 뒤 시점을 넣으면 그 해의 경향이 아니다(한림 2026 결재본도 그렇게 쓴다).
+    """
+    year_to = int((period or {}).get("to") or 0) or None
+    _trim = lambda v: ("%%.%df" % _decimals_of(logs)) % v
+
+    def done_year(point):
+        got = re.findall(r"\d{4}", point.get("done") or "")
+        return int(got[0]) if got else None
+
+    def upto(point):        # 13.3 경향: 평가 연도까지 끝난 시점
+        got = done_year(point)
+        return (not year_to) or (got is not None and got <= year_to)
+
+    def during(point):      # 13.1 실시 내역: 평가 연도에 끝난 시점
+        got = done_year(point)
+        return (not year_to) or got == year_to
+
+    rows, trend = [], []
+    for one in logs:
+        taken = [p for p in one.get("points", []) if during(p)]
+        seen = [p for p in one.get("points", []) if upto(p)]
+        if taken:
+            rows.append((one, taken))
+        if seen:
+            trend.append((one, seen))
+    if not rows and not trend:
+        return
+
+    # 13.1 — Lot 하나가 한 줄, 시험 기간·완료 일자는 줄바꿈으로 잇는다
+    t131 = _tables(document, "13.1")
+    if t131:
+        table = t131[0]
+        f, _ = E.fit_rows(table, 1, len(table.rows) - 2, len(rows))
+        for i, (one, taken) in enumerate(rows):
+            cells = E.raw_cells(table.rows[f + i])
+            put = [str(i + 1), one.get("year") or "", [p["period"] for p in taken], one["lot"],
+                   one.get("pack") or "", one.get("store") or "", [p["done"] for p in taken],
+                   one.get("why") or ""]
+            for k, value in enumerate(put):
+                if k >= len(cells):
+                    break
+                E.set_cell(cells[k], *(value if isinstance(value, list) else str(value).split("\n")))
+                E.set_vmerge(cells[k], False)
+        if not any(one.get("why") for one, _ in rows):
+            issues.append(("13.1", "", "장기 안정성 시험의 ‘실시 사유’ 는 시험일지에 없습니다 — "
+                                       "변경관리·PV 내용을 보고 직접 적으세요"))
+
+    # 13.3 — 성분마다 그 Lot 의 최솟값 ~ 최댓값
+    t133 = _tables(document, "13.3")
+    if not t133:
+        return
+    table = t133[0]
+    labels = D.labels(table)
+    parts = []
+    for k, name in enumerate(labels):
+        got = next((p for p in spec if D.squeeze(p) and D.squeeze(p) in name), None)
+        if got:
+            parts.append((k, got))
+    if not parts:
+        return
+    heads = [i for i, tr in enumerate(table._tbl.findall(qn("w:tr")))
+             if D.squeeze(_text(tr.findall(qn("w:tc"))[0])).startswith(("관리규격", "최소", "최대", "경향"))]
+    first, last = 2, (heads[0] - 1 if heads else len(table.rows) - 1)
+    f, l = E.fit_rows(table, first, last, len(trend))
+    same_year = [one["year"] for one, _ in trend]
+    values = {k: [] for k, _ in parts}
+    for i, (one, taken) in enumerate(trend):
+        cells = _grid_cells_of(table.rows[f + i], len(labels))
+        mark = ""
+        if same_year.count(one["year"]) > 1:
+            mark = "%d)" % (sum(1 for j in range(i) if trend[j][0]["year"] == one["year"]) + 1)
+        if cells.get(1) is not None:
+            E.set_cell(cells[1], "%s%s" % (one.get("year") or "", mark))
+        for k, part in parts:
+            got = [p["assays"].get(part) for p in taken]
+            got = [float(x) for x in got if x is not None]
+            if not got or cells.get(k) is None:
+                continue
+            values[k] += got
+            E.set_cell(cells[k], "%s ~ %s" % (_trim(min(got)), _trim(max(got))))
+    for ri in heads:
+        cells = _grid_cells_of(table.rows[ri], len(labels))
+        head = D.squeeze(E.cell_text(cells[0])) if cells.get(0) is not None else ""
+        for k, part in parts:
+            if cells.get(k) is None or not values[k]:
+                continue
+            if "관리규격" in head:
+                E.set_cell(cells[k], re.sub(r"\s*%$", "", spec.get(part, "")))
+            elif "최소" in head:
+                E.set_cell(cells[k], _trim(min(values[k])))
+            elif "최대" in head:
+                E.set_cell(cells[k], _trim(max(values[k])))
+            elif "경향" in head:
+                lo_hi = re.findall(r"\d+(?:\.\d+)?", spec.get(part, ""))
+                ok = len(lo_hi) < 2 or (float(lo_hi[0]) <= min(values[k]) and max(values[k]) <= float(lo_hi[1]))
+                E.set_cell(cells[k], "적합" if ok else "부적합")
+    log("13항: 장기 안정성 실시 %d Lot · 경향 분석 %d Lot × 성분 %d" % (len(rows), len(trend), len(parts)))
+
+
+def _decimals_of(logs):
+    """시험일지에 적힌 자릿수 그대로 쓴다 — 함량 99.0 을 99 로 줄이면 결재본과 달라진다."""
+    seen = 1
+    for one in logs:
+        for point in one.get("points", []):
+            for value in (point.get("assays") or {}).values():
+                text = ("%s" % value)
+                if "." in text:
+                    seen = max(seen, len(text.split(".")[1]))
+    return seen
+
+
+def _grid_cells_of(row, width):
+    out, col = {}, 0
+    for cell in E.raw_cells(row):
+        pr = cell._tc.find(qn("w:tcPr"))
+        span_el = pr.find(qn("w:gridSpan")) if pr is not None else None
+        span = int(span_el.get(qn("w:val"))) if span_el is not None else 1
+        if col < width:
+            out[col] = cell
+        col += span
+    return out
 
 
 def _fill_stability(document, stab, log, assay_limits=None):

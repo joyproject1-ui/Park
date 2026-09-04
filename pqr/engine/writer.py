@@ -191,7 +191,15 @@ def write_report(folder, product, period, out_path, today=None, recipe=None, log
     previous = None if ignore_previous else find_previous(folder, work)
     form = edms.find_form(folder)
     data_issue = None
-    if previous:
+    # 제품용 최신 양식(EDMS 서식이면서 이 제품의 항·표·허용기준이 든 빈 양식)이 폴더에 있으면
+    # 그것이 바탕이다 — 담당자 지시(2026-09): "올해부터 최신양식으로 변경됐어."
+    # 전년도 결재본은 옛 양식이라 거기 없는 항(디겐타안연고 9.2 세부 시험결과)이 통째로 빠진다.
+    product_form = None
+    if form and not edms.is_shipped(form) and other_product(form, product) is None:
+        product_form = form
+    if product_form:
+        source, why = product_form, "EDMS 최신 양식(이 제품용)"
+    elif previous:
         source, why = previous, "전년도 결재본"
     elif form:
         source, why = form, "EDMS 서식(전년도 결재본 없음 — 첫해 제품)"
@@ -222,7 +230,9 @@ def write_report(folder, product, period, out_path, today=None, recipe=None, log
         wrong = other_product(base, product, os.path.basename(source))
         if wrong:
             raise EngineError(wrong)
-    if form and source is previous:
+    if product_form:
+        log_("이 제품의 EDMS 최신 양식을 바탕으로 씁니다 — 전년도 결재본은 참고만 합니다")
+    elif form and source is previous:
         log_("EDMS 서식: %s — 채운 뒤 이 서식에 옮겨 담음" % (
             "프로그램에 든 E-HLF-32 빈 서식" if edms.is_shipped(form) else os.path.basename(form)))
     elif not form:
@@ -243,6 +253,19 @@ def write_report(folder, product, period, out_path, today=None, recipe=None, log
     if recipe is None:
         from . import recipe_ointment as recipe_module
         recipe = recipe_module.fill
+    if product_form and previous:
+        # 최신 양식을 바탕으로 쓸 때 전년도 결재본은 참고 자료다 — 해마다 바뀌지 않는 값
+        # (원료 규격·제조단위·포장단위·제조원)만 빈 칸에 먼저 이어받고, 그 위에 올해 자료를 덮는다.
+        from . import carry as carry_module
+        try:
+            prev_docx = os.path.join(work, "prev.docx")
+            convert.to_docx(previous, prev_docx)
+            carry_module.carry(document, docx.Document(prev_docx), log_)
+        except Exception as error:
+            log_("전년도 결재본을 참고하지 못했습니다 — %s" % error)
+            data.issues.append(("16", os.path.basename(previous),
+                                "전년도 결재본을 읽지 못해 원료 규격·제조단위 같은 값을 이어받지 "
+                                "못했습니다 — 빈 칸을 직접 채우세요"))
     ctx = recipe(document, data, product, period, today=today, log=log_)
     if form and source is previous:
         filled = os.path.join(work, "filled.docx")

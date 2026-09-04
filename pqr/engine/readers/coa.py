@@ -129,6 +129,12 @@ def _assays(text):
     return out
 
 
+def _near(text, needle, span):
+    """needle 둘레의 글만 — 다른 항목의 숫자를 잘못 집지 않게."""
+    i = text.find(needle)
+    return text if i < 0 else text[max(0, i - span):i + span]
+
+
 def read_fp(path):
     """완제 시험성적서 한 장 (HLF-QC-327-06)."""
     text = squash(read_text(path))
@@ -136,8 +142,11 @@ def read_fp(path):
     out["lot"] = _first(r"\b(O[A-Z]{2}[A-Z0-9]{3})\b", text) or _first(LOT.pattern, text)
     out["expiry"] = _first(r"\b(\d{4}\.\d{2}\.\d{2})\s+한림제약", text)
     out["appearance"] = _appearance(text)
-    out["metal_total"] = _first(r"합계는\s*(\d+)\s*개\s*,\s*개개는 8개를 초과하는 것", text)
-    out["metal_each"] = _first(r"이\s*(\d+)\s*매\s*$", text, flags=re.M)
+    # 금속성이물: 기준과 결과가 같은 낱말로 적혀 있고(‘합계는 50개 이하’ / ‘합계는 0개’), PDF 판
+    # 마다 줄이 섞이는 자리가 달라 자리로는 못 짚는다. 기준에만 붙는 ‘이하’ 로 갈라낸다.
+    around = _near(text, "금속성이물", 400)
+    out["metal_total"] = _first(r"합계는\s*(\d+)\s*개(?!\s*이하)", around)
+    out["metal_each"] = _first(r"(\d+)\s*매(?!\s*이하)", around)
     # 입자도: '입자도  75㎛ 이하  15㎛ 이하' — 앞이 기준, 뒤가 결과다. 단위는 ㎛(U+339B) 이거나
     # um 으로 나온다. 예전에는 um 만 보고 첫 숫자(=기준)를 집어 결과를 놓쳤다.
     m = re.search(r"입자도\s+([\d.]+)\s*(?:㎛|um|μm)\s*이하\s+([\d.]+)\s*(?:㎛|um|μm)\s*이하", text)
@@ -155,8 +164,10 @@ def read_fp(path):
     m = re.search(r"평균\s*:\s*([\d\.]+)\s*g\s*,\s*개개\s*:\s*([\d\.]+)\s*g\s*이상", text)
     if m:
         out["mass_avg"], out["mass_each_min"] = m.group(1), m.group(2)
-    if re.search(r"무균\s+음성\(불검출\)\s+음성\(불검출\)", text):
-        out["sterility"] = "음성(불검출)"
+    # 무균: '무균  음성(불검출)  <결과>' — 기준과 결과가 나란히 온다. 결과 글은 성적서마다 다르다.
+    m = re.search(r"무균\s+음성\(불검출\)\s+(음성\(불검출\)|음성|불검출|양성)", text)
+    if m:
+        out["sterility"] = m.group(1)
     elif re.search(r"무균\s+음성\s+음성", text):
         out["sterility"] = "음성"
     if "메틸렌블루시액 침투 없이 양호" in text:

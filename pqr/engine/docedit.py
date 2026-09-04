@@ -694,6 +694,7 @@ def fit_to_window(table, width):
 UNIT = 92           # 반각 한 자의 폭(twip) — 굴림 10pt 를 Word 로 재어 맞춤. 한글·전각은 2 단위
 CELL_MARGIN = 220   # 칸 좌우 여백(108×2) + 여유
 KEY_HEADS = ("연번", "no.", "lot no", "lot", "구분")
+NOWRAP_HEADS = ("번호", "no.", "lot")     # 제조 번호·문서 번호 — 줄을 넘기면 읽을 수 없다
 
 
 def text_units(text):
@@ -755,6 +756,9 @@ def balance_columns(table, fixed_heads=KEY_HEADS, unit=UNIT, margin=CELL_MARGIN)
     total = sum(cols)
     budget = total - sum(cols[i] for i in range(len(cols)) if fixed[i])
     floor = {i: 0.6 * cols[i] for i in free}          # 원래 폭의 60% 밑으로는 좁히지 않는다
+    for i in free:                                    # 번호 칸은 줄을 넘기지 않는다 (OGW701 → OGW / 701)
+        if any(k in heads[i] for k in NOWRAP_HEADS) and need[i]:
+            floor[i] = max(floor[i], need[i] * unit + margin)
     chosen = best = None
     for lines in range(1, 40):
         want = [max(need[i] * unit / float(lines) + margin, floor[i]) for i in free]
@@ -769,10 +773,16 @@ def balance_columns(table, fixed_heads=KEY_HEADS, unit=UNIT, margin=CELL_MARGIN)
                   for i in free)
     if current <= best:
         return None
-    extra = (budget - sum(chosen)) / float(len(free))
+    # 남는 폭은 열마다 똑같이 나눈다. 다만 빈 열(13.1 '실시 사유')이 있으면 글 길이에 비례해
+    # 나눈다 — 빈 열에 같은 몫을 주면 'OGW70 / 1' 처럼 값이 든 열이 잘린다.
+    left = budget - sum(chosen)
+    empty = any(need[i] == 0 for i in free)
+    weight = [float(need[i]) for i in free] if empty else [1.0] * len(free)
+    if not sum(weight):
+        weight = [1.0] * len(free)
     new = list(cols)
     for k, i in enumerate(free):
-        new[i] = int(round(chosen[k] + extra))
+        new[i] = int(round(chosen[k] + left * weight[k] / sum(weight)))
     new[free[-1]] += total - sum(new)          # 반올림 오차는 마지막 자유 열에
     for g, w in zip(grid_el.findall(qn("w:gridCol")), new):
         g.set(qn("w:w"), str(w))
