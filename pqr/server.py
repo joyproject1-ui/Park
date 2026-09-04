@@ -7,6 +7,7 @@
 """
 
 import datetime as _dt
+import hashlib
 import json
 import os
 import posixpath
@@ -223,6 +224,8 @@ class Workspace(object):
         self.config = config or build_module.load_config()
         self.lock = threading.Lock()
         self.data = None
+        self.revision = 0          # 다시 읽을 때마다 하나씩 — 화면이 바뀐 것을 알아채는 표
+        self._fingerprint = None
         self.rebuild()
         # 참고 문서 폴더는 미리 만들어 둡니다 — 담당자가 탐색기로 바로 넣을 수 있게.
         self.reference_folder(create=True)
@@ -231,9 +234,40 @@ class Workspace(object):
 
     def rebuild(self):
         with self.lock:
+            self._fingerprint = self.fingerprint()
             self.data = build_module.build(input_dir=self.input_dir, today=self.today,
                                            config=self.config)
+            self.revision += 1
             return self.data
+
+    def fingerprint(self):
+        """입력 폴더의 지금 모습 — 파일·폴더 이름과 크기·고친 시각을 뭉친 값.
+
+        담당자가 탐색기에서 파일을 지우거나 넣어도 화면이 그것을 몰랐다(2026-09: 퀴노비드
+        폴더에 파일이 셋뿐인데 화면은 71%). 화면을 줄 때마다 이 값을 견주어 달라졌으면
+        다시 읽는다. 폴더를 한 번 훑는 값이라 몇백 파일이면 순식간이다.
+        """
+        digest = hashlib.sha1()
+        for root, dirs, files in os.walk(self.input_dir):
+            dirs.sort()
+            for name in sorted(dirs):
+                digest.update(os.path.join(root, name).encode("utf-8", "replace") + b"/")
+            for name in sorted(files):
+                path = os.path.join(root, name)
+                try:
+                    stat = os.stat(path)
+                except OSError:
+                    continue
+                digest.update(("%s|%d|%d\n" % (path, stat.st_size, stat.st_mtime_ns))
+                              .encode("utf-8", "replace"))
+        return digest.hexdigest()
+
+    def refresh_if_changed(self):
+        """폴더가 마지막 읽기와 다르면 다시 읽는다. 다시 읽었으면 True."""
+        if self.fingerprint() == self._fingerprint:
+            return False
+        self.rebuild()
+        return True
 
     def data_js(self):
         payload = self.dashboard_payload()
@@ -246,6 +280,7 @@ class Workspace(object):
                     "trend", "leadtime", "sources", "narrative")}
         payload["issue_count"] = len([i for i in data.get("issues", []) if i["level"] == "error"])
         payload["program_version"] = program_version()
+        payload["revision"] = self.revision
         payload["reference"] = {"folder": self.reference_folder(),
                                 "files": self.reference_files()}
         payload["upload"] = {
@@ -665,9 +700,11 @@ class Handler(BaseHTTPRequestHandler):
         if path in ("/", "/index.html"):
             return self._serve_file("index.html", "text/html; charset=utf-8")
         if path == "/data.js":
+            self.workspace.refresh_if_changed()      # 탐색기에서 지우거나 넣은 파일을 반영
             return self._send(200, self.workspace.data_js(),
                               "application/javascript; charset=utf-8")
         if path == "/api/data":
+            self.workspace.refresh_if_changed()
             return self._json(200, self.workspace.dashboard_payload())
         if path == "/api/health":
             return self._json(200, {"ok": True, "input_dir": self.workspace.input_dir})

@@ -708,3 +708,24 @@ class BulkUploadTest(ItemUploadTest):
         self.assertTrue(result["ok"], result.get("error"))
         product = next(p for p in result["data"]["products"] if p["code"] == "HP-110")
         self.assertEqual(product["final_report"], name)
+
+
+class FolderWatchTest(ServerTest):
+    """탐색기에서 파일을 지우거나 넣어도 화면이 지금 폴더 모습을 보여 준다 (담당자 2026-09)."""
+
+    def test_deleting_a_file_on_disk_is_reflected_on_next_read(self):
+        before = json.loads(self.get("/api/data")[1])
+        product = next(p for p in before["products"] if p["code"] == "HP-110")
+        self.assertNotEqual(product["checks"][ITEM_IDS.index("6")], "n")   # 제조내역(시험성적서) 있음
+
+        os.remove(os.path.join(self.dir, self.folder, "시험성적서.csv"))       # 탐색기에서 지운 셈
+
+        after = json.loads(self.get("/api/data")[1])
+        self.assertGreater(after["revision"], before["revision"])
+        product = next(p for p in after["products"] if p["code"] == "HP-110")
+        self.assertEqual(product["checks"][ITEM_IDS.index("6")], "n")
+
+    def test_unchanged_folder_keeps_the_same_revision(self):
+        first = json.loads(self.get("/api/data")[1])["revision"]
+        second = json.loads(self.get("/api/data")[1])["revision"]
+        self.assertEqual(first, second)

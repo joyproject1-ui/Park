@@ -2091,6 +2091,37 @@ $("#reload-btn").addEventListener("click", async ()=>{
   }
 });
 
+/* ---- 폴더 변화 따라가기 ----
+   담당자가 탐색기에서 파일을 지우거나 넣으면 서버가 폴더를 다시 읽는데, 화면은 스스로
+   묻지 않으면 그 사실을 모른다(2026-09: 폴더에 파일이 셋뿐인데 화면은 71%). 창이 보이는
+   동안 몇 초마다 물어보고, 판(revision)이 바뀌었으면 ↻ 버튼과 같은 길로 다시 그린다.
+   창을 다시 볼 때(다른 창에서 돌아올 때)도 곧바로 묻는다. */
+const WATCH_EVERY_MS = 5000;
+let watching = false;
+async function syncWithFolder(){
+  if (!uploadEnabled() || watching || document.hidden) return;
+  watching = true;
+  try {
+    const response = await fetch("api/data", { cache: "no-store" });
+    if (!response.ok) return;
+    const payload = await response.json();
+    if (!payload || payload.revision === undefined || payload.revision === SOURCE.revision) return;
+    const keep = { view: state.view, site: state.site, form: state.form };
+    adopt(payload);
+    renderSiteFilter();
+    state.site = keep.site; state.form = keep.form;
+    render();
+    renderSourceNote();
+  } catch (error) {
+    /* 서버가 잠시 안 보이면 다음 차례에 다시 묻는다 */
+  } finally {
+    watching = false;
+  }
+}
+setInterval(syncWithFolder, WATCH_EVERY_MS);
+document.addEventListener("visibilitychange", ()=>{ if (!document.hidden) syncWithFolder(); });
+window.addEventListener("focus", syncWithFolder);
+
 /* ---- 제작자 문의 메일 ----
    사내망에서는 이 프로그램이 메일을 직접 보낼 수 없습니다(서버·계정이 없습니다).
    대신 쓰는 사람의 메일 프로그램을 열어 내용을 채워 줍니다 — 보내는 사람이
@@ -2324,7 +2355,7 @@ function renderSourceNote(){
     $("#file-open").hidden = uploadEnabled();
     $("#reload-btn").hidden = !uploadEnabled();
     const files = Object.values(SOURCE.sources || {}).reduce((sum, list)=>sum + list.length, 0);
-    foot.innerHTML = `제출 파일 ${files}건으로 ${esc((SOURCE.generated_at || "").replace("T", " "))} 에 생성한 데이터입니다. `
+    foot.innerHTML = `제출 파일 ${files}건으로 ${esc((SOURCE.generated_at || "").replace("T", " "))} 에 읽은 데이터입니다. 폴더에서 파일을 넣거나 지우면 곧 반영됩니다. `
       + (SOURCE.upload && SOURCE.upload.input_dir
           ? `입력 폴더: <code>${esc(SOURCE.upload.input_dir)}</code>. ` : "")
       + `서술 문안이 포함된 보고서는 생성형 AI가 작성한 <b>초안</b>이며, 발행 전 담당자 검토와 승인이 필요합니다.`
