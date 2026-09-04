@@ -198,9 +198,31 @@ def fill(document, data, product, period, today=None, log=None):
     dev_lots = {d.get("lot") for d in data.deviations if "수율" in (d.get("title") or "")}
     t7 = _tables(document, "7.")
 
+    def put_sheet_specs(table, stages):
+        """올해 수율현황표에 적힌 기준을 결재본의 기준 행에 옮긴다.
+
+        기준은 해가 바뀌며 개정된다(디겐타안연고 충전: 96.0 ± 3.5% → 86.5 ± 6.5%). 전년도
+        결재본의 기준을 그대로 두면 표에 지난해 기준이 적히고, 멀쩡한 Lot 이 모두
+        '기준 벗어남' 으로 잡힌다.
+        """
+        if not data.yield_specs:
+            return
+        for row in table.rows[:3]:
+            cells = E.raw_cells(row)
+            texts = [E.cell_text(c) for c in cells]
+            if not any("이상" in t or "±" in t for t in texts):
+                continue
+            targets = cells[-4:-1] if len(cells) >= 5 else cells
+            for k, stage in enumerate(stages):
+                spec = data.yield_specs.get(stage)
+                if spec and k < len(targets):
+                    E.set_cell(targets[k], spec)
+            return
+
     def fill_yield(table, lots, is_dom):
-        specs = yield_specs(table)
         stages = ("조제", "충전", "포장")
+        put_sheet_specs(table, stages)
+        specs = yield_specs(table)
         f, l = E.fit_rows(table, 3, len(table.rows) - 4, max(1, len(lots)))
         vals = {}
         for i, lot in enumerate(lots):
@@ -294,13 +316,14 @@ def fill(document, data, product, period, today=None, log=None):
     log("8.1.3 평가일 갱신: %d" % upd813)
 
     # ---------- 8.2 시험성적 ----------
-    def group_fill(table, records, code, item):
-        total = sum(len(x[1]) for x in records)
+    def group_fill(table, records):
+        """records: [(원료 코드, 원료명, 시험번호, [Lot ...]), ...] — 시험번호마다 Lot 수만큼 행."""
+        total = sum(len(x[3]) for x in records)
         if not total:
             return
         f, l = E.fit_rows(table, 1, len(table.rows) - 1, total)
         ri = f
-        for gi, (test_no, lots) in enumerate(records, start=1):
+        for gi, (code, item, test_no, lots) in enumerate(records, start=1):
             for li, lot in enumerate(lots):
                 r = E.raw_cells(table.rows[ri]); head = (li == 0)
                 for k, v in ((0, str(gi)), (1, code), (2, item), (3, test_no)):
@@ -308,16 +331,36 @@ def fill(document, data, product, period, today=None, log=None):
                 E.set_cell(r[4], lot); E.set_vmerge(r[4], False)
                 E.set_cell(r[5], "적합" if head else ""); E.set_vmerge(r[5], "restart" if head else None)
                 ri += 1
+
+    def material_names(table):
+        """결재본 8.2 표에 적힌 {원료 코드: 원료명} — 코드에 붙일 한글 이름은 여기에만 있다."""
+        out = {}
+        for row in table.rows[1:]:
+            cells = E.raw_cells(row)
+            if len(cells) > 2:
+                code = E.cell_text(cells[1]).strip()
+                if code:
+                    out.setdefault(code, E.cell_text(cells[2]).strip())
+        return out
+
     t821 = _tables(document, "8.2.1")
     if t821 and data.raw_tests:
-        first = E.raw_cells(t821[0].rows[1])
-        code, item = E.cell_text(first[1]).strip(), E.cell_text(first[2]).strip()
+        # 주원료가 둘 이상인 제품이 있다(디겐타안연고: 겐타마이신황산염·플루오로메톨론). 예전에는
+        # 결재본 첫 행의 코드 하나만 채워 나머지 주원료가 표에서 통째로 빠졌다.
+        names = material_names(t821[0])
         for tbl, lots in ((t821[0], dom), (t821[1] if len(t821) > 1 else None, exp)):
             if tbl is None:
                 continue
-            recs = [(test, [l for l in lots if l in ls]) for c, test, ls in data.raw_tests if c == code]
-            recs = [(test, ls) for test, ls in recs if ls]
-            group_fill(tbl, recs, code, item)
+            recs = []
+            for code, test, ls in data.raw_tests:
+                mine = [l for l in lots if l in ls]
+                if mine:
+                    recs.append((code, names.get(code, ""), test, mine))
+            missing = sorted({c for c, item, _t, _l in recs if not item})
+            if missing:
+                issues.append(("8.2.1", ", ".join(missing),
+                               "전년도 결재본에 없는 원료 코드입니다 — 원료명을 확인해 적으세요"))
+            group_fill(tbl, recs)
     t822 = _tables(document, "8.2.2")
     if t822 and data.pkg_tests:
         tbl = t822[0]
@@ -729,7 +772,11 @@ def fill(document, data, product, period, today=None, log=None):
     t12 = _tables(document, "12.")
     if t12:
         tbl = t12[0]
-        ccs = [c for c in data.changes if not name or name[:4] in (c.get("products") or "") or name[:4] in (c.get("title") or "")]
+        # 담당자가 12항에 넣어 준 변경요청서는 모두 싣는다. 변경요청서의 '대상 제품' 에 이 제품
+        # 이름이 없는 것도 있다(디겐타안연고 2026: 주성분 플루오로메톨론 멸균 온도 변경 건은
+        # 대상이 후메론점안액으로만 적혀 있다). 제품 이름으로 걸러 내면 실제로 있었던 변경이
+        # 보고서에서 통째로 빠진다 — 싣고, 이름이 없는 건은 확인해 달라고 남긴다.
+        ccs = list(data.changes)
         if ccs:
             f, l = E.fit_rows(tbl, 1, len(tbl.rows) - 2, len(ccs))
             for i, cc in enumerate(ccs):
@@ -743,6 +790,10 @@ def fill(document, data, product, period, today=None, log=None):
                                  "완료 목표일 : %s" % ((cc.get("target_date") or "").replace("-", ".") or "확인 필요"))
                 E.set_cell(c[3], "확인 필요"); E.set_cell(c[4], "N/A")
                 issues.append(("12", cc.get("doc_no") or "", "변경 조치사항과 적용 Lot 은 변경요청서만으로 정해지지 않음 — 확인 필요"))
+                where = (cc.get("products") or "") + " " + (cc.get("title") or "")
+                if name and name[:4] not in re.sub(r"\s+", "", where):
+                    issues.append(("12", cc.get("doc_no") or "",
+                                   "변경요청서의 대상 제품에 이 제품 이름이 없습니다 — 이 제품에 해당하는지 확인하세요"))
             E.set_cell_plain(E.raw_cells(tbl.rows[-1])[0], "특이사항 (Comment)", "N/A")
         else:
             E.set_cell_plain(E.raw_cells(tbl.rows[-1])[0], "특이사항 (Comment)", "평가 년도 내 변경관리 이력 없음.")

@@ -22,6 +22,7 @@ class ProductData(object):
     def __init__(self):
         self.lots = []            # [(lot, mfg_date, export)]  제조일자는 성적서·제조내역에서
         self.yields = {}          # lot -> {"조제": "97.45", ...}
+        self.yield_specs = {}     # {"조제": "94% 이상", ...} — 그해 수율현황표에 적힌 기준
         self.coa = {}             # lot -> {"922": {...}, "923": {...}, "924": {...}}
         self.raw_tests = []       # 8.2.1  [(코드, 시험번호, [lots])]
         self.pkg_tests = []       # 8.2.2  [(코드, 시험번호, [lots])]
@@ -164,6 +165,7 @@ def collect(folder, product_name=None, log=None):
         if p.lower().endswith((".xlsx", ".xls")):
             for lot, vals in yield_sheet.read_yields(p):
                 data.yields[lot] = vals
+            data.yield_specs.update(yield_sheet.read_specs(p))
     # 8.x
     for p in got.get("8.1.1", []):
         if p.lower().endswith(".xlsx"):
@@ -174,12 +176,13 @@ def collect(folder, product_name=None, log=None):
     for p in got.get("8.1.2", []):
         if p.lower().endswith(".xlsx"):
             data.api_chain = suppliers.read_api_chain(p)
+    # ERP 가 그대로 내려 준 표에는 그 원료를 쓴 모든 제품이 들어 있다 — 제품 이름으로 가려낸다.
     for p in got.get("8.2.1", []) + got.get("8.2.1.1", []):
         if p.lower().endswith((".xls", ".xlsx")):
-            data.raw_tests += erp.group_by_test(erp.read_material_tests(p))
+            data.raw_tests += erp.group_by_test(erp.read_material_tests(p, product=product_name))
     for p in got.get("8.2.2", []):
         if p.lower().endswith((".xls", ".xlsx")):
-            data.pkg_tests += erp.group_by_test(erp.read_material_tests(p))
+            data.pkg_tests += erp.group_by_test(erp.read_material_tests(p, product=product_name))
     # 9.2.x 성적서
     for item, key, fn in (("9.2.2", "922", coa_reader.read_ipc), ("9.2.3", "923", coa_reader.read_ipc),
                           ("9.2.4", "924", coa_reader.read_fp)):

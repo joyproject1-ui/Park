@@ -16,25 +16,62 @@ def _kind(doc):
     return m.group(1) if m else ""
 
 
+def _plain(text):
+    return re.sub(r"\s+", "", text or "")
+
+
+def _sheets(path, preferred):
+    """정해 둔 시트를 먼저, 그다음 나머지 시트 — 회사가 서식을 개정하면 시트 이름이 바뀐다.
+
+    2026-09 디겐타 자료의 마스터파일은 시트가 '생산장비' 였다(예전 '제조시설적격성평가현황').
+    이름을 정해 두면 개정될 때마다 그 항이 통째로 비므로, 머리행을 보고 고른다.
+    """
+    wb = load_workbook(path, data_only=True, read_only=True)
+    order = ([preferred] if preferred in wb.sheetnames else []) + \
+            [n for n in wb.sheetnames if n != preferred]
+    for name in order:
+        yield name, list(wb[name].iter_rows(values_only=True))
+
+
+def _header(rows, test, limit=12):
+    """머리행 번호와 그 칸 글자. 없으면 (None, None)."""
+    for i, row in enumerate(rows[:limit]):
+        cells = [_cell(v) for v in row]
+        if test(cells):
+            return i, cells
+    return None, None
+
+
+def _is_equipment_header(cells):
+    joined = _plain(" ".join(cells))
+    return "관리번호" in cells and "보고서문서번호" in joined
+
+
+def _is_support_header(cells):
+    return "관리번호" in cells and any("IQ 문서번호" in c for c in cells)
+
+
 def equipment_docs(path, sheet="제조시설적격성평가현황"):
     """{관리번호: {"name": 장비명, "line": 라인, "docs": [(문서번호, 완료일), ...]}}
 
     마스터파일은 장비 한 대가 여러 행(연번 행 + 이어지는 행)이라, 관리번호가 나온 뒤
     관리번호 칸이 빈 행은 같은 장비의 문서로 본다.
     """
-    ws = load_workbook(path, data_only=True, read_only=True)[sheet]
-    rows = list(ws.iter_rows(values_only=True))
-    header = None
-    for i, row in enumerate(rows[:10]):
-        cells = [_cell(v) for v in row]
-        if "관리번호" in cells and "보고서 문서 번호" in " ".join(cells):
-            header = i
+    rows = header = col = None
+    for _name, sheet_rows in _sheets(path, sheet):
+        header, cells = _header(sheet_rows, _is_equipment_header)
+        if header is not None:
+            rows = sheet_rows
             col = {name: cells.index(name) for name in cells if name}
             break
     if header is None:
-        raise ValueError("설비 마스터파일의 머리행(관리번호·보고서 문서 번호)을 찾지 못했습니다.")
-    c_id = col["관리번호"]; c_doc = next(k for k in col if "문서 번호" in k or "문서번호" in k); c_doc = col[c_doc]
-    c_date = col.get("완료일"); c_name = col.get("장비명"); c_line = col.get("라인")
+        raise ValueError("설비 마스터파일의 머리행(관리번호·보고서 문서번호)을 찾지 못했습니다.")
+    c_id = col["관리번호"]
+    c_doc = col[next(k for k in col if "문서 번호" in k or "문서번호" in k)]
+    # 완료일은 개정되며 '승인일자' 로 이름이 바뀌었다 — 둘 다 받는다.
+    c_date = next((col[k] for k in ("완료일", "승인일자", "승인일") if k in col), None)
+    c_name = next((col[k] for k in ("장비명", "설비명") if k in col), None)
+    c_line = col.get("라인")
     out, current = {}, None
     for row in rows[header + 1:]:
         cells = list(row) + [None] * 25
@@ -62,17 +99,17 @@ def latest_by_kind(docs):
 
 def support_docs(path, sheet="제조지원 설비 & IT 시스템"):
     """{관리번호(앞 토큰): {"name": 설비명, "system": 시스템, "IQ": [(doc, date)], "OQ": …, "PQ": …, "DQ": …}}"""
-    ws = load_workbook(path, data_only=True, read_only=True)[sheet]
-    rows = list(ws.iter_rows(values_only=True))
-    header = None
-    for i, row in enumerate(rows[:12]):
-        cells = [_cell(v) for v in row]
-        if "관리번호" in cells and any("IQ 문서번호" in c for c in cells):
-            header = i
+    rows = header = col = None
+    for _name, sheet_rows in _sheets(path, sheet):
+        header, cells = _header(sheet_rows, _is_support_header)
+        if header is not None:
+            rows = sheet_rows
             col = {name: j for j, name in enumerate(cells) if name}
             break
     if header is None:
-        raise ValueError("제조지원 설비 마스터파일의 머리행을 찾지 못했습니다.")
+        # 개정된 마스터파일은 제조지원설비도 제조설비와 같은 꼴이다(관리번호·보고서 문서번호·승인일자).
+        # 읽지 못했다고 물러나면 10.3~10.5 가 통째로 빈다 — 같은 값을 그 꼴에서 읽어 온다.
+        return _support_from_equipment(path)
     out = {}
     system = ""
     for row in rows[header + 1:]:
@@ -93,6 +130,18 @@ def support_docs(path, sheet="제조지원 설비 & IT 시스템"):
             entry[kind] = [(docs[i] if i < len(docs) else "", dates[i] if i < len(dates) else "")
                            for i in range(max(len(docs), len(dates)))]
         out[key] = entry
+    return out
+
+
+def _support_from_equipment(path):
+    """제조설비 꼴(관리번호·보고서 문서번호·승인일자)로 적힌 제조지원설비 마스터파일을 읽는다."""
+    out = {}
+    for key, entry in equipment_docs(path, sheet=None).items():
+        by = latest_by_kind(entry["docs"])
+        row = {"name": entry.get("name", ""), "system": entry.get("line", ""), "raw_id": key}
+        for kind in ("DQ", "IQ", "OQ", "PQ"):
+            row[kind] = by.get(kind, [])
+        out[key.split()[0] if key.split() else key] = row
     return out
 
 
