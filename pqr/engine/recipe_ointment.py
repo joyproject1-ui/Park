@@ -109,6 +109,38 @@ def _avg_text(values, fmt="%.2f", unit_on_avg=True):
         sum(values) / len(values), min(values), max(values))
 
 
+def _deviation_lines(dev):
+    """11항 일탈사항 칸의 글 — 2026 결재본 차림새로 요점만.
+
+        [조제 작업 중 장비 이상 건]
+        * 일탈 내용
+        조제 작업 진행 중 MAINMIXER 의 스크래퍼가 작동되지 않아 조제 작업 중단함.
+        * 일탈 원인
+        원인 미상
+
+    담당자 지적(2026-09): "표 안의 일탈사항은 더 요약해서 요점만." 예전에는 일탈보고서의
+    설명을 통째로 옮겨 시각 기록('1) 조제 시작 시간 …')까지 실렸다. 말은 지어내지 않고
+    원본에서 **고르고 다듬기만** 한다 — 제목은 제품명·Lot 을 떼고, 내용은 시각·번호 기록을
+    뺀 문장만, 원인은 일탈보고서의 '원인' 칸을 그대로 쓴다.
+    """
+    title = re.sub(r"^\S+\s*\([A-Z0-9]+\)\s*", "", dev.get("title") or "").strip()
+    out = [("[%s]" % title, "none")] if title else []
+    body = []
+    for line in (dev.get("description") or "").split("\n"):
+        line = line.strip()
+        if not line or re.match(r"^\d\)", line):      # '1) 조제 시작 시간 …' 같은 시각 기록은 뺀다
+            continue
+        body.append(re.sub(r"^\d\.\s*", "", line))
+    if body:
+        out.append(("* 일탈 내용", "none"))
+        out.append((" ".join(body), "none"))
+    cause = re.sub(r"^\d\.\s*", "", (dev.get("cause") or "").replace("\n", " ")).strip()
+    if cause:
+        out.append(("* 일탈 원인", "none"))
+        out.append((cause, "none"))
+    return out
+
+
 def _quarter(day):
     return (day.month - 1) // 3 + 1
 
@@ -785,17 +817,34 @@ def fill(document, data, product, period, today=None, log=None):
                     rows.append(e)
         if not rows:
             return 0
+        # 가장 최근 것 하나만 싣는다 (담당자 지시 2026-09) — 마스터파일에는 해묵은 PV 가 함께 있다.
+        rows = [max(rows, key=lambda e: (e.get("report_date") or "", e.get("report") or ""))]
+        # 열은 머리행 이름으로 짚는다 — 전년도 양식은 'No.' 열이 있고 2026 결재본은 없다.
+        # 자리로 쓰면 사유 체크박스가 No. 칸에 들어가는 등 한 칸씩 밀린다.
+        head = [re.sub(r"\s+", "", E.cell_text(h)) for h in E.raw_cells(table.rows[0])]
+
+        def col(*words):
+            return next((i for i, h in enumerate(head) if any(w in h for w in words)), None)
+
+        i_no, i_why, i_lot = col("No.", "연번"), col("사유"), col("대상Lot", "Lot")
+        i_doc, i_done, i_note = col("문서번호"), col("완료일"), col("비고")
         f, l = E.fit_rows(table, 1, len(table.rows) - 1, len(rows))
         for i, e in enumerate(rows):
             c = E.raw_cells(table.rows[f + i])
+
+            def put(index, *lines):
+                if index is not None and index < len(c):
+                    E.set_cell(c[index], *lines)
+
             reason = (e.get("reason") or "").strip()
             kind = "변경" if "변경" in reason else ("정기적" if "정기" in reason else "최초")
-            E.set_cell(c[0], *["%s %s" % ("■" if k == kind else "☐", k) for k in ("최초", "변경", "정기적")])
-            E.set_cell(c[1], *[lot for _, lot, _ in e["lots"]][:3])
+            put(i_no, str(i + 1))
+            put(i_why, *["%s %s" % ("■" if k == kind else "☐", k) for k in ("최초", "변경", "정기적")])
+            put(i_lot, *[lot for _, lot, _ in e["lots"]][:3])
             m = re.match(r"(\S+)\s*(\(.*?\))?", e["report"])
-            E.set_cell(c[2], m.group(1), (m.group(2) or "").lower()) if m else E.set_cell(c[2], e["report"])
-            E.set_cell(c[3], e.get("report_date") or "확인 필요")
-            E.set_cell(c[4], reason)
+            put(i_doc, m.group(1), (m.group(2) or "").lower()) if m else put(i_doc, e["report"])
+            put(i_done, e.get("report_date") or "확인 필요")
+            put(i_note, reason)                 # 비고에 지난해 글이 남지 않게 늘 덮어쓴다
         return len(rows)
     t101 = _tables(document, "10.1")
     pv_n = 0
@@ -846,16 +895,7 @@ def fill(document, data, product, period, today=None, log=None):
                     E.set_cell(c[i_lot], d.get("lot") or "")
                 if i_doc is not None and i_doc < len(c):
                     E.set_cell(c[i_doc], d.get("doc_no") or "")
-                title = re.sub(r"^\S+\([A-Z0-9]+\)\s*", "", d.get("title") or "")
-                detail = [("* " + title, "none")]
-                for line in (d.get("description") or "").split("\n"):
-                    if not line.strip():
-                        continue
-                    kind = "num" if re.match(r"^\d\)", line) else ("body" if re.match(r"^\d\.", line) else "cont")
-                    detail.append((re.sub(r"^\d\.\s*", "", line) if kind == "body" else line, kind))
-                if d.get("cause"):
-                    detail.append(("원인", "body"))
-                    detail.append((": " + d["cause"].replace("\n", " "), "cont"))
+                detail = _deviation_lines(d)
                 action = [(line, "none") for line in (d.get("correction") or "").split("\n") if line.strip()]
                 if d.get("completed"):
                     action.append(("(조치사항 완료일 : %s)" % d["completed"], "none"))
@@ -865,9 +905,9 @@ def fill(document, data, product, period, today=None, log=None):
                     E.set_cell_flow(c[i_act], action)
                 if i_capa is not None and i_capa < len(c):
                     E.set_cell(c[i_capa], "☐ Yes", "■ No")
-            nos = ", ".join(d.get("doc_no") or "" for d in devs)
             E.set_cell_plain(E.raw_cells(tbl.rows[-1])[0], "특이사항 (Comment)",
-                             "평가 년도 내 발생한 내수용 제품의 일탈 %d건(%s)은 조치사항이 적절하게 완료되었음을 확인함." % (len(devs), nos))
+                             "- 평가 년도 내 %d건의 일탈 있었으나, 모두 적합하게 조치되었으며 특이사항 없음."
+                             % len(devs))
         else:
             E.set_cell_plain(E.raw_cells(tbl.rows[-1])[0], "특이사항 (Comment)", "평가 년도 내 중요 일탈 및 기준 일탈 이력 없음.")
         for tb in t11[1:]:
@@ -889,14 +929,22 @@ def fill(document, data, product, period, today=None, log=None):
             for i, cc in enumerate(ccs):
                 c = E.raw_cells(tbl.rows[f + i])
                 E.set_cell(c[0], str(i + 1))
-                lines = ["[%s] %s" % (cc.get("doc_no"), cc.get("title") or ""), "", "- 변경 사유"]
-                lines += [x for x in (cc.get("reason") or "").split("\n") if x]
-                lines += ["", "- 변경 내용"] + [x for x in (cc.get("description") or "").split("\n") if x]
+                # 변경사항: 변경 번호와 변경 내용만 (변경 사유는 적지 않는다 — 담당자 지시 2026-09)
+                lines = ["[%s] %s" % (cc.get("doc_no"), cc.get("title") or "")]
+                lines += [x for x in (cc.get("description") or "").split("\n") if x.strip()]
                 E.set_cell_plain(c[1], *lines)
-                E.set_cell_plain(c[2], "변경 승인일 : %s" % (cc.get("approved") or "확인 필요"),
-                                 "완료 목표일 : %s" % ((cc.get("target_date") or "").replace("-", ".") or "확인 필요"))
+                # 조치사항: 변경 실행 계획의 부서별 조치사항을 간추린다. 위탁사·위수탁 줄은 뺀다.
+                acts = [a for team, a in (cc.get("actions") or [])
+                        if "위수탁" not in team and not re.search(r"위탁사|위수탁", a)]
+                if acts:
+                    E.set_cell_plain(c[2], *["%d. %s" % (k, a) for k, a in enumerate(acts, 1)])
+                    issues.append(("12", cc.get("doc_no") or "",
+                                   "조치사항은 변경 실행 계획을 간추린 것입니다 — 이 제품에 해당하지 않는 줄은 지우세요"))
+                else:
+                    E.set_cell_plain(c[2], "확인 필요")
+                    issues.append(("12", cc.get("doc_no") or "",
+                                   "변경 실행 계획을 읽지 못했습니다 — 조치사항을 직접 적으세요"))
                 E.set_cell(c[3], "확인 필요"); E.set_cell(c[4], "N/A")
-                issues.append(("12", cc.get("doc_no") or "", "변경 조치사항과 적용 Lot 은 변경요청서만으로 정해지지 않음 — 확인 필요"))
                 where = (cc.get("products") or "") + " " + (cc.get("title") or "")
                 if name and name[:4] not in re.sub(r"\s+", "", where):
                     issues.append(("12", cc.get("doc_no") or "",
