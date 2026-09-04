@@ -79,6 +79,12 @@ def fill_cpk(src_xls, dst_xls, values, today):
 def write_cpk_files(folder, data, previous_path, today, lots=None):
     """내수용 Lot 의 완제 성적서 값으로 Cpk 파일 4종을 제품 폴더에 만든다. [(이름, 경로)]"""
     lots = lots or data.domestic
+    from . import qc
+    if not qc.cpk_applies(len(lots)):
+        # QC-126: 평가 년도 생산 Lot 이 기준(10) 미만이면 Cpk 를 산출하지 않는다 — 계산 파일도 만들지 않는다
+        data.issues.append(("첨부", "", "평가 년도 생산 %d Lot 으로 %d Lot 미만 — QC-126 에 따라 Cpk 계산 파일을 만들지 않음"
+                            % (len(lots), qc.cpk_min_lots())))
+        return []
     work = tempfile.mkdtemp(prefix="pqr-cpk-")
     sources = _previous_xls(previous_path, work)
     out = []

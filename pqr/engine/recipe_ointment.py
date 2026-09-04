@@ -13,6 +13,7 @@ import statistics
 from docx.oxml.ns import qn
 
 from . import docedit as E
+from . import qc
 from .locate import find_tables, find_para, _text
 from .ooxml_order import get_or_add
 
@@ -457,7 +458,7 @@ def fill(document, data, product, period, today=None, log=None):
             ms, mi = n["ms"], n["mi"]
             put(t_metal, l + 1, (2, 3), "%.0f" % max(ms), "%.0f" % max(mi))
             put(t_metal, l + 2, (2, 3), "%.0f" % min(ms), "%.0f" % min(mi))
-            if len(lots) >= 10:
+            if qc.cpk_applies(len(lots)):
                 put(t_metal, l + 3, (2, 3), "%.2f" % (sum(ms) / len(ms)), "%.2f" % (sum(mi) / len(mi)))
                 cpk["metal"] = cpk_uni(ms, 50.0)
                 if cpk["metal"] is not None:
@@ -731,7 +732,13 @@ def fill(document, data, product, period, today=None, log=None):
             texts.append("16.3. 수율 현황 검토 결과, 내수용 %d개 Lot(%s)의 충전 수율이 자가기준을 벗어나 최댓값·최솟값·평균 계산에서 제외하였음."
                          % (len(yield_out), ", ".join(yield_out)))
         cp = {k: v for k, v in cpk_dom.items() if v is not None}
-        if cp:
+        if not qc.cpk_applies(len(dom)):
+            # 10 Lot 미만 — QC-126 에 따라 Cpk 를 산출하지 않는다(모든 PQR 공통)
+            s = "16.%d. %s" % (len(texts) + 2, qc.not_applied_sentence("내수용", len(dom)))
+            if exp and not qc.cpk_applies(len(exp)):
+                s += " " + qc.not_applied_sentence("수출용", len(exp))
+            texts.append(s)
+        elif cp:
             names = {"metal": "금속성이물(합계)", "particle": "입자도", "assay": "함량"}
             good = ["%s %.2f" % (names[k], v) for k, v in cp.items() if v >= 1]
             bad = ["%s %.2f" % (names[k], v) for k, v in cp.items() if v < 1]
@@ -740,8 +747,8 @@ def fill(document, data, product, period, today=None, log=None):
                 s += ("%s 은 공정능력이 충분하였으나 " % ", ".join(good) if good else "") + "%s 으로 1 미만이므로 ‘QC-126 제품품질평가 규정’의 판정 기준에 따라 공정 개선 검토가 필요함." % ", ".join(bad)
             else:
                 s += "%s 으로 공정능력이 충분함." % ", ".join(good)
-            if exp and len(exp) < 10:
-                s += " 수출용 제품은 평가 년도 생산 Lot 이 %d Lot 으로 10 Lot 미만이므로 Cpk 를 산출하지 않았음." % len(exp)
+            if exp and not qc.cpk_applies(len(exp)):
+                s += " " + qc.not_applied_sentence("수출용", len(exp))
             texts.append(s)
         texts.append("16.%d. 시판 후 안정성 시험 및 장기 안정성 시험의 경향 분석 결과, 모두 관리 규격 범위 내에 있어 경시 변화에 따른 특이사항은 없는 것으로 판단됨." % (len(texts) + 2))
         # 기존 16.2 이후 문단 제거 후 새로 넣는다
@@ -768,7 +775,7 @@ def _fill_numbers(t, f, l, lots, n, cpk, rec, put, is_dom):
     put(t, l + 1, (1, 2, 3, 4), "%.2f" % max(pt), "%.2f" % max(pa), "%.2f" % max(pi), "%.1f" % max(ct))
     put(t, l + 2, (1, 2, 3, 4), "%.2f" % min(pt), "%.2f" % min(pa), "%.2f" % min(pi), "%.1f" % min(ct))
     put(t, l + 3, (1, 2, 3, 4), "%.2f" % (sum(pt) / len(pt)), "%.2f" % (sum(pa) / len(pa)), "", "%.1f" % (sum(ct) / len(ct)))
-    if len(lots) >= 10:
+    if qc.cpk_applies(len(lots)):
         cpk["particle"] = cpk_uni(pt, 75.0); cpk["assay"] = cpk_bi(ct, 90.0, 110.0)
         if cpk["particle"] is not None and cpk["assay"] is not None:
             put(t, l + 4, (1, 4), "%.2f" % cpk["particle"], "%.2f" % cpk["assay"])
