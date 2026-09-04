@@ -440,3 +440,35 @@ class 스타일합치기(unittest.TestCase):
         n = rehouse._apply_style_remap([p], {"a": "Normal"})
         self.assertEqual(n, 1)
         self.assertEqual(p.find(self.W + "pPr").find(self.W + "pStyle").get(self.W + "val"), "Normal")
+
+
+class 공양식_우선(unittest.TestCase):
+    """평가항목 (v) 'PQR 작성 공양식' 으로 올린 양식을 먼저 쓴다 (담당자 지시 2026-09)."""
+
+    def setUp(self):
+        self.root = tempfile.mkdtemp()
+        self.product = os.path.join(self.root, "QC1-7014 디겐타안연고")
+        os.makedirs(self.product)
+
+    def tearDown(self):
+        shutil.rmtree(self.root, ignore_errors=True)
+
+    def test_항_번호_0_으로_올린_양식이_더_오래돼도_먼저다(self):
+        named = make_docx(os.path.join(self.product, "0 PQR 작성 공양식 - EHLF32.docx"),
+                          footer="EHLF-32/Rev.000")
+        other = make_docx(os.path.join(self.product, "지난 결재본 사본.docx"), footer="EHLF-32/Rev.000")
+        os.utime(named, (1, 1))                       # 공양식이 더 오래된 파일이어도
+        self.assertEqual(edms.find_form(self.product), named)
+        self.assertTrue(edms.is_named_form(named))
+        self.assertFalse(edms.is_named_form(other))
+
+    def test_16항_전년도_결재본은_서식으로_고르지_않는다(self):
+        make_docx(os.path.join(self.product, "16. 전년도 PQR 결재본.docx"), footer="EHLF-32/Rev.000")
+        self.assertEqual(edms.find_form(self.product), edms.shipped_form())
+
+    def test_남의_제품코드가_적힌_양식은_알아챈다(self):
+        p = make_docx(os.path.join(self.product, "0 PQR 작성 공양식.docx"), footer="EHLF-32/Rev.000",
+                      body=("문서번호 QC1-7007 퀴노비드안연고",))
+        self.assertEqual(edms.mentions_other_code(p, "QC1-7014"), "QC1-7007")
+        self.assertIsNone(edms.mentions_other_code(p, "QC1-7007"))
+

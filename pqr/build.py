@@ -682,7 +682,24 @@ def _checks(context, config, meta=None):
 
 
 
-def _reasons(context, checks):
+def optional_items(config):
+    """수집률·미제출 사유에 넣지 않는 항목 번호 — item_rules 에 optional 이 참인 것.
+
+    'PQR 작성 공양식'(항 번호 0)은 있으면 그 양식으로 보고서를 만들지만, 없어도 프로그램에
+    든 기본 서식으로 만들 수 있다. 자료가 아니라 양식이라 없다고 '지연' 이 되면 안 된다.
+    """
+    rules = config.get("item_rules") or {}
+    return {number for number, _l, _h in config["items"]
+            if isinstance(rules.get(number), dict) and rules[number].get("optional")}
+
+
+def _required_checks(checks, config):
+    """선택 항목을 뺀 판정 목록 — 수집률과 미제출 개수는 이것으로 센다."""
+    skip = optional_items(config)
+    return [state for (number, _l, _h), state in zip(config["items"], checks) if number not in skip]
+
+
+def _reasons(context, checks, config=None):
     """지연 · 확인 필요 사유를 자동으로 붙입니다."""
     reasons = []
     if context["capa_open"]:
@@ -699,7 +716,7 @@ def _reasons(context, checks):
         reasons.append("변경 미종결 %d건" % (context["change_open"] + context["license_open"]))
     if context["complaint_open"]:
         reasons.append("불만 · 회수 미종결 %d건" % context["complaint_open"])
-    missing = checks.count("n")
+    missing = (_required_checks(checks, config) if config else checks).count("n")
     if missing:
         reasons.append("입력 자료 %d개 항목 미제출" % missing)
     return reasons
@@ -1108,14 +1125,15 @@ def build(input_dir=None, files=None, today=None, config=None, period=None):
         }
 
         checks = _checks(context, config, meta)
-        reasons = _reasons(context, checks)
-        collected = checks.count("y")
+        reasons = _reasons(context, checks, config)
+        required = _required_checks(checks, config)
+        collected = required.count("y")
 
         stage = _stage_index(meta.get("stage"), stages)
         if stage is None:
             stage = 0
         # 자료가 다 모이면 다음 단계(보고서 초안 작성)로 자동으로 넘어갑니다.
-        if stage == 0 and checks and collected == len(checks) and len(stages) > 1:
+        if stage == 0 and required and collected == len(required) and len(stages) > 1:
             stage = 1
 
         due = meta.get("due")
@@ -1171,7 +1189,7 @@ def build(input_dir=None, files=None, today=None, config=None, period=None):
             "cmp": len(complaint_rows),
             "checks": checks,
             "collected": collected,
-            "pct": int(round(collected / len(checks) * 100)),
+            "pct": int(round(collected / max(1, len(required)) * 100)),
             "reason": reasons[0] if reasons else "",
             "reasons": reasons,
             "submitted": sorted(submitted.get(code, set())),

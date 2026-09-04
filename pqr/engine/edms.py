@@ -7,7 +7,8 @@ EDMS 서식은 바닥글에 'EHLF-32/Rev.000' 이 찍혀 있고, 표지·결재�
 쓰고, 서식은 언제나 EDMS 것을 쓴다.
 
 서식 파일은 제품 폴더(또는 평가항목 16 폴더, 입력 폴더의 '공통') 에 .docx 로 둔다.
-파일 이름은 보지 않고 바닥글로 알아본다 — 담당자가 이름을 어떻게 붙이든 상관없다.
+바닥글로 알아본다 — 이름은 자유지만, 화면의 평가항목 (v) 'PQR 작성 공양식' 으로 올린
+파일(항 번호 0)이 있으면 그것을 먼저 쓴다(담당자 지시 2026-09).
 """
 import os
 import re
@@ -43,6 +44,39 @@ def is_edms_form(path):
     return bool(FORM_MARK.search(footer_text(path)))
 
 
+FORM_WORDS = ("공양식", "빈양식", "빈 양식", "양식")      # 평가항목 (v) 'PQR 작성 공양식' 으로 올린 파일
+FORM_ITEM = re.compile(r"^\s*0[.\s_\-]")                 # 항 번호 0 — 화면에서 올리면 '0 PQR 작성 공양식 - …'
+PREVIOUS_ITEM = re.compile(r"^\s*16[.\s_\-]")           # 항 번호 16 — 전년도 결재본은 서식이 아니다
+CODE = re.compile(r"\bQC\d-\d{4}\b", re.I)
+
+
+def is_named_form(path):
+    """담당자가 '공양식' 이라고 올린 파일인가 — 항 번호 0 이거나 이름에 양식이 든 .docx."""
+    name = os.path.basename(str(path or ""))
+    return name.lower().endswith(".docx") and (bool(FORM_ITEM.match(name)) or
+                                                 any(w in name for w in FORM_WORDS))
+
+
+def mentions_other_code(path, code):
+    """서식 안에 이 제품이 아닌 제품코드(QC1-xxxx)가 적혀 있으면 그 코드를 돌려준다.
+
+    퀴노비드 양식을 디겐타 폴더에 공양식으로 올리는 실수를 막는다 — 양식은 제품마다 항·표가
+    달라 남의 것으로 만들면 표가 통째로 남의 것이 된다.
+    """
+    mine = (code or "").strip().upper()
+    try:
+        with zipfile.ZipFile(path) as z:
+            text = " ".join(z.read(n).decode("utf-8", "replace")
+                            for n in z.namelist() if n.startswith("word/") and n.endswith(".xml"))
+    except (zipfile.BadZipFile, OSError):
+        return None
+    text = re.sub(r"<[^>]+>", "", text)
+    for found in CODE.findall(text):
+        if found.upper() != mine:
+            return found.upper()
+    return None
+
+
 def _candidates(folder):
     if not folder or not os.path.isdir(folder):
         return
@@ -51,6 +85,8 @@ def _candidates(folder):
         if name.startswith(("~$", ".")) or not name.lower().endswith(".docx"):
             continue
         if any(w in name for w in OUTPUT_WORDS):
+            continue
+        if PREVIOUS_ITEM.match(name):                 # '16. 전년도 PQR….docx' 는 결재본이지 서식이 아니다
             continue
         if os.path.isfile(path):
             yield path
@@ -77,7 +113,10 @@ def find_form(folder, depth=2):
     for place in places:
         found = [p for p in _candidates(place) if is_edms_form(p)]
         if found:
-            return max(found, key=os.path.getmtime)
+            # 담당자가 평가항목 (v) 'PQR 작성 공양식' 으로 올린 파일이 먼저다 (담당자 지시 2026-09:
+            # "앞으로 PQR 보고서 작성할 때 이 양식을 사용해서 작성"). 여럿이면 가장 최근 것.
+            named = [p for p in found if is_named_form(p)]
+            return max(named or found, key=os.path.getmtime)
     return shipped_form()
 
 

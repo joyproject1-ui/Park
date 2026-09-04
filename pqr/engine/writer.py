@@ -195,8 +195,18 @@ def write_report(folder, product, period, out_path, today=None, recipe=None, log
     # 그것이 바탕이다 — 담당자 지시(2026-09): "올해부터 최신양식으로 변경됐어."
     # 전년도 결재본은 옛 양식이라 거기 없는 항(디겐타안연고 9.2 세부 시험결과)이 통째로 빠진다.
     product_form = None
-    if form and not edms.is_shipped(form) and other_product(form, product) is None:
-        product_form = form
+    if form and not edms.is_shipped(form):
+        if edms.is_named_form(form):
+            # 담당자가 평가항목 (v) 'PQR 작성 공양식' 으로 올린 양식 — 제품명이 안 적힌 빈 양식일
+            # 수 있으니 이름 검사 대신, 남의 제품코드가 적혀 있는지만 본다.
+            wrong = edms.mentions_other_code(form, product.get("code"))
+            if wrong:
+                raise EngineError("공양식(%s)에 다른 제품코드 %s 가 적혀 있습니다 — 이 제품(%s)의 "
+                                  "양식이 맞는지 확인하세요." % (os.path.basename(form), wrong,
+                                                            product.get("code") or ""))
+            product_form = form
+        elif other_product(form, product) is None:
+            product_form = form
     if product_form:
         source, why = product_form, "EDMS 최신 양식(이 제품용)"
     elif previous:
