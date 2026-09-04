@@ -13,7 +13,7 @@ import statistics
 from docx.oxml.ns import qn
 
 from . import docedit as E
-from . import qc
+from . import lotcode, qc
 from .locate import find_tables, find_para, _text
 from .ooxml_order import get_or_add
 
@@ -96,6 +96,19 @@ def assay_component(crit_text):
     return m.group(1).strip() if m else None
 
 
+def _avg_text(values, fmt="%.2f", unit_on_avg=True):
+    """질량·용량 평균 칸의 글 — 값이 모두 같으면 평균·범위를 적지 않고 그 값만 적는다.
+
+    2026 결재본의 주석 그대로다: "모든 Lot 의 시험결과가 (…) 동일하여 최댓값, 최솟값, 평균은
+    별도로 작성하지 않음." 3 Lot 이 모두 4.1 g 인데 'Av. 4.1 (4.1 ~ 4.1g)' 은 읽기 나쁘다.
+    """
+    if len(set(values)) == 1:
+        return (fmt + " g") % values[0]
+    head = "Av. " + fmt + ("g" if unit_on_avg else "")
+    return (head + "\n(" + fmt + " ~ " + fmt + "g)") % (
+        sum(values) / len(values), min(values), max(values))
+
+
 def _quarter(day):
     return (day.month - 1) // 3 + 1
 
@@ -115,9 +128,18 @@ def fill(document, data, product, period, today=None, log=None):
     today = today or _dt.date.today()
     if isinstance(today, str):
         today = _dt.date(*[int(x) for x in re.findall(r"\d+", today)[:3]])
-    year_from = int(str(period.get("from"))[:4])
     write_year = today.year
     dom, exp = data.domestic, data.export
+    # 평가 대상 연도는 제조번호에서 읽는다 — 세 번째 글자가 제조 연도이고 PQR 은 그 다음 해 것이다
+    # (OGY301 → 2025년 제조 → 2026년 PQR). 화면에서 넘어온 기간보다 자료가 앞선다.
+    year_from, _pqr_year = lotcode.years(dom + exp, today)
+    if year_from is None:
+        year_from = int(str(period.get("from"))[:4])
+    else:
+        odd = lotcode.odd_lots(dom + exp, year_from, today)
+        if odd:
+            issues.append(("6", ", ".join(odd),
+                           "제조 연도가 다른 Lot 이 섞여 있습니다(%d년 것으로 평가함) — 확인하세요" % year_from))
     mfg = {l: d for l, d, _ in data.lots}
     name = product.get("name") or ""
 
@@ -143,18 +165,41 @@ def fill(document, data, product, period, today=None, log=None):
             full_name = E.cell_text(target).strip() or name
     log("머리글: %s / %s" % (new_no or "(EDMS 서식 — 문서번호 비움)", today.strftime("%Y.%m.%d")))
 
+    # ---------- 3항 대상 제품 ----------
+    t3 = _tables(document, "3.")
+    if t3:
+        # 2026 결재본은 비고 칸이 빈 곳 없이 모두 'N/A' 다 — 빈칸은 '안 적은 것' 처럼 보인다.
+        for row in t3[0].rows[1:]:
+            cells = E.raw_cells(row)
+            if len(cells) >= 4 and not E.cell_text(cells[-1]).strip():
+                E.set_cell(cells[-1], "N/A")
+        # 결론(16항)의 제품명은 정식 이름(성분명까지)이다 — 머리글이 비어 있으면 여기서 가져온다.
+        for row in t3[0].rows[1:]:
+            cells = E.raw_cells(row)
+            if len(cells) >= 3 and "제품명" in E.cell_text(cells[1]):
+                got = " ".join(E.cell_text(cells[2]).split())
+                if got and (not full_name or full_name == name):
+                    full_name = got
+                break
+
     # ---------- 4항 ----------
     # 1항 '목적' 도 "제품품질평가는" 으로 시작하므로 평가 기간 문장만 집어 찾는다.
     p = find_para(document, "월까지 생산된")
-    if p is not None and "년 1월" in p.text:
-        text = re.sub(r"\d{4}년 1월", "%d년 1월" % year_from, p.text)
+    if p is not None and "월" in p.text:
+        # 2026 결재본 문안: "제품품질평가는 2025년도 1월 ~ 12월까지 생산된 해당제품에 대하여 평가를
+        # 실시하며, 'QC-126 제품품질평가 규정'에 따라 2 그룹으로 선정되어 차년도 3분기 내에 완료한다."
+        # — 평가 대상 연도는 '년도', 마감은 연도를 적지 않고 '차년도 N분기' 로 쓴다.
+        text = re.sub(r"\d{4}\s*년도?\s*1월", "%d년도 1월" % year_from, p.text)
         due = None
         try:
             due = _dt.date(*[int(x) for x in re.findall(r"\d+", str(product.get("due") or ""))[:3]])
         except (TypeError, ValueError):
             due = None
-        q_year, q = (due.year, _quarter(due)) if due else (write_year, _quarter(today))
-        text = re.sub(r"\d{4}년도 (상반기|하반기|\d분기)", "%d년도 %d분기" % (q_year, q), text)
+        q = _quarter(due) if due else _quarter(today)
+        text = re.sub(r"(\d{4}\s*년도|차년도)\s*(상반기|하반기|\d\s*분기)", "차년도 %d분기" % q, text)
+        group = str(product.get("group") or "").strip()
+        if group and re.search(r"\S+\s*그룹으로 선정", text):
+            text = re.sub(r"\S+\s*그룹으로 선정", "%s 그룹으로 선정" % group, text)
         E.set_para_text(p, text)
 
     # ---------- 6항 제조내역 ----------
@@ -417,9 +462,20 @@ def fill(document, data, product, period, today=None, log=None):
                     return a
         return ""
 
+    def assay_by_part(lots):
+        """{성분 이름: [Lot 별 함량]} — 주성분이 둘 이상인 제품은 성적서에 성분마다 함량 줄이 있다."""
+        out = {}
+        for lot in lots:
+            for a in rec(lot, "924").get("assays") or []:
+                value = _num(a.get("value"))
+                if a.get("part") and value is not None:
+                    out.setdefault(a["part"], []).append(float(value))
+        return out
+
     def numbers(lots):
         g = lambda k, key: [float(_num(rec(l, k).get(key))) for l in lots if _num(rec(l, k).get(key)) is not None]
-        return {"ms": g("924", "metal_total"), "mi": g("924", "metal_each"), "pt": g("924", "particle"),
+        return {"parts": assay_by_part(lots),
+                "ms": g("924", "metal_total"), "mi": g("924", "metal_each"), "pt": g("924", "particle"),
                 "pa": g("924", "mass_avg"), "pi": g("924", "mass_each_min"), "ct": g("924", "assay"),
                 "fa": g("923", "mass_avg"),
                 "flo": [_rng(rec(l, "923").get("mass_each"))[0] for l in lots if _rng(rec(l, "923").get("mass_each"))],
@@ -442,6 +498,14 @@ def fill(document, data, product, period, today=None, log=None):
             if ri == 0 or len(cells) < 3:
                 continue
             label = re.sub(r"\s+", "", E.cell_text(cells[-3])) if len(cells) >= 4 else ""
+            crit_text = E.cell_text(cells[-2])
+            if "평균" not in label and "개개" not in label:
+                # 칸이 넷뿐인 표(디겐타안연고)는 평균·개개 칸이 따로 없고 허용기준 글에 적혀 있다
+                # — "허가) 평균 : 표시량(4.0 g) 이상" / "허가) 개개 : 3.60 g 이상".
+                if re.search(r"평균\s*[:：]", crit_text):
+                    label += "평균"
+                elif re.search(r"개개\s*[:：]", crit_text):
+                    label += "개개"
             named = re.sub(r"\s+", "", "".join(E.cell_text(c) for c in cells[:-2]))
             named = re.sub(r"(평균|개개)$", "", named)
             if named:
@@ -458,8 +522,7 @@ def fill(document, data, product, period, today=None, log=None):
                 if any(v != common for v in vals):
                     val += "1)"
             elif "평균" in label and n["fa"] and "질량" in item and not n.get("_fill_avg"):
-                val = "Av. %.1f\n(%.1f ~ %.1fg)" % (sum(n["fa"]) / len(n["fa"]), min(n["fa"]), max(n["fa"])) if is_dom else \
-                      "Av. %.2fg\n(%.2f ~ %.2fg)" % (sum(n["fa"]) / len(n["fa"]), min(n["fa"]), max(n["fa"]))
+                val = _avg_text(n["fa"], "%.1f" if is_dom else "%.2f", unit_on_avg=not is_dom)
                 n["_fill_avg"] = True
             elif "개개" in label and n["flo"] and "질량" in item and not n.get("_fill_each"):
                 val = "%.2f ~ %.2fg" % (min(n["flo"]), max(n["fhi"])); n["_fill_each"] = True
@@ -485,17 +548,25 @@ def fill(document, data, product, period, today=None, log=None):
                 val = "메틸렌블루시액 침투 없음" if not n.get("_leak") else (sorted(leaks)[0] if leaks else "메틸렌블루시액 침투 없이 양호")
                 n["_leak"] = True
             elif "금속성이물" in item and n["ms"]:
-                val = ("50 ㎛ 이상\n: Av. %.2f개(%.0f ~ %.0f개)\n개개 중 8개 초과 : %.0f매" % (sum(n["ms"]) / len(n["ms"]), min(n["ms"]), max(n["ms"]), max(n["mi"]))) if len(lots) >= 3 else \
+                # 모든 Lot 이 같은 값이면 평균·범위를 적지 않는다 — 2026 결재본의 주석 그대로
+                # ("모든 Lot 의 시험결과가 0개(매)으로 동일하여 최댓값, 최솟값, 평균은 별도로 작성하지 않음").
+                same = len(set(n["ms"])) == 1 and len(set(n["mi"])) == 1
+                val = ("50 ㎛ 이상\n: Av. %.2f개(%.0f ~ %.0f개)\n개개 중 8개 초과 : %.0f매" % (sum(n["ms"]) / len(n["ms"]), min(n["ms"]), max(n["ms"]), max(n["mi"]))) if (len(lots) >= 3 and not same) else \
                       ("50 ㎛ 이상 : %.0f개\n개개 중 8개 초과 : %.0f매" % (max(n["ms"]), max(n["mi"])))
             elif "입자도" in item and n["pt"]:
                 val = "Av. %.2f㎛ 이하\n(%.2f ~ %.2f㎛ 이하)" % (sum(n["pt"]) / len(n["pt"]), min(n["pt"]), max(n["pt"]))
             elif "함량" in item and n["ct"]:
+                # 성분 이름이 적힌 줄이면 그 성분의 값만 쓴다 — 성분마다 규격도 결과도 다르다.
                 part = assay_component(E.cell_text(cells[-2]))
-                if part and part not in assay_parts:
-                    assay_parts.append(part)
-                val = "Av. %.1f%%\n(%.1f ~ %.1f%%)" % (sum(n["ct"]) / len(n["ct"]), min(n["ct"]), max(n["ct"]))
+                vals = n["parts"].get(part) if part else None
+                if part and not vals:
+                    vals = next((v for k, v in n["parts"].items() if k in part or part in k), None)
+                if part and vals is None:
+                    assay_parts.append(part)                      # 성분별 값을 못 찾았다 — 짚어 준다
+                use = vals or n["ct"]
+                val = "Av. %.1f%%\n(%.1f ~ %.1f%%)" % (sum(use) / len(use), min(use), max(use))
             elif "평균" in label and n["pa"] and "질량" in item:
-                val = "Av. %.2fg\n(%.2f ~ %.2fg)" % (sum(n["pa"]) / len(n["pa"]), min(n["pa"]), max(n["pa"]))
+                val = _avg_text(n["pa"], "%.2f")
             elif "개개" in label and n["pi"] and "질량" in item:
                 val = "%.2f ~ %.2fg 이상2)" % (min(n["pi"]), max(n["pi"]))
             elif "무균" in item:
@@ -506,12 +577,11 @@ def fill(document, data, product, period, today=None, log=None):
             if val is not None:
                 E.set_cell(cells[-1], *val.split("\n"))
                 res[ri] = val
-        if len(assay_parts) > 1:
-            # 성적서에서 읽은 함량은 한 벌뿐인데 성분별로 줄이 나뉘어 있다 — 같은 값이 두 줄에
-            # 들어간다. 어느 값이 어느 성분 것인지는 원본을 봐야 안다. 지어내지 않고 짚는다.
+        if assay_parts:
+            # 성적서에서 그 성분의 함량을 찾지 못했다 — 다른 성분 값이 들어가 있으니 짚는다.
             issues.append(("9.1", ", ".join(assay_parts),
-                           "주성분이 둘 이상인데 성적서에서 읽은 함량은 한 벌입니다 — 성분별 함량을 "
-                           "원본에서 확인해 나누어 적으세요(지금은 같은 값이 두 줄에 들어가 있습니다)"))
+                           "이 성분의 함량을 성적서에서 찾지 못해 다른 값이 들어가 있습니다 — "
+                           "원본에서 확인해 적으세요"))
         return n
     t91 = _tables(document, "9.1")
     n_dom = fill_91(t91[0], dom, True) if t91 else {}
@@ -846,6 +916,53 @@ def fill(document, data, product, period, today=None, log=None):
         issues.append(("16", "", "'16. 결론' 제목을 찾지 못해 결론을 다시 쓰지 못함 — 확인 필요"))
     log("16항 완료")
     cover = find_para(document, name[:5]) if name else None
+    def rename_heading(old_text, new_text):
+        """항 제목을 2026 결재본 차림새로 바꾼다. 찾지 못하면 그냥 둔다."""
+        para = find_para(document, old_text)
+        if para is not None and E.loose(para.text) != E.loose(new_text):
+            E.set_para_text(para, new_text)
+            return True
+        return False
+
+    # ---------- 14 · 17 · 18 항 차림새 (2026 결재본 기준) ----------
+    rename_heading("반품 및 불만 회수관련 기록", "14. 반품, 불만 및 회수 현황표")
+    # 17 참고 자료에서 첨부 문서(안정성 결과표·경향 분석 결과)를 18 항으로 옮긴다.
+    ref = find_para(document, "17. 참고 자료")
+    if ref is not None:
+        moved, tail = [], []
+        node = ref._p.getnext()
+        while node is not None and node.tag == qn("w:p"):
+            text = _text(node).strip()
+            if re.match(r"^\s*18\.", text):
+                moved = []                         # 이미 18 항이 있으면 손대지 않는다
+                break
+            if text.startswith("-") and ("HLF-QC-104" in text or "HLF-QC-126-06" in text):
+                moved.append(node)
+            elif text:
+                tail.append(node)
+            node = node.getnext()
+        if moved:
+            head = copy.deepcopy(ref._p)
+            for run in head.findall(qn("w:r"))[1:]:
+                head.remove(run)
+            for t in head.iter(qn("w:t")):
+                t.text = "18. 첨부 문서"
+                t.set(qn("xml:space"), "preserve")
+            anchor = (tail or moved)[-1] if not tail else tail[-1]
+            last = moved[-1]
+            for el in moved:                       # 옮길 줄들을 문서 끝으로 모은다
+                el.getparent().remove(el)
+            spacer = copy.deepcopy(moved[0])
+            for run in spacer.findall(qn("w:r")):
+                spacer.remove(run)
+            anchor.addnext(head)
+            head.addprevious(spacer)
+            after = head
+            for el in moved:
+                after.addnext(el)
+                after = el
+            log("17·18항: 첨부 문서 %d줄을 18항으로 나눔" % len(moved))
+
     return {"issues": issues, "cover_title": (cover.text.strip() if cover is not None else None), "cpk": cpk_dom}
 
 
@@ -930,3 +1047,4 @@ def _fill_stability(document, stab, log, assay_limits=None):
         if len(t133) > 1:
             fill_trend(t133[1], stab.get("trend_exp", []), stab.get("trend_exp_lots", ""), stab.get("trend_exp_comment", ""))
     log("13항: 안정성 %d/%d/%d 표" % (len(t131), len(t132), len(t133)))
+

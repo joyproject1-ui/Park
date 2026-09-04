@@ -121,3 +121,54 @@ class 적격성_마스터파일(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class 완제_시험성적서(unittest.TestCase):
+    """성적서마다 기준과 결과의 차례가 다르고, 주성분이 둘 이상인 제품이 있다."""
+
+    퀴노비드 = ("입자도 75㎛ 이하 61um 이하 박소은 적합\n"
+             " 오플록사신\n"
+             " 함량 90.0 ~ 110.0% 107.3% 박소은 적합\n"
+             " (오플록사신으로서 0.003g/g)\n")
+    디겐타 = (" 플루오로메톨론\n"
+            " 함량 97.7% 김득규 적합\n"
+            " 90.0 ~ 110.0% (플루오로메톨론으로써 1mg/g)\n"
+            " 겐타마이신황산염\n"
+            " 함량 99.3% 박소은 적합\n"
+            " 90.0 ~ 120.0% (겐타마이신으로써 3mg(역가)/g)\n")
+
+    def test_기준이_먼저_나오는_성적서(self):
+        from pqr.engine.readers.coa import _assays
+        self.assertEqual(_assays(self.퀴노비드),
+                         [{"part": "오플록사신", "value": "107.3", "lo": "90.0", "hi": "110.0"}])
+
+    def test_결과가_먼저_나오는_성적서(self):
+        from pqr.engine.readers.coa import _assays
+        self.assertEqual(_assays(self.디겐타), [
+            {"part": "플루오로메톨론", "value": "97.7", "lo": "90.0", "hi": "110.0"},
+            {"part": "겐타마이신황산염", "value": "99.3", "lo": "90.0", "hi": "120.0"}])
+
+    def test_확인시험_줄은_함량으로_보지_않는다(self):
+        from pqr.engine.readers.coa import _assays
+        self.assertEqual(_assays("확인시험 함량시험법에 따라 시험할 때 90.0 ~ 110.0% 김득규 적합"), [])
+
+    def test_입자도는_기준이_아니라_결과를_읽는다(self):
+        # '입자도  75㎛ 이하  15㎛ 이하' — 앞이 기준, 뒤가 결과다.
+        from pqr.engine.readers import coa
+        import re
+        m = re.search(r"입자도\s+([\d.]+)\s*(?:㎛|um|μm)\s*이하\s+([\d.]+)\s*(?:㎛|um|μm)\s*이하",
+                      "입자도 75㎛ 이하 15㎛ 이하 김득규 적합")
+        self.assertEqual((m.group(1), m.group(2)), ("75", "15"))
+        self.assertTrue(hasattr(coa, "_assays"))
+
+    def test_성상은_기준이_아니라_결과를_읽는다(self):
+        from pqr.engine.readers.coa import _appearance
+        got = _appearance("성상 백색~미황색의 거의 냄새가 없는 안연고제 "
+                          "미황색의 거의 냄새가 없는 안연고제 김득규 적합")
+        self.assertEqual(got, "미황색의 거의 냄새가 없는 안연고제")
+
+    def test_기준과_결과가_갈라지지_않으면_비워_둔다(self):
+        # 두 칸짜리 PDF 는 줄이 엇갈려 나온다 — 어설프게 적느니 비워 두고 완제 성적서 값을 쓴다.
+        from pqr.engine.readers.coa import _appearance
+        self.assertIsNone(_appearance("성상 흰색~미황색의 거의 냄새가 없는 "
+                                      "미황색의 거의 냄새가 없는 안연고 김효찬 적합"))

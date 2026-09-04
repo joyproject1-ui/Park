@@ -537,9 +537,21 @@ _DOC_RELS = (
 )
 
 
-def report_filename(product, period=None):
-    """완성본 인식 규칙에 맞게 '제출용' 을 이름에 넣습니다."""
-    year = str((period or {}).get("from") or "")[:4]
+def report_filename(product, period=None, lots=None, today=None):
+    """완성본 인식 규칙에 맞게 '제출용' 을 이름에 넣습니다.
+
+    이름의 연도는 **PQR 연도**입니다 — 2025년에 만든 Lot 을 평가한 것은 2026년 PQR 입니다
+    (담당자 확인 2026-09). 제조번호에서 읽고, 읽지 못하면 평가 기간의 연도를 씁니다.
+    """
+    year = ""
+    if lots:
+        from .engine import lotcode
+        _made, pqr = lotcode.years(lots, today)
+        year = str(pqr or "")
+    if not year:
+        # 평가 기간은 제조 연도(2025.01~12)이고 PQR 은 그 다음 해 것이다.
+        made = str((period or {}).get("from") or "")[:4]
+        year = str(int(made) + 1) if made.isdigit() else ""
     label = "%s년 " % year if year else ""
     name = "[%s] %s %s제품품질평가 (제출용).docx" % (
         product.get("code"), product.get("name"), label)
