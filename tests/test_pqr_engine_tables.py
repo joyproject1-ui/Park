@@ -108,3 +108,47 @@ class 내용이_없으면(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class 목차_쪽수(unittest.TestCase):
+    """Word 는 필드에 갱신 표시가 없으면 캐시된 옛 값을 그대로 보여 준다.
+
+    담당자 화면에서 목차가 전부 '1' 로 나왔다 — 서식에 적혀 있던 남의 쪽수였다.
+    LibreOffice 는 열 때마다 다시 계산해 PDF 로는 맞아 보여 놓치기 쉬웠다.
+    """
+
+    def _doc(self):
+        d = docx.Document()
+        toc = d.add_table(rows=2, cols=2)
+        toc.rows[0].cells[0].text = "1. 목 적"
+        toc.rows[0].cells[1].text = "24"          # 서식에 적혀 있던 옛 쪽수
+        toc.rows[1].cells[0].text = "2. 배 경"
+        toc.rows[1].cells[1].text = "24"
+        d.add_paragraph("1. 목 적")
+        d.add_paragraph("2. 배 경")
+        return d, toc
+
+    def test_필드에_갱신_표시를_붙인다(self):
+        from pqr.engine.toc import link_toc
+        d, toc = self._doc()
+        self.assertEqual(link_toc(d, toc), 2)
+        xml = d.element.body.xml
+        self.assertEqual(xml.count('w:dirty="true"'), 2)
+        self.assertIn("PAGEREF _pqr_toc_1", xml)
+        self.assertIn("PAGEREF _pqr_toc_2", xml)
+
+    def test_서식에_적혀_있던_옛_쪽수를_남기지_않는다(self):
+        from pqr.engine.toc import link_toc
+        d, toc = self._doc()
+        link_toc(d, toc)
+        self.assertNotIn("24", toc.rows[0].cells[1].text)
+
+    def test_책갈피와_참조가_짝을_이룬다(self):
+        import re
+        from pqr.engine.toc import link_toc
+        d, toc = self._doc()
+        link_toc(d, toc)
+        xml = d.element.body.xml
+        names = set(re.findall(r'w:bookmarkStart[^>]*w:name="(_pqr_toc_[^"]+)"', xml))
+        refs = set(re.findall(r"PAGEREF (_pqr_toc_\S+)", xml))
+        self.assertEqual(names, refs)

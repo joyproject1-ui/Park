@@ -33,7 +33,11 @@ def _field_runs(template_run, instr, cached):
                 r.remove(t)
         r.append(child)
         return r
-    b = template_run.makeelement(qn("w:fldChar"), {qn("w:fldCharType"): "begin"})
+    # dirty="true" 를 붙여야 Word 가 파일을 열 때 이 필드를 **묻지 않고 다시 계산**한다.
+    # 이것이 없으면 아래 cached 값(서식에 적혀 있던 옛 쪽수)이 그대로 보인다 — 담당자 화면에서
+    # 목차가 전부 '1' 로 나온 까닭이다. LibreOffice 는 열 때 늘 다시 계산해 PDF 로는 맞아 보였다.
+    b = template_run.makeelement(qn("w:fldChar"),
+                                 {qn("w:fldCharType"): "begin", qn("w:dirty"): "true"})
     it = template_run.makeelement(qn("w:instrText"), {"{http://www.w3.org/XML/1998/namespace}space": "preserve"}); it.text = " %s " % instr
     s = template_run.makeelement(qn("w:fldChar"), {qn("w:fldCharType"): "separate"})
     t = template_run.makeelement(qn("w:t"), {}); t.text = str(cached)
@@ -66,7 +70,9 @@ def link_toc(document, toc_table):
         cell = cells[-1]
         p = cell.find(qn("w:p"))
         runs = [r for r in p.findall(qn("w:r")) if r.find(qn("w:t")) is not None]
-        cached = _text(cell).strip() or "0"
+        # 캐시 값은 Word 가 열면서 덮어쓴다. 서식에 적혀 있던 남의 쪽수를 남겨 두면 갱신 전에
+        # 엉뚱한 수가 보이므로 비워 둔다.
+        cached = ""
         template = runs[0] if runs else p.makeelement(qn("w:r"), {})
         for r in p.findall(qn("w:r")):
             p.remove(r)
