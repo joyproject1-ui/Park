@@ -749,6 +749,52 @@ def _plain_name(text):
     return re.sub(r"\s+", "", (text or "")).strip().lower()
 
 
+def _code_prefix(code):
+    return re.split(r"[-_\s]", (code or "").strip().upper(), 1)[0]
+
+
+def fold_placeholder_codes(master):
+    """마스터 안에서 이름이 같은 두 코드 가운데 본보기 코드를 진짜 코드로 접습니다.
+
+    담당자 입력 폴더에 제품 마스터가 둘 있었다 — 연간 계획서로 만든 330품목짜리 csv 와,
+    처음 프로그램을 드릴 때 본보기로 넣어 둔 한 줄짜리 xlsx(PRD-001 레보클점안액). 둘 다
+    '제품마스터' 라 함께 읽히니 레보클점안액이 QC1-5041 과 PRD-001 두 제품으로 보였고,
+    마스터에 있는 코드라 reconcile_codes 도 손대지 않았다(2026-09, 두 번째 지적).
+
+    같은 이름의 코드가 여럿이면, 마스터 대부분이 쓰는 앞머리(QC1)를 가진 코드를 진짜로 보고
+    나머지(PRD)를 그리로 접는다. 앞머리가 같은 코드끼리(QC1-5041 · QC1-9999)는 고르지 않는다.
+    (남은 마스터, {본보기 코드: 진짜 코드}, issues) 를 돌려줍니다.
+    """
+    if not master:
+        return master, {}, []
+    counts = {}
+    for code in master:
+        counts[_code_prefix(code)] = counts.get(_code_prefix(code), 0) + 1
+    common = max(counts, key=counts.get)
+    if counts[common] < 2:
+        return master, {}, []
+    by_name = {}
+    for code, row in master.items():
+        name = _plain_name(row.get("product_name"))
+        if name:
+            by_name.setdefault(name, []).append(code)
+    kept, remap, issues = dict(master), {}, []
+    for name, codes in by_name.items():
+        real = [c for c in codes if _code_prefix(c) == common]
+        others = [c for c in codes if _code_prefix(c) != common]
+        if len(real) != 1 or not others:
+            continue
+        for wrong in others:
+            kept.pop(wrong, None)
+            remap[wrong] = real[0]
+            issues.append({
+                "source": "제품 마스터", "row": 0, "field": "product_code", "level": "warn",
+                "message": "제품 마스터에 같은 제품명(%s)이 %s 와 %s 로 두 번 있어 %s 로 보았습니다 — "
+                           "본보기 행이 든 옛 마스터 파일을 입력 폴더에서 지워 주세요."
+                           % (master[wrong].get("product_name") or name, wrong, real[0], real[0])})
+    return kept, remap, issues
+
+
 def reconcile_codes(master, expanded, datasets):
     """제품 마스터에 없는 제품코드를 같은 제품명의 마스터 코드로 되돌립니다.
 
@@ -951,9 +997,13 @@ def build(input_dir=None, files=None, today=None, config=None, period=None):
                            if not matcher(os.path.basename(path))]
 
     master_meta = {row["product_code"]: row for row in datasets.get("products", [])}
+    master_meta, folded, fold_issues = fold_placeholder_codes(master_meta)
+    issues.extend(fold_issues)
     products_meta = expand_product_variants(master_meta)
     found_issues, remap = reconcile_codes(master_meta, products_meta, datasets)
     issues.extend(found_issues)
+    for wrong, right in folded.items():          # 본보기 코드로 모아 둔 폴더 자료도 옮긴다
+        remap.setdefault(wrong, right)
     for wrong, right in remap.items():
         # 폴더 이름이 코드였다면 그 폴더에 모아 둔 자료도 같이 옮깁니다.
         moved = item_files_by_product.pop(wrong, None)
