@@ -165,10 +165,15 @@ def blank_sections(document):
     return blank
 
 
-def write_report(folder, product, period, out_path, today=None, recipe=None, log=None, vision=None):
+def write_report(folder, product, period, out_path, today=None, recipe=None, log=None, vision=None,
+                 ignore_previous=False):
     """folder: 제품 폴더 · product: {"code","name","group"} · period: {"from","to"} · out_path: 저장할 .docx
 
-    돌려주는 값: {"path", "issues": [(항, 파일, 설명)], "log": [...]}
+    ignore_previous: 전년도 결재본을 쓰지 않고 EDMS 빈 서식만으로 만든다. 전년도 결재본을 바탕
+    으로 한 첫 시도가 넘어졌을 때 부르는 쪽이 한 번 더 해 보는 길이다 — 결재본 양식은 지켜야
+    하므로, 자료 상태 요약본으로 물러나기 전에 이것을 먼저 해 본다.
+
+    돌려주는 값: {"path", "issues": [(항, 파일, 설명)], "log": [...], "blank_sections": [...]}
     """
     lines = []
     blank = []
@@ -183,7 +188,7 @@ def write_report(folder, product, period, out_path, today=None, recipe=None, log
     # 전년도 결재본이 없는 첫해 제품은 서식을 바탕으로 직접 채운다(표 구조는 서식 그대로).
     from . import edms, rehouse
     work = tempfile.mkdtemp(prefix="pqr-report-")
-    previous = find_previous(folder, work)
+    previous = None if ignore_previous else find_previous(folder, work)
     form = edms.find_form(folder)
     data_issue = None
     if previous:

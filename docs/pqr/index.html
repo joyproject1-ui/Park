@@ -1423,7 +1423,8 @@ async function makeReport(code, button){
     const blank = (base && base.blank_sections) || [];
     if (payload.engine) {
       head = blank.length
-        ? `EDMS 결재본 서식으로 <b>초안</b>을 만들었습니다 — 전년도 결재본이 없어 채우지 못한 항이 있습니다`
+        ? `EDMS 결재본 서식으로 <b>초안</b>을 만들었습니다 — 전년도 결재본의 표 구성을 물려받지 못해 채우지 못한 항이 있습니다`
+          + (base.engine_error ? `<br><span class="muted">전년도 결재본으로는 만들지 못했습니다: ${esc(base.engine_error)}</span>` : ``)
           + `<br><span class="muted">직접 써야 하는 항: ${esc(blank.join(", "))}`
           + `<br>전년도 PQR 을 <b>.docx</b> 로 16 항목에 올리면 그 표 구성을 물려받아 완성합니다.</span>`
         : `✅ 결재본 양식으로 제출용 보고서를 완성했습니다 — 제품 폴더가 열립니다`
@@ -1438,7 +1439,10 @@ async function makeReport(code, button){
       head = `전년도 PQR 서식을 복사해 연도만 맞춘 사본을 만들었습니다 (자동 완성 엔진은 돌지 못했습니다)`
         + `<br><span class="muted">${esc(base.engine_error || "")}</span>`;
     } else {
-      head = `자료 상태 요약본을 만들었습니다 — 전년도 PQR 워드를 16 항목으로 올리면 결재본 양식으로 완성합니다`;
+      head = `자료 상태 요약본을 만들었습니다 — 결재본 양식으로는 만들지 못했습니다`
+        + ((base && base.engine_error) ? `<br><span class="muted">까닭: ${esc(base.engine_error)}</span>` : ``)
+        + ((base && base.broken) ? `<br><span class="muted">Word 검사: ${esc(base.broken)}</span>` : ``)
+        + `<br><span class="muted">제품 폴더의 <code>PQR 작성 기록</code> 파일에 어디서 멈췄는지 그대로 들어 있습니다.</span>`;
     }
     showToast(head
       + `<br>📄 ${esc(payload.final_name || "")}<br>${esc(payload.folder || "")}`

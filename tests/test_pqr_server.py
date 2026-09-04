@@ -409,6 +409,29 @@ class PriorReportTest(ServerTest):
         self.assertTrue(os.path.isfile(
             os.path.join(folder, "HLF-QC-126-06 안정성 경향 2025.xlsx")))
 
+    def test_옛_워드_결재본이면_요약본_대신_EDMS_서식으로_만든다(self):
+        """전년도 결재본이 옛 워드(.doc)면 복제할 수 없다 — 예전에는 그대로 요약본으로 떨어졌다.
+
+        담당자가 원하는 것은 결재본 양식이다(2026-09, 디겐타안연고). 엔진이 그 .doc 로 만들지
+        못해도 EDMS 빈 서식으로 다시 만들어야 하고, 자료 상태 요약본은 마지막의 마지막이다.
+        """
+        folder = os.path.join(self.dir, self.folder)
+        with open(os.path.join(folder, "16. 전년도 PQR 히알루론점안액.doc"), "wb") as handle:
+            handle.write(b"\xd0\xcf\x11\xe0" + b"0" * 64)      # 옛 워드처럼 보이는 파일
+        result = self.report()
+        self.assertTrue(result["ok"], result.get("error"))
+        base = result["based_on"]
+        self.assertTrue(base["engine"], base)                     # 요약본이 아니다
+        self.assertIn("제출용", result["final_name"])
+        import docx
+        d = docx.Document(result["final"])
+        texts = [p.text.strip() for p in d.paragraphs if p.text.strip()]
+        self.assertEqual(texts[0], "목차 (Table of Contents)")     # EDMS 결재본 양식
+        self.assertGreater(len(d.tables), 25)
+        # 왜 전년도 결재본을 못 썼는지 제품 폴더에 남는다 — '안 된다' 만으로는 고칠 수 없다.
+        log = [n for n in os.listdir(folder) if n.startswith("PQR 작성 기록")]
+        self.assertTrue(log, os.listdir(folder))
+
     def test_without_previous_pqr_it_makes_an_edms_form_draft(self):
         """전년도 결재본이 없어도 EDMS 서식으로 만든다 — 다만 채우지 못한 항이 있으니 초안이다."""
         result = self.report()

@@ -171,7 +171,7 @@ def write_issue_list(folder, product, issues):
 WORK_LOG_NAME = "PQR 작성 기록 (%s).txt"
 
 
-def write_work_log(folder, product, lines, error=None):
+def write_work_log(folder, product, lines, error=None, trace=None):
     """엔진이 어디까지 갔는지 제품 폴더에 남깁니다 — 안 될 때 무엇이 막았는지 보려면 이것이 있어야 합니다.
 
     '안 된다' 만으로는 고칠 수 없었습니다(2026-09, 디겐타안연고). 화면에는 한 줄만 뜨고
@@ -183,6 +183,9 @@ def write_work_log(folder, product, lines, error=None):
     if error:
         out += ["■ 보고서를 결재본 양식으로 만들지 못했습니다:", "   %s" % error, "",
                 "이 파일을 그대로 보내 주시면 무엇이 막았는지 알 수 있습니다.", ""]
+    if trace:
+        # 'list index out of range' 만으로는 어느 항의 어느 표인지 알 수 없다 — 자리를 함께 남긴다.
+        out += ["■ 멈춘 자리:"] + ["   %s" % line for line in str(trace).splitlines()] + [""]
     out += ["■ 엔진이 한 일:"] + ["   %s" % line for line in (lines or ["(기록 없음)"])]
     try:
         with open(path, "w", encoding="utf-8") as handle:
@@ -891,9 +894,12 @@ class Handler(BaseHTTPRequestHandler):
                             "changed": 0, "engine": True, "log": engine_result.get("log") or []}
                 write_issue_list(folder, product, issues)
                 write_work_log(folder, product, steps)      # 잘 됐을 때도 남긴다 — 견줘 볼 수 있게
-            except Exception as error:                     # 엔진이 못 돌면 예전 방식(연도만 바꾼 사본)
+            except Exception as error:
+                import traceback
                 engine_error = str(error)
-                write_work_log(folder, product, steps, engine_error)
+                engine_trace = traceback.format_exc()
+                write_work_log(folder, product, steps, engine_error, engine_trace)
+                # 2) 전년도 결재본을 그대로 복제해 연도만 옮긴다 — 제품 고유의 항·표가 남는다.
                 based_on = prior_report.write_from_previous(previous, target, year) if previous else None
                 if based_on is not None:
                     based_on["engine"] = False
@@ -902,12 +908,40 @@ class Handler(BaseHTTPRequestHandler):
                         previous, folder, based_on.get("previous_year"), year)
                     build_module.mark_auto_draft(folder, target)
                     final = target
-                else:                              # 결재본을 복제할 수 없으면 요약본으로
-                    final = docx_report.write_docx(self.workspace.data, code, folder,
-                                                   config=self.workspace.config)
-                    based_on = {"engine": False, "engine_error": engine_error,
-                                "previous": os.path.basename(previous) if previous else None}
-                issues = list(issues) + [("보고서", os.path.basename(previous or ""), engine_error)]
+                    issues = list(issues) + [("보고서", os.path.basename(previous or ""), engine_error)]
+                else:
+                    # 3) 복제도 못 하면(옛 워드 .doc 는 복제할 수 없다) EDMS 빈 서식으로 다시 만든다.
+                    #    담당자가 원하는 것은 결재본 양식이다 — 자료 상태 요약본은 그 자리를 대신하지 못한다.
+                    retry = []
+                    if form:
+                        try:
+                            engine_result = engine_writer.write_report(
+                                folder, product, period, target, today=self.workspace.data.get("today"),
+                                log=retry.append, vision=_vision_hook(), ignore_previous=True)
+                        except Exception as second:
+                            retry.append("빈 서식으로도 만들지 못했습니다: %s" % second)
+                            engine_result = None
+                        write_work_log(folder, product,
+                                       steps + ["", "(전년도 결재본으로 넘어져 EDMS 빈 서식으로 다시 해 봄)"] + retry,
+                                       engine_error, engine_trace)
+                    if engine_result is not None:
+                        issues = (engine_result.get("issues") or []) + [
+                            ("보고서", os.path.basename(previous or ""),
+                             "전년도 결재본으로는 만들지 못해 EDMS 빈 서식으로 만들었습니다 — %s" % engine_error)]
+                        final = target
+                        build_module.mark_auto_draft(folder, target)     # 마저 써야 하므로 초안이다
+                        based_on = {"previous": None, "previous_year": year,
+                                    "form": os.path.basename(form) if form else None,
+                                    "blank_sections": engine_result.get("blank_sections") or [],
+                                    "changed": 0, "engine": True, "engine_error": engine_error,
+                                    "log": (engine_result.get("log") or [])}
+                        write_issue_list(folder, product, issues)
+                    else:                          # 그제야 자료 상태 요약본
+                        final = docx_report.write_docx(self.workspace.data, code, folder,
+                                                       config=self.workspace.config)
+                        based_on = {"engine": False, "engine_error": engine_error,
+                                    "previous": os.path.basename(previous) if previous else None}
+                        issues = list(issues) + [("보고서", os.path.basename(previous or ""), engine_error)]
         else:
             final = docx_report.write_docx(self.workspace.data, code, folder,
                                            config=self.workspace.config)
@@ -924,6 +958,8 @@ class Handler(BaseHTTPRequestHandler):
                                            config=self.workspace.config)
             based_on = dict(based_on or {}, engine=False, broken=reason)
             issues = list(issues) + [("보고서", "", "만든 보고서가 Word 에서 열리지 않아 요약본으로 대신했습니다 — %s" % reason)]
+            write_work_log(folder, product, (based_on.get("log") or []),
+                           "만든 보고서가 Word 검사를 통과하지 못했습니다 — %s" % reason)
         if issues:
             write_issue_list(folder, product, issues)
         self.workspace.rebuild()
