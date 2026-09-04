@@ -68,6 +68,30 @@ class 각주_뒤_빈_줄(unittest.TestCase):
         self.assertEqual(E.drop_blank_after_note(document), 0)
 
 
+class 항_사이_한_줄(unittest.TestCase):
+    """담당자 지시(2026-09): "16항 아래와 17항 시작부분은 한칸 띄워줘야 돼. 모든 항이 마찬가지야." """
+
+    def _doc(self, lines):
+        document = docx.Document()
+        for text in lines:
+            document.add_paragraph(text)
+        return document
+
+    def test_항_제목_앞에_빈_줄을_넣는다(self):
+        document = self._doc(["16. 결론", "…확인하였음.", "17. 참고 자료"])
+        self.assertEqual(E.space_before_sections(document), 1)
+        self.assertEqual([p.text for p in document.paragraphs],
+                         ["16. 결론", "…확인하였음.", "", "17. 참고 자료"])
+
+    def test_이미_빈_줄이_있으면_더_넣지_않는다(self):
+        document = self._doc(["…확인하였음.", "", "17. 참고 자료"])
+        self.assertEqual(E.space_before_sections(document), 0)
+
+    def test_작은_제목은_그대로_둔다(self):
+        document = self._doc(["* [RSF102] 사용이력 없음.", "8.1.2 공급망 추적성 검토"])
+        self.assertEqual(E.space_before_sections(document), 0)
+
+
 class 변경사항_간추리기(unittest.TestCase):
     def test_큰_항목만_남고_잔가지는_버린다(self):
         got = brief_change(

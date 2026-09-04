@@ -245,6 +245,7 @@ def apply(document, log=None, product_title=None, edms=None):
     log("표 앞 문단 다음과 함께: %d" % E.keep_paras_before_tables(document))
     log("윗첨자 각주 번호: %d" % len(E.superscript_note_marks(document)))
     log("빈 쪽 방지 정리: %s" % E.tidy_page_breaks(document))
+    log("항 사이 한 줄 띄움: %d" % E.space_before_sections(document))
     log("각주 내어쓰기: %d" % E.hanging_indent_notes(document))
     try:
         from .toc import link_toc

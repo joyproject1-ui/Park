@@ -1443,10 +1443,47 @@ def drop_blank_after_note(document):
         before, after = kids[i - 1], kids[i + 1]
         if before.tag != qn("w:p") or after.tag != qn("w:p"):
             continue
-        if NOTE_START.match(txt(before)) and re.match(r"^\d{1,2}(\.\d+)*\.?\s*\S", txt(after)):
+        # 항 제목(‘17. 참고 자료’) 앞의 빈 줄은 남긴다 — 그 자리는 항과 항 사이라 한 줄 띄운다.
+        # 여기서 지우는 것은 같은 항 안의 작은 제목(8.1.2 · 13.3) 앞 빈 줄뿐이다.
+        if NOTE_START.match(txt(before)) and re.match(r"^\d{1,2}\.\d+", txt(after)):
             body.remove(el)
             removed += 1
     return removed
+
+
+SECTION_TITLE = re.compile(r"^[ \u00a0]*\d{1,2}\.[ \u00a0]+\S")
+
+
+def space_before_sections(document):
+    """항 제목(1.·2.·… 18.) 앞에 빈 줄을 한 줄 둔다. 넣은 수를 돌려준다.
+
+    담당자 지시(2026-09): "16항 아래와 17항 시작부분은 한칸 띄워줘야 돼. 모든 항이 마찬가지야."
+    쪽을 새로 시작하는 제목(pageBreakBefore)은 이미 떨어져 있으므로 그대로 둔다.
+    """
+    body = document.element.body
+    kids = list(body)
+
+    def txt(el):
+        return "".join(t.text or "" for t in el.iter(qn("w:t"))).strip()
+
+    def title(el):
+        return el.tag == qn("w:p") and len(txt(el)) < 80 and bool(SECTION_TITLE.match(txt(el)))
+
+    sample = next((el for i, el in enumerate(kids[:-1])
+                   if el.tag == qn("w:p") and is_blank_para(el) and title(kids[i + 1])), None)
+    added = 0
+    for i, el in enumerate(kids):
+        if i == 0 or not title(el):
+            continue
+        pr = el.find(qn("w:pPr"))
+        if pr is not None and pr.find(qn("w:pageBreakBefore")) is not None:
+            continue
+        prev = kids[i - 1]
+        if prev.tag == qn("w:p") and is_blank_para(prev):
+            continue
+        el.addprevious(copy.deepcopy(sample) if sample is not None else el.makeelement(qn("w:p"), {}))
+        added += 1
+    return added
 
 
 def collapse_blank_runs(document, keep=1, min_run=2, protect_before=()):
