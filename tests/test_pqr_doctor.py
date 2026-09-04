@@ -64,3 +64,57 @@ class 배치파일(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class 실제로_바꿔_본다(unittest.TestCase):
+    """Word 를 띄웠다 닫는 것만으로는 모자랐다 — 담당자 PC 에서 그 검사는 모두 '됩니다' 였는데
+    보고서는 안 나왔다(2026-09, 디겐타안연고)."""
+
+    def setUp(self):
+        self.platform = doctor.sys.platform
+        self.make = doctor._make_doc
+
+    def tearDown(self):
+        doctor.sys.platform = self.platform
+        doctor._make_doc = self.make
+
+    def test_윈도우가_아니면_건너뛴다(self):
+        doctor.sys.platform = "linux"
+        ok, why = doctor.convert_check()
+        self.assertIsNone(ok)
+
+    def test_시험용_doc_를_못_만들면_그렇게_말한다(self):
+        doctor.sys.platform = "win32"
+        doctor._make_doc = lambda path: False
+        ok, why = doctor.convert_check()
+        self.assertFalse(ok)
+        self.assertIn("시험용", why)
+
+    def test_바꾸다_막히면_까닭을_그대로_보여_준다(self):
+        from pqr.engine import convert
+        doctor.sys.platform = "win32"
+        doctor._make_doc = lambda path: io.open(path, "w").write("x") or True
+        real = convert.to_docx
+
+        def boom(src, dst):
+            raise convert.ConvertError("파일 변환 대화상자에서 멈춤")
+        convert.to_docx = boom
+        try:
+            ok, why = doctor.convert_check()
+        finally:
+            convert.to_docx = real
+        self.assertFalse(ok)
+        self.assertIn("파일 변환 대화상자", why)
+
+    def test_되면_어느_길로_됐는지_말한다(self):
+        from pqr.engine import convert
+        doctor.sys.platform = "win32"
+        doctor._make_doc = lambda path: io.open(path, "w").write("x") or True
+        real = convert.to_docx
+        convert.to_docx = lambda src, dst: "word"
+        try:
+            ok, why = doctor.convert_check()
+        finally:
+            convert.to_docx = real
+        self.assertTrue(ok)
+        self.assertIn("word", why)

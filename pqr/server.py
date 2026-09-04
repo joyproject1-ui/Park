@@ -168,6 +168,30 @@ def write_issue_list(folder, product, issues):
     return path
 
 
+WORK_LOG_NAME = "PQR 작성 기록 (%s).txt"
+
+
+def write_work_log(folder, product, lines, error=None):
+    """엔진이 어디까지 갔는지 제품 폴더에 남깁니다 — 안 될 때 무엇이 막았는지 보려면 이것이 있어야 합니다.
+
+    '안 된다' 만으로는 고칠 수 없었습니다(2026-09, 디겐타안연고). 화면에는 한 줄만 뜨고
+    엔진이 어디서 멈췄는지는 아무 데도 남지 않았습니다. 이제 이 파일을 그대로 보내면 됩니다.
+    """
+    path = os.path.join(folder, WORK_LOG_NAME % product.get("code", ""))
+    out = ["[%s] %s — 자동 작성 기록" % (product.get("code", ""), product.get("name", "")),
+           "만든 때: %s" % _dt.datetime.now().strftime("%Y-%m-%d %H:%M"), ""]
+    if error:
+        out += ["■ 보고서를 결재본 양식으로 만들지 못했습니다:", "   %s" % error, "",
+                "이 파일을 그대로 보내 주시면 무엇이 막았는지 알 수 있습니다.", ""]
+    out += ["■ 엔진이 한 일:"] + ["   %s" % line for line in (lines or ["(기록 없음)"])]
+    try:
+        with open(path, "w", encoding="utf-8") as handle:
+            handle.write("\n".join(out) + "\n")
+    except OSError:
+        return None
+    return path
+
+
 def open_in_file_manager(path):
     """폴더를 운영체제 파일 관리자로 엽니다 (안 되면 조용히 False).
 
@@ -847,10 +871,11 @@ class Handler(BaseHTTPRequestHandler):
             target = os.path.join(
                 folder, docx_report.report_filename(product, self.workspace.data.get("period")))
             # 1) 자동 완성 엔진 — 결재본을 열어 올린 자료 값으로 채우고 회사 조판 규칙을 적용합니다.
+            steps = []
             try:
                 engine_result = engine_writer.write_report(
                     folder, product, period, target, today=self.workspace.data.get("today"),
-                    log=None, vision=_vision_hook())
+                    log=steps.append, vision=_vision_hook())
                 issues = engine_result.get("issues") or []
                 final = target
                 if engine_result.get("blank_sections"):
@@ -865,8 +890,10 @@ class Handler(BaseHTTPRequestHandler):
                             "blank_sections": engine_result.get("blank_sections") or [],
                             "changed": 0, "engine": True, "log": engine_result.get("log") or []}
                 write_issue_list(folder, product, issues)
+                write_work_log(folder, product, steps)      # 잘 됐을 때도 남긴다 — 견줘 볼 수 있게
             except Exception as error:                     # 엔진이 못 돌면 예전 방식(연도만 바꾼 사본)
                 engine_error = str(error)
+                write_work_log(folder, product, steps, engine_error)
                 based_on = prior_report.write_from_previous(previous, target, year) if previous else None
                 if based_on is not None:
                     based_on["engine"] = False

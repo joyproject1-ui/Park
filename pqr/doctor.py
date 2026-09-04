@@ -72,6 +72,54 @@ def _com_check(kind):
     return out
 
 
+def _make_doc(path):
+    """Word 로 시험용 옛 워드(.doc) 하나를 만든다 (0 = wdFormatDocument). 되면 True."""
+    from .engine import convert
+    ps = ("$ErrorActionPreference='Stop'\n"
+          "$w = New-Object -ComObject Word.Application\n"
+          "$w.Visible = $false\n$w.DisplayAlerts = 0\n"
+          "try { $d = $w.Documents.Add(); $d.Content.Text = 'PQR 진단'; "
+          "$d.SaveAs(%s, 0); $d.Close($false) } finally { $w.Quit() }\n" % convert._ps_path(path))
+    if convert._powershell(ps) and os.path.isfile(path):
+        return True
+    vbs = ('On Error Resume Next\n'
+           'Set w = CreateObject("Word.Application")\n'
+           'If Err.Number <> 0 Then WScript.Quit 1\n'
+           'w.Visible = False\nw.DisplayAlerts = 0\n'
+           'Set d = w.Documents.Add()\n'
+           'd.Content.Text = "PQR 진단"\n'
+           'd.SaveAs %s, 0\n'
+           'If Err.Number <> 0 Then w.Quit : WScript.Quit 1\n'
+           'd.Close False\nw.Quit\nWScript.Quit 0\n' % convert._vbs_path(path))
+    return convert._vbscript(vbs) and os.path.isfile(path)
+
+
+def convert_check():
+    """진짜로 .doc 를 만들어 .docx 로 바꿔 본다. (되는지, 설명)
+
+    Word 를 띄웠다 닫는 것만으로는 모자랐다 — 담당자 PC 에서 그 검사는 모두 '됩니다' 였는데
+    보고서는 안 나왔다(2026-09, 디겐타안연고). 실제로 열고 저장하는 데서 막히면
+    (옛 워드의 '파일 변환' 확인 대화상자 같은 것) 여기서만 드러난다.
+    """
+    from .engine import convert
+    if sys.platform != "win32":
+        return None, "Windows 가 아니라 건너뜁니다"
+    work = tempfile.mkdtemp(prefix="pqr-doctor-")
+    src = os.path.join(work, "pqr-check.doc")
+    try:
+        del convert.last_error[:]
+        if not _make_doc(src):
+            why = convert.last_error[-1] if convert.last_error else "까닭 모름"
+            return False, "시험용 .doc 를 만들지 못했습니다 — %s" % why
+        try:
+            how = convert.to_docx(src, os.path.join(work, "pqr-check.docx"))
+            return True, "됩니다 (%s)" % how
+        except convert.ConvertError as error:
+            return False, " ".join(str(error).split())[:220]
+    finally:
+        shutil.rmtree(work, ignore_errors=True)
+
+
 def report():
     """검사 결과를 줄 목록으로 돌려줍니다."""
     lines = ["PQR 프로그램 진단", "=" * 58, "",
@@ -94,6 +142,9 @@ def report():
     from .engine import convert
     soffice = convert._soffice()
     lines.append(_line(bool(soffice), "LibreOffice", soffice or "없습니다 (없어도 됩니다)"))
+    # 띄웠다 닫는 것만으로는 모자란다 — 실제로 .doc 를 만들어 .docx 로 바꿔 본다.
+    really, why = convert_check()
+    lines.append(_line(really, "실제로 바꿔 보기", why))
     lines.append("")
 
     lines.append("첨부 Cpk 엑셀(그래프까지) 채우는 길:")
@@ -104,9 +155,8 @@ def report():
         lines.append(_line(None, "Excel COM", "Windows 가 아니라 건너뜁니다"))
     lines.append("")
 
-    word_ok = any(ok for _, ok, _ in _com_check("Word")) if sys.platform == "win32" else False
     lines.append("판정:")
-    if word_ok or soffice:
+    if really or (really is None and soffice):
         lines.append("  옛 워드(.doc) 결재본을 바꿀 수 있습니다 — '보고서 작성' 이 결재본 양식으로 만듭니다.")
     else:
         lines.append("  옛 워드(.doc) 를 바꿀 길이 없습니다. 둘 중 하나를 하세요:")

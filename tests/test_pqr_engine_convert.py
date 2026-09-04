@@ -123,3 +123,130 @@ class 안내(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class pywin32가_터져도(unittest.TestCase):
+    """담당자 PC 에서 pywin32·PowerShell·VBScript 가 다 되는데도 보고서가 안 나온 일이 있었다.
+
+    pywin32 길만 쓰고 그 오류를 그대로 밖으로 던져, 진단에서 '됩니다' 로 나온 나머지 두 길을
+    아예 시도하지 않았다.
+    """
+
+    def setUp(self):
+        self.tried = []
+        self._convert = convert._word_convert
+        convert.last_error[:] = []
+
+        def fake_convert(src, dst, fmt=16):
+            self.tried.append((src, dst, fmt))
+            io.open(dst, "w").write("made")
+            return True
+        convert._word_convert = fake_convert
+
+        import sys
+        self.fake = type(sys)("win32com.client")
+        self.fake.DispatchEx = self.dispatch
+        package = type(sys)("win32com")
+        package.client = self.fake              # import win32com.client 뒤 win32com.client 로 닿는다
+        sys.modules["win32com"] = package
+        sys.modules["win32com.client"] = self.fake
+
+    def tearDown(self):
+        import sys
+        convert._word_convert = self._convert
+        sys.modules.pop("win32com.client", None)
+        sys.modules.pop("win32com", None)
+
+    def dispatch(self, name):
+        raise OSError("COM 을 열지 못함")
+
+    def test_스크립트_길로_넘어간다(self):
+        import tempfile
+        work = tempfile.mkdtemp(prefix="pqr-conv-test-")
+        src, dst = os.path.join(work, "a.doc"), os.path.join(work, "a.docx")
+        io.open(src, "w").write("x")
+        self.assertTrue(convert._with_word(src, dst))
+        self.assertEqual(len(self.tried), 1)                      # 다음 길을 실제로 시도했다
+        self.assertTrue(any("pywin32" in e for e in convert.last_error))
+
+    def test_문서를_못_열어도_스크립트_길로_넘어간다(self):
+        import tempfile
+
+        class Word(object):
+            Visible = True
+            DisplayAlerts = None
+
+            class Documents(object):
+                @staticmethod
+                def Open(*args):
+                    raise OSError("파일 변환 대화상자")
+            def Quit(self):
+                pass
+        self.fake.DispatchEx = lambda name: Word()
+        work = tempfile.mkdtemp(prefix="pqr-conv-test-")
+        src, dst = os.path.join(work, "b.doc"), os.path.join(work, "b.docx")
+        io.open(src, "w").write("x")
+        self.assertTrue(convert._with_word(src, dst))
+        self.assertEqual(len(self.tried), 1)
+
+    def test_옛_워드를_열_때_변환_확인_대화상자를_끈다(self):
+        """화면 없이 도는 자동화에서 '파일 변환' 대화상자가 뜨면 그대로 멈춘다."""
+        import tempfile
+        opened = {}
+
+        class Doc(object):
+            @staticmethod
+            def SaveAs2(path, FileFormat=None):
+                io.open(path, "w").write("made")
+            @staticmethod
+            def Close(flag):
+                pass
+
+        class Word(object):
+            Visible = True
+            DisplayAlerts = None
+
+            class Documents(object):
+                @staticmethod
+                def Open(*args):
+                    opened["args"] = args
+                    return Doc()
+            def Quit(self):
+                pass
+        word = Word()
+        self.fake.DispatchEx = lambda name: word
+        work = tempfile.mkdtemp(prefix="pqr-conv-test-")
+        src, dst = os.path.join(work, "c.doc"), os.path.join(work, "c.docx")
+        io.open(src, "w").write("x")
+        self.assertTrue(convert._with_word(src, dst))
+        # (파일, ConfirmConversions, ReadOnly, AddToRecentFiles)
+        self.assertEqual(opened["args"][1:], (False, True, False))
+        self.assertEqual(word.DisplayAlerts, 0)                   # wdAlertsNone
+        self.assertEqual(self.tried, [])                          # 됐으니 다음 길은 안 쓴다
+
+
+class 변환_실패는_언제나_ConvertError(unittest.TestCase):
+    """COM 오류가 그대로 새어 나가면 부르는 쪽이 '변환 실패' 로 알아보지 못한다 —
+    그러면 EDMS 빈 서식으로 물러나는 길까지 막힌다."""
+
+    def setUp(self):
+        self.pairs = (convert._with_word, convert._with_soffice)
+        convert.last_error[:] = []
+
+    def tearDown(self):
+        convert._with_word, convert._with_soffice = self.pairs
+
+    def test_COM_오류를_감싼다(self):
+        import tempfile
+
+        def boom(src, dst):
+            raise OSError("Call was rejected by callee")
+        convert._with_word = boom
+        convert._with_soffice = boom
+        work = tempfile.mkdtemp(prefix="pqr-conv-test-")
+        src = os.path.join(work, "d.doc")
+        io.open(src, "w").write("x")
+        with self.assertRaises(convert.ConvertError) as caught:
+            convert.to_docx(src, os.path.join(work, "d.docx"))
+        self.assertIn("rejected by callee", str(caught.exception))    # 까닭을 그대로 보여 준다
+        self.assertIn("Word 문서(*.docx)", str(caught.exception))     # 무엇을 하면 되는지도

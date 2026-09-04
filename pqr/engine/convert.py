@@ -121,19 +121,44 @@ def _word_convert(src, dst, fmt=16):
 
 
 def _with_word(src, dst):
+    """Word 로 .doc → .docx. pywin32 가 있으면 그 길을 먼저, 안 되면 스크립트 두 길로 넘어간다.
+
+    pywin32 가 터져도 여기서 멈추면 안 된다 — 담당자 PC 에서 pywin32·PowerShell·VBScript 가
+    모두 되는데도 보고서가 안 나온 일이 있었다(2026-09, 디겐타안연고). pywin32 길만 쓰고 그
+    오류를 그대로 밖으로 던지는 바람에 나머지 두 길을 아예 시도하지 않았다.
+
+    ConfirmConversions=False 를 꼭 넘긴다 — 옛 워드(.doc)를 열 때 뜨는 '파일 변환' 확인
+    대화상자를 끈다. 화면 없이 도는 자동화에서 대화상자가 뜨면 그대로 멈춘다. 스크립트 두 길은
+    Open(경로, False, True) 로 이미 끄고 있었는데 이 길만 빠져 있었다.
+    """
     try:
         import win32com.client  # pywin32
     except ImportError:
         return _word_convert(src, dst, 16)
-    word = win32com.client.DispatchEx("Word.Application")
-    word.Visible = False
     try:
-        doc = word.Documents.Open(os.path.abspath(src), ReadOnly=True)
-        doc.SaveAs2(os.path.abspath(dst), FileFormat=16)   # wdFormatXMLDocument
-        doc.Close(False)
-    finally:
-        word.Quit()
-    return os.path.isfile(dst)
+        word = win32com.client.DispatchEx("Word.Application")
+        word.Visible = False
+        word.DisplayAlerts = 0                             # wdAlertsNone — 대화상자를 띄우지 않는다
+        try:
+            # (파일, ConfirmConversions=False, ReadOnly=True, AddToRecentFiles=False)
+            # 자리로 넘긴다 — 이름으로 넘기는 것보다 확실하고, 되는 것이 확인된 VBScript 길과 같다.
+            doc = word.Documents.Open(os.path.abspath(src), False, True, False)
+            try:
+                doc.SaveAs2(os.path.abspath(dst), 16)      # 16 = wdFormatXMLDocument (.docx)
+            except Exception:                              # 옛 Word 에는 SaveAs2 가 없다
+                doc.SaveAs(os.path.abspath(dst), 16)
+            doc.Close(False)
+        finally:
+            try:
+                word.Quit()
+            except Exception:                              # Quit 이 터져도 원래 오류를 가리지 않는다
+                pass
+        if os.path.isfile(dst):
+            return True
+        last_error.append("pywin32: Word 가 저장한 파일이 없습니다")
+    except Exception as error:
+        last_error.append("pywin32: %s" % error)
+    return _word_convert(src, dst, 16)                     # PowerShell → VBScript 로 다시 해 본다
 
 
 def _soffice():
@@ -162,14 +187,27 @@ def _with_soffice(src, dst):
     return os.path.isfile(dst)
 
 
+def _guard(how, src, dst, name):
+    """한 길이 터져도 다음 길을 본다 — 까닭은 last_error 에 남겨 안내 문구에 붙인다.
+
+    변환 실패는 언제나 ConvertError 로만 밖에 나가야 한다. COM 오류가 그대로 새어 나가면
+    부르는 쪽이 '변환 실패' 로 알아보지 못해 EDMS 빈 서식으로 물러나는 길까지 막힌다.
+    """
+    try:
+        return bool(how(src, dst))
+    except Exception as error:
+        last_error.append("%s: %s" % (name, error))
+        return False
+
+
 def to_docx(src, dst):
     """src(.doc/.docx) → dst(.docx). 이미 .docx 면 복사만 한다."""
     if src.lower().endswith(".docx"):
         shutil.copyfile(src, dst)
         return "copy"
-    if sys.platform == "win32" and _with_word(src, dst):
+    if sys.platform == "win32" and _guard(_with_word, src, dst, "Word"):
         return "word"
-    if _with_soffice(src, dst):
+    if _guard(_with_soffice, src, dst, "LibreOffice"):
         return "soffice"
     detail = (" (마지막 오류: %s)" % last_error[-1]) if last_error else ""
     raise ConvertError(
@@ -200,20 +238,30 @@ def _excel_convert(src, dst):
 
 
 def _xls_with_excel(src, dst):
+    """엑셀도 같다 — pywin32 가 터지면 스크립트 두 길로 넘어간다."""
     try:
         import win32com.client
     except ImportError:
         return _excel_convert(src, dst)
-    excel = win32com.client.DispatchEx("Excel.Application")
-    excel.Visible = False
-    excel.DisplayAlerts = False
     try:
-        wb = excel.Workbooks.Open(os.path.abspath(src), ReadOnly=True)
-        wb.SaveAs(os.path.abspath(dst), FileFormat=51)     # xlOpenXMLWorkbook
-        wb.Close(False)
-    finally:
-        excel.Quit()
-    return os.path.isfile(dst)
+        excel = win32com.client.DispatchEx("Excel.Application")
+        excel.Visible = False
+        excel.DisplayAlerts = False
+        try:
+            wb = excel.Workbooks.Open(os.path.abspath(src), UpdateLinks=0, ReadOnly=True)
+            wb.SaveAs(os.path.abspath(dst), FileFormat=51)     # xlOpenXMLWorkbook
+            wb.Close(False)
+        finally:
+            try:
+                excel.Quit()
+            except Exception:
+                pass
+        if os.path.isfile(dst):
+            return True
+        last_error.append("pywin32(Excel): 저장한 파일이 없습니다")
+    except Exception as error:
+        last_error.append("pywin32(Excel): %s" % error)
+    return _excel_convert(src, dst)
 
 
 def _xls_with_soffice(src, dst):
@@ -234,9 +282,9 @@ def to_xlsx(src, dst):
     if src.lower().endswith((".xlsx", ".xlsm")):
         shutil.copyfile(src, dst)
         return "copy"
-    if sys.platform == "win32" and _xls_with_excel(src, dst):
+    if sys.platform == "win32" and _guard(_xls_with_excel, src, dst, "Excel"):
         return "excel"
-    if _xls_with_soffice(src, dst):
+    if _guard(_xls_with_soffice, src, dst, "LibreOffice"):
         return "soffice"
     raise ConvertError("Cpk 계산 파일(.xls)을 바꿀 도구가 없습니다 (Excel 또는 LibreOffice).")
 
