@@ -2,7 +2,10 @@
 """전년도 PQR(.docx) 을 그대로 두고 값만 갈아 끼우기 위한 도우미."""
 import copy
 import math
+import re
+
 from docx.oxml.ns import qn
+from lxml import etree
 from .ooxml_order import place, get_or_add, resort_all
 
 W = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
@@ -149,10 +152,25 @@ def add_diag(cell):
 
 
 # ---------- 문서 전체 ----------
+def loose(text):
+    """빈칸 차이를 지운 꼴 — 같은 문구라도 결재본마다 일반 공백과 \xa0(줄바꿈 없는 공백)가 섞여 있다.
+
+    디겐타안연고 결재본의 'QC-126\xa0제품품질평가규정' 을 퀴노비드 기준의 'QC-126 제품품질평가규정'
+    으로 찾지 못해 엔진이 9항에서 멈췄다(2026-09). 한 글자도 다르지 않은데 빈칸 종류만 달랐다.
+    """
+    return re.sub(r"[\s\u00a0]+", " ", text or "").strip()
+
+
 def find_para(document, needle):
+    """문구로 문단을 찾는다 — 그대로 찾아보고, 없으면 빈칸 차이를 무시하고 다시 찾는다."""
     for p in document.paragraphs:
         if needle in p.text:
             return p
+    key = loose(needle)
+    if key:
+        for p in document.paragraphs:
+            if key in loose(p.text):
+                return p
     return None
 
 
@@ -160,7 +178,11 @@ def replace_in_para(document, needle, old, new):
     p = find_para(document, needle)
     if p is None:
         raise KeyError(needle)
-    set_para_text(p, p.text.replace(old, new))
+    if old in p.text:
+        set_para_text(p, p.text.replace(old, new))
+    else:                        # 빈칸이 \xa0 인 결재본 — 빈칸 종류를 가리지 않고 바꾼다
+        pattern = "[\\s\\u00a0]+".join(re.escape(part) for part in re.split(r"[\s\u00a0]+", old))
+        set_para_text(p, re.sub(pattern, lambda m: new, p.text))
     return p
 
 
@@ -201,8 +223,20 @@ def raw_cells(row):
 
 
 def note_after(document, table, text, sample_needle="QC-126 제품품질평가규정"):
-    """표 바로 뒤에 각주 문단을 새로 넣는다. 서식은 sample 문단에서 가져온다."""
-    sample = find_para(document, sample_needle)._p
+    """표 바로 뒤에 각주 문단을 새로 넣는다. 서식은 sample 문단에서 가져온다.
+
+    본보기 문단이 없어도 각주는 넣는다 — 각주 하나 때문에 보고서 전체를 못 만들면 안 된다.
+    """
+    found = find_para(document, sample_needle)
+    if found is None:
+        new = etree.SubElement(table._tbl.getparent(), qn("w:p"))
+        table._tbl.addnext(new)
+        run = etree.SubElement(new, qn("w:r"))
+        t = etree.SubElement(run, qn("w:t"))
+        t.text = text
+        t.set(qn("xml:space"), "preserve")
+        return new
+    sample = found._p
     new = copy.deepcopy(sample)
     for r in new.findall(qn("w:r")):
         new.remove(r)

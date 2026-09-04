@@ -83,6 +83,19 @@ def _by_header(tables, *words):
     return None
 
 
+ASSAY_PART = re.compile(r"\s*\[([^\]]+)\]")
+
+
+def assay_component(crit_text):
+    """9.1 허용기준 칸 앞머리의 [성분] 이름. 없으면 None.
+
+    주성분이 둘 이상인 제품(디겐타안연고: 플루오로메톨론·겐타마이신황산염)은 함량 줄이
+    성분별로 나뉘고, 어느 줄이 어느 성분인지는 이 표시로만 알 수 있다.
+    """
+    m = ASSAY_PART.match(crit_text or "")
+    return m.group(1).strip() if m else None
+
+
 def _quarter(day):
     return (day.month - 1) // 3 + 1
 
@@ -380,6 +393,7 @@ def fill(document, data, product, period, today=None, log=None):
             issues.append(("9", "", "완제 성적서에서 함량을 읽지 못함")); return n
         res = {}
         current_item = ""
+        assay_parts = []          # 주성분이 둘 이상인 제품(디겐타안연고: 플루오로메톨론·겐타마이신황산염)
         for ri, row in enumerate(t91.rows):
             cells = E.raw_cells(row)
             if ri == 0 or len(cells) < 3:
@@ -433,6 +447,9 @@ def fill(document, data, product, period, today=None, log=None):
             elif "입자도" in item and n["pt"]:
                 val = "Av. %.2f㎛ 이하\n(%.2f ~ %.2f㎛ 이하)" % (sum(n["pt"]) / len(n["pt"]), min(n["pt"]), max(n["pt"]))
             elif "함량" in item and n["ct"]:
+                part = assay_component(E.cell_text(cells[-2]))
+                if part and part not in assay_parts:
+                    assay_parts.append(part)
                 val = "Av. %.1f%%\n(%.1f ~ %.1f%%)" % (sum(n["ct"]) / len(n["ct"]), min(n["ct"]), max(n["ct"]))
             elif "평균" in label and n["pa"] and "질량" in item:
                 val = "Av. %.2fg\n(%.2f ~ %.2fg)" % (sum(n["pa"]) / len(n["pa"]), min(n["pa"]), max(n["pa"]))
@@ -446,6 +463,12 @@ def fill(document, data, product, period, today=None, log=None):
             if val is not None:
                 E.set_cell(cells[-1], *val.split("\n"))
                 res[ri] = val
+        if len(assay_parts) > 1:
+            # 성적서에서 읽은 함량은 한 벌뿐인데 성분별로 줄이 나뉘어 있다 — 같은 값이 두 줄에
+            # 들어간다. 어느 값이 어느 성분 것인지는 원본을 봐야 안다. 지어내지 않고 짚는다.
+            issues.append(("9.1", ", ".join(assay_parts),
+                           "주성분이 둘 이상인데 성적서에서 읽은 함량은 한 벌입니다 — 성분별 함량을 "
+                           "원본에서 확인해 나누어 적으세요(지금은 같은 값이 두 줄에 들어가 있습니다)"))
         return n
     t91 = _tables(document, "9.1")
     n_dom = fill_91(t91[0], dom, True) if t91 else {}
