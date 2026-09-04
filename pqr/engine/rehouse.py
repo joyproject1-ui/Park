@@ -128,27 +128,93 @@ def _ensure_content_type(dst_parts, part_name, src_types):
     dst_parts["[Content_Types].xml"] = etree.tostring(ct, xml_declaration=True, encoding="UTF-8", standalone=True)
 
 
+def _style_key(el):
+    """(종류, 이름) — Word 는 이 짝이 겹치면 문서를 손상으로 보고 복구를 묻는다."""
+    name = el.find(W + "name")
+    return (el.get(W + "type") or "paragraph", (name.get(W + "val") if name is not None else "") or "")
+
+
 def _merge_styles(dst_styles, src_styles, wanted):
-    """src 의 스타일 중 dst 에 없는 것(과 그 basedOn 연쇄)을 dst 에 보탠다."""
+    """서식 쪽 스타일을 채운 문서에 보탠다. (styles.xml, {서식 styleId: 쓸 styleId}, 보탠 수)
+
+    이름이 같은 스타일이 이미 있으면 **보태지 않고 그 스타일로 연결한다.** 한글 Word 서식의
+    'a'(이름 Normal)를 그냥 넣으면 문서에 이름이 Normal 인 스타일이 둘이 되어, Word 가
+    "일부 콘텐츠를 읽을 수 없습니다" 로 복구를 묻는다(2026-09-04 담당자 PC 에서 실제로 생김).
+    styleId 만 겹치고 이름이 다르면 새 이름(edms_…)으로 넣는다.
+    """
     dst = etree.fromstring(dst_styles)
     src = etree.fromstring(src_styles)
-    have = {s.get(W + "styleId") for s in dst.findall(W + "style")}
+    dst_styles_el = dst.findall(W + "style")
+    have_ids = {s.get(W + "styleId") for s in dst_styles_el}
+    by_key = {_style_key(s): s.get(W + "styleId") for s in dst_styles_el}
     by_id = {s.get(W + "styleId"): s for s in src.findall(W + "style")}
-    queue = list(wanted)
-    added = 0
+    remap, brought = {}, []
+    queue = [w for w in wanted if w]
     while queue:
         sid = queue.pop()
-        if sid in have or sid not in by_id:
+        if sid in remap or sid not in by_id:
             continue
         st = copy.deepcopy(by_id[sid])
-        dst.append(st)
-        have.add(sid)
-        added += 1
+        key = _style_key(st)
+        same = by_key.get(key)
+        if same is not None:                      # 이름이 같은 스타일이 이미 있다 — 그것을 쓴다
+            remap[sid] = same
+            continue
+        new_id = sid if sid not in have_ids else "edms_%s" % sid
+        st.set(W + "styleId", new_id)
+        st.attrib.pop(W + "default", None)         # 기본 스타일은 종류마다 하나뿐이어야 한다
         for tag in ("basedOn", "next", "link"):
             ref = st.find(W + tag)
-            if ref is not None and ref.get(W + "val") not in have:
+            if ref is not None:
                 queue.append(ref.get(W + "val"))
-    return etree.tostring(dst, xml_declaration=True, encoding="UTF-8", standalone=True), added
+        dst.append(st)
+        have_ids.add(new_id)
+        by_key[key] = new_id
+        remap[sid] = new_id
+        brought.append(st)
+    for st in brought:                             # 보탠 스타일 안의 basedOn·next·link 도 맞춘다
+        for tag in ("basedOn", "next", "link"):
+            ref = st.find(W + tag)
+            if ref is None:
+                continue
+            val = ref.get(W + "val")
+            if val in remap:
+                ref.set(W + "val", remap[val])
+            elif val not in have_ids:              # 서식에도 없는 스타일을 가리키면 지운다
+                st.remove(ref)
+    return etree.tostring(dst, xml_declaration=True, encoding="UTF-8", standalone=True), remap, len(brought)
+
+
+def _apply_style_remap(elements, remap):
+    """복사해 온 문단·표의 스타일 참조를 실제로 쓸 styleId 로 바꾼다."""
+    n = 0
+    for el in elements:
+        for tag in ("pStyle", "rStyle", "tblStyle"):
+            for ref in el.iter(W + tag):
+                val = ref.get(W + "val")
+                if val in remap and remap[val] != val:
+                    ref.set(W + "val", remap[val])
+                    n += 1
+    return n
+
+
+def check_styles(styles_xml):
+    """Word 가 복구를 묻게 만드는 스타일 문제를 찾는다. 문제 설명 목록(없으면 빈 목록)."""
+    root = etree.fromstring(styles_xml) if isinstance(styles_xml, bytes) else styles_xml
+    out, seen_key, seen_id, defaults = [], {}, set(), {}
+    for st in root.findall(W + "style"):
+        sid, key = st.get(W + "styleId"), _style_key(st)
+        if sid in seen_id:
+            out.append("styleId 가 겹칩니다: %s" % sid)
+        seen_id.add(sid)
+        if key in seen_key:
+            out.append("이름이 겹치는 스타일: %s(%s) — %s, %s" % (key[1], key[0], seen_key[key], sid))
+        seen_key[key] = sid
+        if st.get(W + "default") == "1":
+            if key[0] in defaults:
+                out.append("기본 스타일이 둘: %s — %s, %s" % (key[0], defaults[key[0]], sid))
+            defaults[key[0]] = sid
+    return out
 
 
 def _styles_used(elements):
@@ -223,7 +289,12 @@ def rehouse(filled_path, form_path, out_path):
         ppr.insert(0, pbb)
     # 서식 쪽 요소가 쓰는 스타일을 채운 문서에 보탠다
     wanted = _styles_used(kept)
-    parts["word/styles.xml"], added = _merge_styles(parts["word/styles.xml"], form["word/styles.xml"], wanted)
+    parts["word/styles.xml"], remap, added = _merge_styles(
+        parts["word/styles.xml"], form["word/styles.xml"], wanted)
+    _apply_style_remap(kept, remap)
+    bad = check_styles(parts["word/styles.xml"])
+    if bad:
+        raise RehouseError("스타일이 어긋나 Word 가 열지 못합니다: %s" % "; ".join(bad))
 
     # ---- 3) 머리글·바닥글·쪽 설정을 EDMS 것으로 ----
     sect = body.find(W + "sectPr")

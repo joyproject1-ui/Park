@@ -374,3 +374,61 @@ class 압축속결재본(unittest.TestCase):
         from pqr.engine import writer
         self.assertIsNone(writer.find_previous(self.product, tempfile.mkdtemp()))
         self.assertIsNone(writer.attachment_source(self.product))
+
+
+class 스타일합치기(unittest.TestCase):
+    """Word 는 이름이 같은 스타일이 둘이면 '일부 콘텐츠를 읽을 수 없습니다' 로 복구를 묻는다."""
+
+    W = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
+
+    def _styles(self, *rows):
+        body = "".join(
+            '<w:style w:type="%s" w:styleId="%s"%s><w:name w:val="%s"/>%s</w:style>'
+            % (t, sid, ' w:default="1"' if d else "", name, based)
+            for sid, name, t, d, based in rows)
+        return ('<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+                '<w:styles xmlns:w="%s">%s</w:styles>' % (self.W[1:-1], body)).encode("utf-8")
+
+    def test_이름이_같으면_기존_스타일로_연결한다(self):
+        from pqr.engine import rehouse
+        dst = self._styles(("Normal", "Normal", "paragraph", True, ""),
+                           ("Header", "header", "paragraph", False, ""))
+        src = self._styles(("a", "Normal", "paragraph", True, ""),
+                           ("a4", "header", "paragraph", False, ""))
+        out, remap, added = rehouse._merge_styles(dst, src, {"a", "a4"})
+        self.assertEqual(remap, {"a": "Normal", "a4": "Header"})
+        self.assertEqual(added, 0)
+        self.assertEqual(rehouse.check_styles(out), [])
+
+    def test_이름이_다르면_보태되_id_충돌은_피한다(self):
+        from pqr.engine import rehouse
+        dst = self._styles(("s0", "본문", "paragraph", True, ""))
+        src = self._styles(("s0", "목차글", "paragraph", False, ""))
+        out, remap, added = rehouse._merge_styles(dst, src, {"s0"})
+        self.assertEqual(remap, {"s0": "edms_s0"})
+        self.assertEqual(added, 1)
+        self.assertEqual(rehouse.check_styles(out), [])
+
+    def test_보태는_스타일은_기본으로_삼지_않는다(self):
+        from pqr.engine import rehouse
+        dst = self._styles(("Normal", "Normal", "paragraph", True, ""))
+        src = self._styles(("a", "바탕글", "paragraph", True, ""))
+        out, remap, added = rehouse._merge_styles(dst, src, {"a"})
+        self.assertEqual(added, 1)
+        self.assertEqual(rehouse.check_styles(out), [])       # 기본 스타일이 둘이 아니다
+
+    def test_검사가_이름_중복을_잡는다(self):
+        from pqr.engine import rehouse
+        bad = self._styles(("Normal", "Normal", "paragraph", True, ""),
+                           ("a", "Normal", "paragraph", False, ""))
+        problems = rehouse.check_styles(bad)
+        self.assertTrue(problems)
+        self.assertIn("이름이 겹치는 스타일", problems[0])
+
+    def test_복사한_문단의_스타일_참조도_바뀐다(self):
+        from pqr.engine import rehouse
+        from lxml import etree
+        p = etree.fromstring('<w:p xmlns:w="%s"><w:pPr><w:pStyle w:val="a"/></w:pPr></w:p>' % self.W[1:-1])
+        n = rehouse._apply_style_remap([p], {"a": "Normal"})
+        self.assertEqual(n, 1)
+        self.assertEqual(p.find(self.W + "pPr").find(self.W + "pStyle").get(self.W + "val"), "Normal")

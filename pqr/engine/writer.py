@@ -199,6 +199,10 @@ def write_report(folder, product, period, out_path, today=None, recipe=None, log
                   if n.startswith("word/") and n.endswith(".xml"))
     if bad:
         raise EngineError("OOXML 순서 검사에 실패했습니다 (%d 곳)" % bad)
+    with zipfile.ZipFile(out_path) as z:           # Word 가 '복구할까요' 를 묻는 스타일 문제 검사
+        style_problems = rehouse.check_styles(z.read("word/styles.xml"))
+    if style_problems:
+        raise EngineError("Word 가 열지 못하는 스타일 문제: %s" % "; ".join(style_problems))
     log_("순서 검사 0 건 · 저장: %s" % os.path.basename(out_path))
     # 첨부 엑셀 — Cpk 계산 파일 4종(결재본 것을 물려받아 값 갱신) + 안정성 경향 분석
     attachments = []
