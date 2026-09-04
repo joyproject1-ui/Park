@@ -486,6 +486,13 @@ def fill(document, data, product, period, today=None, log=None):
         m = re.match(r"(\d+)\s*(CFU|FU)?/g\s*(미만|이하)?", b)
         return ("%s %s" % (m.group(1), m.group(3) or "미만")) if m else (b or "확인 필요")
 
+    # 각주 번호는 실제로 다는 것만 세어 매긴다 — 생균수 각주가 없는 제품에서 1) 없이 2) 로
+    # 시작하면 안 된다(디겐타안연고 2026).
+    odd_bio = [(l, rec(l, "922").get("bioburden")) for l in dom + exp
+               if bio_text(l) != "10 미만" and rec(l, "922")]
+    note_bio = 1 if odd_bio else None
+    note_mass = 2 if odd_bio else 1
+
     def fill_91(t91, lots, is_dom):
         n = numbers(lots)
         if not n["ct"]:
@@ -519,8 +526,8 @@ def fill(document, data, product, period, today=None, log=None):
                 common = max(set(vals), key=vals.count)
                 m = re.match(r"(\d+)\s*(미만|이하)", common)
                 val = ("%s CFU/g %s" % (m.group(1), m.group(2))) if m else common
-                if any(v != common for v in vals):
-                    val += "1)"
+                if any(v != common for v in vals) and note_bio:
+                    val += "%d)" % note_bio
             elif "평균" in label and n["fa"] and "질량" in item and not n.get("_fill_avg"):
                 val = _avg_text(n["fa"], "%.1f" if is_dom else "%.2f", unit_on_avg=not is_dom)
                 n["_fill_avg"] = True
@@ -568,7 +575,7 @@ def fill(document, data, product, period, today=None, log=None):
             elif "평균" in label and n["pa"] and "질량" in item:
                 val = _avg_text(n["pa"], "%.2f")
             elif "개개" in label and n["pi"] and "질량" in item:
-                val = "%.2f ~ %.2fg 이상2)" % (min(n["pi"]), max(n["pi"]))
+                val = "%.2f ~ %.2fg 이상%d)" % (min(n["pi"]), max(n["pi"]), note_mass)
             elif "무균" in item:
                 st = {rec(l, "924").get("sterility") for l in lots} - {None}
                 val = sorted(st)[0] if st else "음성"
@@ -682,14 +689,14 @@ def fill(document, data, product, period, today=None, log=None):
     cpk_exp = fill_92("9.2.2", exp, n_exp, False) if exp else {}
     log("9항: Cpk %s" % {k: round(v, 2) for k, v in cpk_dom.items() if v is not None})
 
-    # 각주
-    odd_bio = [(l, rec(l, "922").get("bioburden")) for l in dom + exp if bio_text(l) != "10 미만" and rec(l, "922")]
+    # 각주 — 번호는 위에서 센 것을 쓴다
     notes = []
     if odd_bio:
-        notes.append("1) %s 조제(바이오버든) 공정 시험 성적서의 생균수 기재값은 “%s” 임. 원 기록의 단위 표기 확인 필요."
-                     % (", ".join(l for l, _ in odd_bio), odd_bio[0][1]))
+        notes.append("%d) %s 조제(바이오버든) 공정 시험 성적서의 생균수 기재값은 “%s” 임. 원 기록의 단위 표기 확인 필요."
+                     % (note_bio, ", ".join(l for l, _ in odd_bio), odd_bio[0][1]))
         issues.append(("9.2.2", ", ".join(l for l, _ in odd_bio), "생균수 기재값이 다른 Lot 과 다름 — 원본 확인"))
-    notes.append("2) %d년 완제 시험 성적서는 질량·용량 개개를 최솟값(···g 이상)으로만 기재하므로, 각 Lot 의 개개 최솟값으로 기재하였음." % year_from)
+    notes.append("%d) %d년 완제 시험 성적서는 질량·용량 개개를 최솟값(···g 이상)으로만 기재하므로, 각 Lot 의 개개 최솟값으로 기재하였음."
+                 % (note_mass, year_from))
     for t in reversed(t91):
         for nt in reversed(notes):
             E.note_after(document, t, nt)
