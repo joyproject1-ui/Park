@@ -149,13 +149,30 @@ def guess_previous_year(document_xml):
     return max(years) if years else None
 
 
+def is_docx(payload):
+    """진짜 워드 문서(.docx)인지 — word/document.xml 이 들어 있어야 한다.
+
+    옛 워드(.doc)는 OLE 파일인데 꼬리에 테마(.thmx) zip 이 박혀 있어, zipfile 이 그것을 열어
+    준다. 그대로 복제하면 테마 조각만 든 2 KB 짜리 파일이 나오고 Word 는 "일부 콘텐츠를 읽을
+    수 없습니다" 로 거부한다(2026-09-04 디겐타안연고에서 실제로 생김).
+    """
+    if not payload:
+        return False
+    try:
+        with zipfile.ZipFile(io.BytesIO(payload)) as archive:
+            return "word/document.xml" in archive.namelist()
+    except (zipfile.BadZipFile, OSError):
+        return False
+
+
 def write_from_previous(previous_path, target_path, target_year):
     """전년도 PQR 을 복제해 새 연도 보고서 파일을 만듭니다.
 
     돌려주는 값: {"previous": 기준 본 이름, "previous_year": 연도, "changed": 바뀐 줄 수}
+    옛 워드(.doc)처럼 복제할 수 없는 파일이면 None — 부르는 쪽이 다른 방법을 쓰게 한다.
     """
     payload, label = read_document(previous_path)
-    if payload is None:
+    if not is_docx(payload):
         return None
     with zipfile.ZipFile(io.BytesIO(payload)) as archive:
         infos = archive.infolist()

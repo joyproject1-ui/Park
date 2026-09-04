@@ -15,16 +15,23 @@ class ConvertError(Exception):
     pass
 
 
+last_error = []          # 변환에 실패했을 때 마지막 오류 — 안내 문구에 붙인다
+
+
 def _powershell(script):
     """PowerShell 로 COM 자동화를 돌린다 — pywin32 가 없는 PC 에서도 Word·Excel 을 쓸 수 있다."""
     exe = shutil.which("powershell") or shutil.which("pwsh")
     if not exe:
         return False
     try:
-        run = subprocess.run([exe, "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", script],
-                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=300)
-    except (OSError, subprocess.TimeoutExpired):
+        run = subprocess.run([exe, "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass",
+                              "-Command", script],
+                             stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=300)
+    except (OSError, subprocess.TimeoutExpired) as error:
+        last_error.append(str(error))
         return False
+    if run.returncode != 0:
+        last_error.append((run.stdout or b"").decode("utf-8", "replace").strip()[:400])
     return run.returncode == 0
 
 
@@ -33,11 +40,25 @@ def _ps_path(path):
 
 
 def _word_via_powershell(src, dst):
+    """Word 를 PowerShell COM 으로 불러 .doc → .docx. 실패하면 마지막 오류를 last_error 에 남긴다."""
     script = (
-        "$w = New-Object -ComObject Word.Application; $w.Visible = $false; "
-        "try { $d = $w.Documents.Open(%s, $false, $true); $d.SaveAs2(%s, 16); $d.Close($false) } "
+        "$ErrorActionPreference='Stop'; "
+        "$w = New-Object -ComObject Word.Application; "
+        "$w.Visible = $false; $w.DisplayAlerts = 0; "
+        "try { "
+        "  $d = $w.Documents.Open([ref]%s, [ref]$false, [ref]$true); "
+        "  $d.SaveAs([ref]%s, [ref]16); "
+        "  $d.Close([ref]$false) "
+        "} finally { $w.Quit() }" % (_ps_path(src), _ps_path(dst)))
+    if _powershell(script) and os.path.isfile(dst):
+        return True
+    # SaveAs2 가 있는 새 Word 에서는 이쪽이 더 잘 돈다
+    script2 = (
+        "$ErrorActionPreference='Stop'; "
+        "$w = New-Object -ComObject Word.Application; $w.Visible = $false; $w.DisplayAlerts = 0; "
+        "try { $d = $w.Documents.Open(%s); $d.SaveAs2(%s, 16); $d.Close(0) } "
         "finally { $w.Quit() }" % (_ps_path(src), _ps_path(dst)))
-    return _powershell(script) and os.path.isfile(dst)
+    return _powershell(script2) and os.path.isfile(dst)
 
 
 def _with_word(src, dst):
@@ -91,9 +112,11 @@ def to_docx(src, dst):
         return "word"
     if _with_soffice(src, dst):
         return "soffice"
+    detail = (" (마지막 오류: %s)" % last_error[-1]) if last_error else ""
     raise ConvertError(
-        "결재본이 옛 워드 형식(.doc)인데 바꿀 도구가 없습니다. Word 에서 결재본을 열어 "
-        "'다른 이름으로 저장 → Word 문서(*.docx)' 로 저장해 같은 폴더에 두세요.")
+        "전년도 결재본이 옛 워드 형식(.doc)인데 .docx 로 바꾸지 못했습니다%s. "
+        "Word 에서 그 파일을 열어 '다른 이름으로 저장 → Word 문서(*.docx)' 로 저장한 뒤 "
+        "제품 폴더에 두고 '보고서 작성' 을 다시 누르세요." % detail)
 
 
 def _excel_via_powershell(src, dst):

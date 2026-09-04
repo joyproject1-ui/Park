@@ -105,6 +105,11 @@ EDMS 양식으로 나온다. 서식이 개정되면 새 서식(.docx)을 **입�
   Word 가 다시 계산하게 하는 표시)를 `</w:settings>` 앞에 그냥 붙이면 `compat`·`rsids` 뒤에
   놓여 스키마 위반이 되고, Word 는 문서를 열지 못한다(2026-09-04 디겐타안연고에서 실제로 생김).
   `polish.set_update_fields()` 가 `ooxml_order.SETTINGS` 차례대로 제자리에 넣는다.
+- **옛 워드(.doc)를 `zipfile` 로 열지 마라.** `.doc` 는 OLE 파일(머리 `D0CF11E0`)인데 꼬리에
+  테마(.thmx) zip 이 박혀 있어 파이썬 `zipfile` 이 그것을 열어 준다. 부품은
+  `theme/theme/theme1.xml` 뿐이고 `word/document.xml` 은 없다. 이걸 복제해 '제출용' 으로 내놓아
+  2.9 KB 짜리 파일이 나왔고 Word 가 거부했다(2026-09-04 디겐타안연고 — 담당자가 파일을 보내 줘서
+  잡았다). `prior_report.is_docx()` 로 **`word/document.xml` 이 있는지** 보고 없으면 쓰지 않는다.
 - **내보내기 전에 `verify.check_docx()` 를 통과해야 한다** — 부품 형식 등록, 관계가 가리키는
   부품, 스타일 이름·id 중복, 스키마가 정한 자식 차례를 본다. 걸리면 보고서를 내보내지 않는다.
   이 검사는 스키마 파일 없이 담당자 PC 에서도 돈다.

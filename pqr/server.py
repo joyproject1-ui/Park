@@ -858,20 +858,39 @@ class Handler(BaseHTTPRequestHandler):
                             "changed": 0, "engine": True, "log": engine_result.get("log") or []}
                 write_issue_list(folder, product, issues)
             except Exception as error:                     # 엔진이 못 돌면 예전 방식(연도만 바꾼 사본)
+                engine_error = str(error)
                 based_on = prior_report.write_from_previous(previous, target, year) if previous else None
                 if based_on is not None:
                     based_on["engine"] = False
-                    based_on["engine_error"] = str(error)
+                    based_on["engine_error"] = engine_error
                     based_on["attachments"] = prior_report.copy_attachments(
                         previous, folder, based_on.get("previous_year"), year)
                     build_module.mark_auto_draft(folder, target)
                     final = target
-                else:                              # 압축 안에 워드가 없으면 요약본으로
+                else:                              # 결재본을 복제할 수 없으면 요약본으로
                     final = docx_report.write_docx(self.workspace.data, code, folder,
                                                    config=self.workspace.config)
+                    based_on = {"engine": False, "engine_error": engine_error,
+                                "previous": os.path.basename(previous) if previous else None}
+                issues = list(issues) + [("보고서", os.path.basename(previous or ""), engine_error)]
         else:
             final = docx_report.write_docx(self.workspace.data, code, folder,
                                            config=self.workspace.config)
+        # 만든 파일이 Word 에서 열리는지 확인합니다 — 깨진 파일을 '완성본' 으로 내놓지 않습니다.
+        from .engine import verify as verify_module
+        broken = verify_module.check_docx(final) if str(final).lower().endswith(".docx") else []
+        if broken:
+            reason = "; ".join(broken[:3])
+            try:
+                os.remove(final)
+            except OSError:
+                pass
+            final = docx_report.write_docx(self.workspace.data, code, folder,
+                                           config=self.workspace.config)
+            based_on = dict(based_on or {}, engine=False, broken=reason)
+            issues = list(issues) + [("보고서", "", "만든 보고서가 Word 에서 열리지 않아 요약본으로 대신했습니다 — %s" % reason)]
+        if issues:
+            write_issue_list(folder, product, issues)
         self.workspace.rebuild()
         # '어디 있지?' 를 없앱니다 — 제출용 보고서가 있는 제품 폴더를 바로 열어 줍니다.
         opened = open_in_file_manager(folder)

@@ -334,9 +334,22 @@ class PriorReportTest(ServerTest):
             '<w:p><w:r><w:t>제품품질평가는 %d 년 1월 ~ 12월까지 생산된 제품을 평가한다.</w:t></w:r></w:p>'
             '<w:tbl><w:tr><w:tc><w:p><w:r><w:t>%d.02.13</w:t></w:r></w:p></w:tc></w:tr></w:tbl>'
             '</w:body></w:document>' % (year, year))
+        # 진짜 워드 파일처럼 부품 형식을 등록한다 — 등록이 없으면 Word 가 열지 못하고,
+        # 만든 보고서를 내보내기 전 검사(engine.verify)도 이를 걸러 낸다.
+        types = ('<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+                 '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">'
+                 '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.'
+                 'relationships+xml"/><Default Extension="xml" ContentType="application/xml"/>'
+                 '<Override PartName="/word/document.xml" ContentType="application/vnd.'
+                 'openxmlformats-officedocument.wordprocessingml.document.main+xml"/></Types>')
+        rels = ('<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+                '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+                '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/'
+                '2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>')
         with zipfile.ZipFile(path, "w") as archive:
+            archive.writestr("[Content_Types].xml", types)
+            archive.writestr("_rels/.rels", rels)
             archive.writestr("word/document.xml", document)
-            archive.writestr("[Content_Types].xml", "<Types/>")
         return path, folder
 
     def report(self, code="HP-110"):
