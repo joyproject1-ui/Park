@@ -107,3 +107,42 @@ class 변환실패하면(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class 제품양식이_있고_전년도_변환이_실패하면(unittest.TestCase):
+    """담당자 2026-09: "제출용이 아니고 요약본이 작성이 됐어" — 전년도 .doc 을 PC 에서 못 바꿔도
+    결재본 양식으로 만들고, 이어받기를 못 한 까닭을 문의 목록 맨 앞에 남긴다."""
+
+    def setUp(self):
+        from pqr.engine import edms
+        self.root = tempfile.mkdtemp(prefix="pqr-fallback2-")
+        self.folder = os.path.join(self.root, "QC1-9999 시험제품")
+        os.makedirs(self.folder)
+        with open(os.path.join(self.folder, "16. PQR25 시험제품.doc"), "wb") as h:
+            h.write(b"\xd0\xcf\x11\xe0" + b"0" * 64)
+        shutil.copyfile(edms.SHIPPED_FORM, os.path.join(self.folder, "0 PQR 작성 공양식 - E-HLF-32.docx"))
+        self.real = convert.to_docx
+
+        def fake(src, dst):
+            if src.lower().endswith(".doc"):
+                raise convert.ConvertError("시험용 실패")
+            return self.real(src, dst)
+        convert.to_docx = fake
+
+    def tearDown(self):
+        convert.to_docx = self.real
+        shutil.rmtree(self.root, ignore_errors=True)
+
+    def test_결재본_양식으로_만들고_까닭을_맨_앞에_남긴다(self):
+        out = os.path.join(self.root, "out.docx")
+        got = writer.write_report(self.folder,
+                                  {"code": "QC1-9999", "name": "시험제품", "group": "안연고"},
+                                  {"from": "2025-01-01", "to": "2025-12-31"}, out,
+                                  today=datetime.date(2026, 9, 5))
+        self.assertTrue(os.path.isfile(out))
+        d = docx.Document(out)
+        self.assertGreater(len(d.tables), 25)                 # 결재본 양식 그대로
+        first = got["issues"][0]
+        self.assertEqual(first[0], "16")
+        self.assertTrue(first[2].startswith("★"))
+        self.assertIn("Word 문서(*.docx)", first[2])

@@ -215,6 +215,33 @@ def write_work_log(folder, product, lines, error=None, trace=None):
     return path
 
 
+FAIL_NOTE_NAME = "★ 보고서 작성 실패 원인 (%s).txt"
+
+
+def write_failure_note(made_dir, product, error, trace, lines):
+    """결재본 양식으로 만들지 못했을 때 그 까닭을 '작성본' 폴더에도 남깁니다.
+
+    담당자는 작성본 폴더만 열어 본다(2026-09: 요약본만 있고 엑셀이 없다고 함) — 제품 폴더의
+    작성 기록은 눈에 띄지 않았다. 이 파일 하나를 보내면 무엇이 막았는지 알 수 있다.
+    """
+    try:
+        os.makedirs(made_dir, exist_ok=True)
+        path = os.path.join(made_dir, FAIL_NOTE_NAME % product.get("code", ""))
+        out = ["[%s] %s — 결재본 양식으로 만들지 못했습니다" % (product.get("code", ""), product.get("name", "")),
+               "만든 때: %s" % _dt.datetime.now().strftime("%Y-%m-%d %H:%M"),
+               "프로그램 버전: %s" % (program_version() or "(알 수 없음)"), "",
+               "■ 까닭:", "   %s" % error, "",
+               "이 파일을 그대로 보내 주세요. 아래는 멈춘 자리와 엔진이 한 일입니다.", ""]
+        if trace:
+            out += ["■ 멈춘 자리:"] + ["   %s" % line for line in str(trace).splitlines()] + [""]
+        out += ["■ 엔진이 한 일:"] + ["   %s" % line for line in (lines or ["(기록 없음)"])]
+        with open(path, "w", encoding="utf-8") as handle:
+            handle.write("\n".join(out) + "\n")
+        return path
+    except OSError:
+        return None
+
+
 def open_in_file_manager(path):
     """폴더를 운영체제 파일 관리자로 엽니다 (안 되면 조용히 False).
 
@@ -962,6 +989,7 @@ class Handler(BaseHTTPRequestHandler):
                 engine_error = str(error)
                 engine_trace = traceback.format_exc()
                 write_work_log(folder, product, steps, engine_error, engine_trace)
+                write_failure_note(_made_dir(folder), product, engine_error, engine_trace, steps)
                 # 2) 전년도 결재본을 그대로 복제해 연도만 옮긴다 — 제품 고유의 항·표가 남는다.
                 based_on = prior_report.write_from_previous(previous, target, year) if previous else None
                 if based_on is not None:
@@ -987,6 +1015,10 @@ class Handler(BaseHTTPRequestHandler):
                         write_work_log(folder, product,
                                        steps + ["", "(전년도 결재본으로 넘어져 EDMS 빈 서식으로 다시 해 봄)"] + retry,
                                        engine_error, engine_trace)
+                        if engine_result is None:
+                            write_failure_note(_made_dir(folder), product,
+                                               "%s / 빈 서식으로도: %s" % (engine_error, (retry or ["?"])[-1]),
+                                               engine_trace, steps + [""] + retry)
                     if engine_result is not None:
                         issues = (engine_result.get("issues") or []) + [
                             ("보고서", os.path.basename(previous or ""),
