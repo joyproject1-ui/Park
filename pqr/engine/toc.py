@@ -2,7 +2,8 @@
 """목차 쪽수를 Word 필드(PAGEREF)로 바꾼다 — LibreOffice 없이도 쪽수가 맞는다.
 
 항 제목마다 책갈피를 두고, 목차 칸에는 그 책갈피의 쪽 번호 필드를 넣는다. 파일을 열 때
-Word 가 필드를 다시 계산하도록 settings.xml 에 updateFields 를 켠다(polish 에서 처리).
+쪽 번호는 만들 때 PDF 로 세어 필드 결과에 직접 적는다(fill_page_numbers). settings.xml 의
+updateFields 는 켜지 않는다 — 켜면 Word 가 쪽 나눔 전에 계산해 전부 1 이 된다.
 """
 import copy
 import os

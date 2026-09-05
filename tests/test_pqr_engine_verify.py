@@ -62,6 +62,25 @@ class 설정파일차례(unittest.TestCase):
         twice = polish.set_update_fields(polish.set_update_fields(x))
         self.assertEqual(twice.count("updateFields"), 1)
 
+    def test_clear_update_fields_가_지운다(self):
+        """담당자 2026-09: 목차가 전부 '1' — updateFields 가 켜져 있으면 Word 가 쪽 나눔
+        전에 필드를 다시 계산한다. 만든 파일에는 이 표시가 없어야 한다."""
+        x = ('<?xml version="1.0"?><w:settings %s><w:zoom w:percent="100"/>'
+             '<w:updateFields w:val="true"/><w:compat><w:noLeading/></w:compat></w:settings>' % W)
+        out = polish.clear_update_fields(x)
+        self.assertNotIn("updateFields", out)
+        self.assertIn("compat", out)
+        self.assertEqual(verify.check_docx(make({"word/settings.xml": out})), [])
+
+    def test_polish_는_settings_의_updateFields_를_없앤다(self):
+        import zipfile
+        path = make({"word/settings.xml":
+                     '<?xml version="1.0"?><w:settings %s><w:zoom w:percent="100"/>'
+                     '<w:updateFields w:val="true"/></w:settings>' % W})
+        polish.polish(path)
+        with zipfile.ZipFile(path) as z:
+            self.assertNotIn("updateFields", z.read("word/settings.xml").decode("utf-8"))
+
 
 class 패키지(unittest.TestCase):
     def test_형식_등록이_없으면_잡는다(self):

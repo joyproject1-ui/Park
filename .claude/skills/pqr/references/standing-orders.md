@@ -71,7 +71,7 @@
 | **16항 아래와 17항 시작부분은 한 칸 띄운다 — 모든 항이 마찬가지** | 항 제목 앞에 빈 줄 한 줄 | `docedit.space_before_sections` |
 | 목차는 **점선 길이**를 페이지 번호 왼쪽에 맞춘다 | 목차 글자 크기를 줄이지 않는다 | `docedit.table_font_size(skip=목차)` |
 | 페이지 번호(목차 쪽수)가 맞아야 한다 | 만든 자리에서 Word 로 필드를 다시 계산한다 | `engine/convert.refresh_fields` |
-| **목차에 쪽 번호가 비면 안 된다** (제한된 보기에서도) | Word 제한된 보기는 dirty 필드를 다시 계산하지 않는다. PDF 로 쪽을 세어 필드 결과에 숫자를 직접 적고 dirty 표시를 뗀다 | `toc.fill_page_numbers` |
+| **목차 쪽 번호가 비거나 전부 1 이면 안 된다** | PDF 로 쪽을 세어 필드 결과에 숫자를 직접 적고 dirty 표시를 뗀다. settings 의 `updateFields` 는 **넣지 않는다** — 켜 두면 Word 가 열자마자 쪽 나눔 전에 계산해 전부 1 이 된다 | `toc.fill_page_numbers`, `polish.clear_update_fields` |
 | 7항 **최댓값·최솟값·평균은 공정 열에 맞춘다** | 그리드 열 번호로 짚는다 | `docedit.grid_cells` |
 | 7항 **비고의 사선은 한 칸으로 합친다** | 자료 줄·요약 줄의 비고를 세로 병합하고 사선 하나 | `docedit.merge_remark_column` |
 | 8.1.1·8.1.2 **제조원·제조업체의 빈 줄(엔터)을 지우고 가운데 맞춤** | 줄 끝 빈 문단을 없애고 가운데로 | `docedit.tidy_cell_lines` |

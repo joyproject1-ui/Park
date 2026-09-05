@@ -203,6 +203,24 @@ def set_update_fields(xml):
     return etree.tostring(root, xml_declaration=True, encoding="UTF-8", standalone=True).decode("utf-8")
 
 
+def clear_update_fields(xml):
+    """settings.xml 에서 <w:updateFields> 를 지운다.
+
+    이 표시가 있으면 Word 는 파일을 열자마자, 쪽 나눔이 끝나기도 전에 모든 필드를 다시
+    계산한다 — 그래서 PAGEREF 가 전부 '1' 이 된다(담당자 2026-09: "페이지 번호는 여전히
+    안 나와", 목차가 모두 1). 목차 쪽 번호는 만들 때 PDF 로 세어 필드 결과에 적어 두므로
+    (toc.fill_page_numbers) Word 가 캐시 값을 그대로 보이게 두는 것이 맞다. Ctrl+A → F9 는
+    쪽 나눔 뒤에 도는 손 갱신이라 그때는 제대로 계산된다.
+    """
+    from lxml import etree
+    root = etree.fromstring(xml.encode("utf-8") if isinstance(xml, str) else xml)
+    W = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
+    for el in list(root):
+        if el.tag == W + "updateFields":
+            root.remove(el)
+    return '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n' + etree.tostring(root, encoding="unicode")
+
+
 def polish(path):
     tmp = path + ".tmp"
     with zipfile.ZipFile(path) as src, zipfile.ZipFile(tmp, "w", zipfile.ZIP_DEFLATED) as dst:
@@ -225,10 +243,10 @@ def polish(path):
                         xml = add_doc_defaults(xml)
                         xml = fix_default_font(xml)
                     if name == "word/settings.xml":
-                        # 열 때 Word 가 목차 PAGEREF 를 다시 계산하도록. settings.xml 은 자식 순서가
-                        # 스키마로 정해져 있어(updateFields 는 compat·rsids 보다 앞) 끝에 붙이면
-                        # Word 가 "일부 콘텐츠를 읽을 수 없습니다" 로 거부한다.
-                        xml = set_update_fields(xml)
+                        # 예전엔 updateFields 를 켜 Word 가 열 때 목차를 다시 계산하게 했는데,
+                        # 쪽 나눔 전에 계산해 전부 '1' 이 됐다. 이제 쪽 번호는 만들 때 직접
+                        # 적으므로(toc.fill_page_numbers) 이 표시는 있으면 지운다.
+                        xml = clear_update_fields(xml)
                     xml, fixed = fix_order(xml)
                     if fixed:
                         print(f"  순서 바로잡음 {name}: {fixed}")
