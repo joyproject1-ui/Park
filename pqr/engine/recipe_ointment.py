@@ -1203,7 +1203,7 @@ def fill(document, data, product, period, today=None, log=None):
             kind = "변경" if "변경" in reason else ("정기적" if "정기" in reason else "최초")
             put(i_no, str(i + 1))
             put(i_why, *["%s %s" % ("■" if k == kind else "☐", k) for k in ("최초", "변경", "정기적")])
-            put(i_lot, *[lot for _, lot, _ in e["lots"]][:3])
+            put(i_lot, *[lot for _, lot, _ in e["lots"] if str(lot).strip()][:3])
             m = re.match(r"(\S+)\s*(\(.*?\))?", e["report"])
             put(i_doc, m.group(1), (m.group(2) or "").lower()) if m else put(i_doc, e["report"])
             put(i_done, e.get("report_date") or "확인 필요")
@@ -1353,6 +1353,8 @@ def fill(document, data, product, period, today=None, log=None):
                 lines = ["[%s] %s" % (cc.get("doc_no"), cc.get("title") or "")]
                 lines += brief_change(cc.get("description") or "")
                 E.set_cell_plain(c[1], *lines)
+                # 첫 줄(문서번호·변경명)만 굵게 — 변경 내용은 보통 글씨 (담당자 2026-09)
+                E.bold_first_line_only(c[1])
                 # 조치사항: 변경 실행 계획의 부서별 조치사항을 간추린다. 위탁사·위수탁 줄은 뺀다.
                 # 변경통보는 위탁사·거래처에 알리는 일이라 자사 제품 PQR 에는 적지 않는다
                 # (담당자 지시 2026-09: "변경통보는 삭제해줘 … 자사 제품내용만 PQR 에 작성").

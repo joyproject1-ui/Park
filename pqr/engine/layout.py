@@ -198,6 +198,27 @@ def apply(document, log=None, product_title=None, edms=None):
         E.diag_empty_in_column(T[ti], "기타업체")
     log("빈 칸 사선: %d" % E.diag_all_empty(document, skip=no_diag | set(fixed_tables) | {toc}))
 
+    # ---- 담당자가 화면을 보며 짚어 준 손질 (2026-09) ----
+    log("4항 본문 줄간격 1.5: %d" % E.set_section_line_spacing(document, 4, 1.5))
+    빈줄 = 0
+    for ti in _tables_under(document, ("8.1.1", "8.1.2")):
+        빈줄 += E.tidy_cell_lines(T[ti], ("제조원", "제조업체"), align="center")
+    for ti in _tables_under(document, ("10.1",)):        # 대상 Lot 칸의 빈 줄
+        빈줄 += E.tidy_cell_lines(T[ti], ("대상Lot", "대상 Lot"), align="center")
+    for ti in _tables_under(document, ("12.",)):         # 변경사항은 줄맞춤을 건드리지 않는다
+        빈줄 += E.tidy_cell_lines(T[ti], ("변경사항",), valign=None)
+    log("칸 안 빈 줄 정리: %d" % 빈줄)
+    for ti in _tables_under(document, ("7.",)):
+        log("7항 비고 사선 합치기: %d" % E.merge_remark_column(T[ti]))
+    같게 = 0
+    for ti in _tables_under(document, ("10.2", "10.3", "10.4", "10.5")):
+        같게 += E.equal_columns(T[ti], ("IQ", "OQ", "PQ"))
+        같게 += E.keep_lines_in_cells(T[ti], "설비명",
+                                      ("주사용수", "질소", "Clean air", "제조 시스템", "분배"))
+    log("IQ·OQ·PQ 칸 너비·설비명 줄 나눔: %d" % 같게)
+    for ti in _tables_under(document, ("13.1",)):
+        log("13.1 같은 실시 사유 합치기: %d" % E.merge_same_text(T[ti], "실시사유"))
+
     # ---- 쪽 배치 ----
     PAGE_BODY = 11800
     whole = 0

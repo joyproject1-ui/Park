@@ -151,10 +151,20 @@ def add_diag(cell):
     el.set(qn("w:color"), "000000")
 
 
+def _drawn(el):
+    """테두리 요소가 실제로 그어진 선인가 — val 이 nil·none 이면 '긋지 않음' 이다.
+
+    서식은 '사선 없음' 을 <w:tr2bl w:val="nil"/> 로 적어 둔다. 있다고 세면 빈 칸에
+    사선을 그을 자리를 이미 그은 것으로 잘못 본다.
+    """
+    return el is not None and (el.get(qn("w:val")) or "single") not in NO_BORDER
+
+
 def has_diag(cell):
     pr = cell._tc.find(qn("w:tcPr"))
     borders = pr.find(qn("w:tcBorders")) if pr is not None else None
-    return borders is not None and any(borders.find(qn(t)) is not None for t in ("w:tl2br", "w:tr2bl"))
+    return borders is not None and any(_drawn(borders.find(qn(t)))
+                                       for t in ("w:tl2br", "w:tr2bl"))
 
 
 NA_ONLY = re.compile(r"^\s*(N\s*/\s*A|해당\s*없음|없음)\s*$", re.I)
@@ -1297,6 +1307,10 @@ def diag_all_empty(document, skip=()):
     for ti, tbl in enumerate(document.tables):
         if ti in skip:
             continue
+        if has_drawing(tbl):
+            # 표를 가로지르는 선이 이미 그어져 있으면 칸마다 또 긋지 않는다
+            # (담당자 2026-09: "11.2항 전체 줄 사선이 되어 있으니 개별 사선은 삭제").
+            continue
         for tr in tbl._tbl.findall(qn("w:tr")):
             for tc in tr.findall(qn("w:tc")):
                 pr = tc.find(qn("w:tcPr"))
@@ -1635,6 +1649,9 @@ def draw_block_line(table, first, last, weight="0.5pt"):
         height += max(hv, 250)
     w_pt, h_pt = width / 20.0, height / 20.0
     margin = 99 / 20.0                                   # 칸 왼쪽 여백(dxa 99)
+    # 선은 칸 안쪽 문단에 앵커된다 — 문단 위쪽은 이미 칸 위에서 조금 내려와 있으므로
+    # 행 높이를 그대로 쓰면 왼쪽 아래가 표 밖으로 삐져나온다 (담당자 2026-09).
+    drop, rise = h_pt * 0.42, 2.0
     _VML_ID[0] += 1
     sid = _VML_ID[0]
     xml = (
@@ -1647,7 +1664,7 @@ def draw_block_line(table, first, last, weight="0.5pt"):
         'mso-position-horizontal:absolute;mso-position-horizontal-relative:text;'
         'mso-position-vertical:absolute;mso-position-vertical-relative:text;'
         'mso-wrap-style:square" '
-        f'from="{-margin:.2f}pt,{h_pt:.2f}pt" to="{w_pt - margin:.2f}pt,0" '
+        f'from="0,{drop:.2f}pt" to="{w_pt - 2 * margin:.2f}pt,{rise:.2f}pt" '
         f'o:allowincell="t" strokecolor="black" strokeweight="{weight}">'
         '<w10:wrap type="none"/><w10:anchorlock/>'
         '</v:line></w:pict></w:r>'
@@ -1699,3 +1716,203 @@ def _keep_next_para(para):
         pr = para.makeelement(qn("w:pPr"), {})
         para.insert(0, pr)
     get_or_add(pr, "keepNext")
+
+
+def set_section_line_spacing(document, number, line=1.5):
+    """한 항의 본문 문단에만 줄간격을 준다 (담당자 2026-09: "4항 … 줄간격은 1.5").
+
+    항 제목부터 다음 항 제목 전까지의 글 문단이 대상이다. 표 안은 건드리지 않는다.
+    바꾼 문단 수를 돌려준다.
+    """
+    head = re.compile(r"^\s*%s[.\s]" % re.escape(str(number)))
+    other = re.compile(r"^\s*\d{1,2}[.\s]")
+    n, inside = 0, False
+    for para in document.paragraphs:
+        text = para.text.strip()
+        if head.match(text):
+            inside = True
+            continue
+        if inside and other.match(text):
+            break
+        if inside and text:
+            # w:line 은 240 이 한 줄이다 — 1.5 줄이면 360
+            set_line_spacing(para, int(round(240 * line)), rule="auto")
+            n += 1
+    return n
+
+
+def tidy_cell_lines(table, headers, align=None, valign="center"):
+    """머리글 이름이 headers 인 열의 칸에서 빈 줄(엔터)을 없앤다.
+
+    담당자 2026-09: "제조원 제조업체에서 엔터가 2개씩 눌려 있음 — 백스페이스 2번씩
+    눌러서 가운데 맞춤". 줄바꿈이 칸 안에 남으면 글이 위로 쏠려 보인다.
+    """
+    width = grid_width(table)
+    if not table.rows:
+        return 0
+    head = {re.sub(r"\s+", "", cell_text(c)): i
+            for i, c in grid_cells(table.rows[0], width).items()}
+    cols = [i for name, i in head.items() if any(w in name for w in headers)]
+    if not cols:
+        return 0
+    n = 0
+    for row in table.rows[1:]:
+        cells = grid_cells(row, width)
+        for i in cols:
+            cell = cells.get(i)
+            if cell is None:
+                continue
+            paras = cell._tc.findall(qn("w:p"))
+            남길 = [p for p in paras if "".join(t.text or "" for t in p.iter(qn("w:t"))).strip()]
+            for p in paras:
+                if p not in 남길 and len(paras) > 1:
+                    cell._tc.remove(p)
+                    n += 1
+            if not cell._tc.findall(qn("w:p")):       # 문단이 하나도 없으면 안 된다
+                cell._tc.append(paras[0])
+            if align:
+                set_cell_align(cell, align)
+            if valign:
+                set_cell_valign(cell, valign)
+    return n
+
+
+def merge_remark_column(table, header="비고", first_data=1):
+    """비고 열의 자료 줄을 하나로 합치고 사선을 한 번만 긋는다.
+
+    담당자 2026-09: "7. 수율현황표 비고의 사선 셀병합". 줄마다 사선을 그으면
+    작은 사선이 여러 개 보인다 — 결재본은 한 칸에 큰 사선 하나다.
+    """
+    width = grid_width(table)
+    if len(table.rows) <= first_data:
+        return 0
+    head = {re.sub(r"\s+", "", cell_text(c)): i
+            for i, c in grid_cells(table.rows[0], width).items()}
+    col = next((i for name, i in head.items() if header in name), None)
+    if col is None:
+        return 0
+    cells = []
+    for row in table.rows[first_data:]:
+        cell = grid_cells(row, width).get(col)
+        if cell is None or cell_text(cell).strip():
+            break                                   # 글이 있는 칸은 합치지 않는다
+        cells.append(cell)
+    if len(cells) < 2:
+        return 0
+    for k, cell in enumerate(cells):
+        clear_diag(cell)
+        set_vmerge(cell, "restart" if k == 0 else "continue")
+    add_diag(cells[0])
+    return len(cells)
+
+
+def equal_columns(table, names):
+    """머리글 이름이 names 인 열들의 폭을 같게 맞춘다 (10.2~10.5 의 IQ·OQ·PQ)."""
+    width = grid_width(table)
+    if not table.rows or not width:
+        return 0
+    자리 = {}
+    for row in table.rows[:4]:
+        for i, cell in grid_cells(row, width).items():
+            글 = re.sub(r"\s+", "", cell_text(cell)).upper()
+            if 글 in names:
+                자리[글] = i
+    cols = sorted(자리.values())
+    if len(cols) < 2:
+        return 0
+    grid = table._tbl.find(qn("w:tblGrid"))
+    gcols = grid.findall(qn("w:gridCol")) if grid is not None else []
+    if max(cols) >= len(gcols):
+        return 0
+    합 = sum(int(gcols[i].get(qn("w:w")) or 0) for i in cols)
+    몫 = 합 // len(cols)
+    for k, i in enumerate(cols):
+        gcols[i].set(qn("w:w"), str(합 - 몫 * (len(cols) - 1) if k == 0 else 몫))
+    for row in table.rows:                          # 칸 폭도 그리드에 맞춘다
+        for i, cell in grid_cells(row, width).items():
+            if i in cols and _span(cell._tc) == 1:
+                w = _tcpr(cell._tc).find(qn("w:tcW"))
+                if w is not None:
+                    w.set(qn("w:w"), gcols[i].get(qn("w:w")))
+                    w.set(qn("w:type"), "dxa")
+    return len(cols)
+
+
+def keep_lines_in_cells(table, header, needles):
+    """이름에 needles 가 든 칸의 글이 쪽 경계에서 나뉘지 않게 하고 세로 가운데로 놓는다.
+
+    담당자 2026-09: "설비명 … 페이지 매김에서 현재 단락을 나누지 않음 체크하여
+    표 안에 중앙에 글씨가 위치하도록".
+    """
+    width = grid_width(table)
+    if not table.rows:
+        return 0
+    head = {re.sub(r"\s+", "", cell_text(c)): i
+            for i, c in grid_cells(table.rows[0], width).items()}
+    col = next((i for name, i in head.items() if header in name), None)
+    if col is None:
+        return 0
+    n = 0
+    for row in table.rows[1:]:
+        cell = grid_cells(row, width).get(col)
+        if cell is None:
+            continue
+        글 = re.sub(r"\s+", "", cell_text(cell))
+        if not any(re.sub(r"\s+", "", w) in 글 for w in needles):
+            continue
+        for para in cell._tc.findall(qn("w:p")):
+            pr = get_or_add(para, "pPr")
+            get_or_add(pr, "keepLines")
+            get_or_add(pr, "keepNext")
+        set_cell_valign(cell, "center")
+        n += 1
+    return n
+
+
+def merge_same_text(table, header, first_data=1):
+    """한 열에서 위아래로 같은 글이 이어지면 세로로 합친다 (13.1 실시 사유)."""
+    width = grid_width(table)
+    if len(table.rows) <= first_data:
+        return 0
+    head = {re.sub(r"\s+", "", cell_text(c)): i
+            for i, c in grid_cells(table.rows[0], width).items()}
+    col = next((i for name, i in head.items() if header in name), None)
+    if col is None:
+        return 0
+    앞, 시작, n = None, None, 0
+    for row in table.rows[first_data:]:
+        cell = grid_cells(row, width).get(col)
+        글 = re.sub(r"\s+", "", cell_text(cell)) if cell is not None else None
+        if cell is None or not 글:
+            앞, 시작 = None, None
+            continue
+        if 글 == 앞 and 시작 is not None:
+            set_vmerge(시작, "restart")
+            set_vmerge(cell, "continue")
+            set_cell(cell, "")
+            n += 1
+        else:
+            앞, 시작 = 글, cell
+    return n
+
+
+def bold_first_line_only(cell):
+    """칸의 첫 줄만 굵게 두고 아래 줄은 보통으로 되돌린다.
+
+    12항 변경사항은 첫 줄이 '[문서번호] 변경명' 이고 그 아래가 변경 내용이다.
+    변경 내용까지 굵으면 눈에 걸린다(담당자 2026-09: "변경 내용에는 굵은글씨 취소").
+    """
+    paras = cell_paras(cell._tc)
+    n = 0
+    for k, para in enumerate(paras):
+        for run in para.findall(qn("w:r")):
+            rpr = get_or_add(run, "rPr")
+            b = rpr.find(qn("w:b"))
+            if k == 0:
+                continue
+            if b is None:
+                b = get_or_add(rpr, "b")
+            if b.get(qn("w:val")) != "0":
+                b.set(qn("w:val"), "0")
+                n += 1
+    return n
