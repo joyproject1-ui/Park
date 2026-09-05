@@ -276,6 +276,8 @@ def write_report(folder, product, period, out_path, today=None, recipe=None, log
             # 올해 안정성 시험일지를 읽지 못했을 때 13항을 빈칸으로 두지 않으려고 미리 읽어 둔다
             data.prev_stability = carry_module.stability_tables(old_document)
             data.previous_name = os.path.basename(previous)
+            # 자료에서 못 읽은 항은 전년도 결재본에서 옮긴다 (10.1 PV · 13 안정성)
+            data.prev_sections = carry_module.section_grids(old_document, "10.1")
             if data.pv_reasons:
                 log_("전년도 10.1 에서 밸리데이션 사유 %d Lot" % len(data.pv_reasons))
         except Exception as error:

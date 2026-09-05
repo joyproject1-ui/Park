@@ -203,13 +203,19 @@ class ServerTest(unittest.TestCase):
             self.assertTrue(os.path.exists(path))
 
     def test_report_writes_submission_docx_and_shows_final_button(self):
-        """보고서 작성 → 제출용 .docx 가 제품 폴더에 생기고, 그 자리에서 완성본 단추가 섭니다."""
+        """보고서 작성 → 제출용 .docx 가 'PQR 작성본' 폴더에 생깁니다.
+
+        담당자 2026-09: "작성 완료본은 해당 폴더에 별도의 폴더를 만들어서 파일을 생성해줘".
+        """
+        from pqr import build as build_module
         status, payload = self.post_json("/api/report", {"product": "HP-110", "force": True})
         self.assertTrue(payload["ok"])
         self.assertTrue(os.path.isfile(payload["final"]), payload.get("final"))
         self.assertIn("제출용", payload["final_name"])
-        # 제품 폴더에 두어야 근거 자료 옆에서 검토할 수 있습니다.
-        self.assertEqual(os.path.dirname(payload["final"]), payload["folder"])
+        # 제품 폴더 아래 별도 폴더에 둡니다 — 근거 자료와 섞이지 않게.
+        self.assertEqual(os.path.dirname(payload["final"]), payload["made_dir"])
+        self.assertEqual(payload["made_dir"],
+                         os.path.join(payload["folder"], build_module.OUTPUT_DIR))
         product = next(p for p in payload["data"]["products"] if p["code"] == "HP-110")
         # 결재본(평가항목 16)이 없어 요약 초안만 만들어진 경우, 그 초안은 완성본이 아닙니다.
         self.assertEqual(product["final_report"], "")

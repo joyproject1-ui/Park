@@ -440,3 +440,54 @@ class LegacyXlsTest(unittest.TestCase):
         from pqr import tabular
         with self.assertRaises(tabular.TableError):
             tabular.read_table("보고서.pdf")
+
+
+class 만든_보고서_폴더(unittest.TestCase):
+    """작성본은 제품 폴더 아래 'PQR 작성본' 에 둔다 (담당자 2026-09).
+
+    근거 자료와 섞이지 않아야 하고, 그 폴더를 다시 자료로 읽어서도 안 된다.
+    """
+
+    def setUp(self):
+        self.dir = tempfile.mkdtemp()
+        write_samples(self.dir, layout="tree")
+        self.folder = os.path.join(
+            self.dir, next(n for n in os.listdir(self.dir) if n.startswith("HP-110")))
+        self.made = os.path.join(self.folder, build_module.OUTPUT_DIR)
+        os.makedirs(self.made)
+
+    def tearDown(self):
+        shutil.rmtree(self.dir, ignore_errors=True)
+
+    def _완성본(self, 이름="[HP-110] 레보클린 2026년 제품품질평가 (제출용).docx"):
+        path = os.path.join(self.made, 이름)
+        shutil.copy(os.path.join(os.path.dirname(__file__), "..", "pqr", "data",
+                                 "edms_form.docx"), path)
+        return path
+
+    def test_작성본_폴더의_보고서를_완료로_인정한다(self):
+        self._완성본()
+        product = next(p for p in build_module.build(input_dir=self.dir, today=TODAY)["products"]
+                       if p["code"] == "HP-110")
+        self.assertIn("제출용", product["final_report"])
+
+    def test_작성본_폴더는_자료로_세지_않는다(self):
+        self._완성본()
+        for name in os.listdir(self.folder):                  # 근거 자료를 치우면
+            path = os.path.join(self.folder, name)
+            if os.path.isfile(path):
+                os.remove(path)
+        self.assertFalse(build_module.has_source_files(self.folder))
+        product = next(p for p in build_module.build(input_dir=self.dir, today=TODAY)["products"]
+                       if p["code"] == "HP-110")
+        self.assertEqual(product["final_report"], "")         # 다시 '보고서 작성' 으로
+
+    def test_작성본_폴더를_자료로_읽지_않는다(self):
+        """만든 보고서를 다음 번에 근거 자료로 다시 읽으면 값이 제 꼬리를 문다."""
+        from pqr.engine import collect
+        self._완성본()
+        with open(os.path.join(self.made, "7. 수율현황표.xlsx"), "wb") as handle:
+            handle.write(b"x")                                # 항 번호를 단 이름이어도
+        got = collect.discover(self.folder)
+        읽은것 = [os.path.basename(p) for paths in got.values() for p in paths]
+        self.assertNotIn("7. 수율현황표.xlsx", 읽은것)

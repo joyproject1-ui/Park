@@ -39,7 +39,8 @@
 | 7 | 수율은 최솟값·최댓값·평균값을 적는다 | 요약행 열은 그리드 번호로 짚는다(가로 병합 때문) | `docedit.grid_cells` |
 | 8.1.3 | 설명서·케이스는 **자사규격** (사선 아님) | P 코드는 자사규격으로 적는다 | `recipe_ointment._supplier` |
 | 9 | 최솟값·최댓값·평균값을 적고 사선은 지운다 | 판독값에서 요약을 낸다 | `recipe_ointment.summarize` |
-| 10.1 | PV 는 **가장 최근 것 하나만** | 평가 연도 보고서 중 최신 1건 | `recipe_ointment.fill_pv` |
+| 3 | **대상 제품 정보는 전년도 PQR 에서 가져온다** | 허가증 PDF 에 글자 정보가 없는 일이 잦다. 점검항목(제형·제품분류·제품명·허가번호·허가일자·사용기한·보관조건 …)을 줄 이름으로 짝지어 옮긴다 | `carry._label_columns` |
+| 10.1 | PV 는 **10.1 PV Validation Master File 최신본**에서 가져오고, **전년도 PQR 도 참고**한다 | 마스터에서 평가 연도 PV 를 찾아 가장 최근 1건. 못 찾으면 전년도 결재본의 10.1 을 옮기고 문의로 남긴다 | `recipe_ointment.fill_pv`, `_carry_rows` |
 | 10.2 | 제조설비 IQ·OQ 는 **생산장비 적격성 평가 마스터파일**에서 가져온다 | 최신본과 `_OLD` 파일을 합쳐 읽는다(최신본에는 PQ 만 있다) | `collect.py`, `readers/masters.py` |
 | 10.3~10.5 | IQ·OQ 는 **제조지원 설비 마스터파일(IQ, OQ 정보확인)**, PQ 는 **10.5 Qualification Master File(PQ, 측정위치 타당성)** — 모두 최신 파일 | 종류마다 제 파일을 먼저 본다. QM… 문서번호도 PQ 로 본다 | `collect.py` |
 | 10.3~10.5 | 액제라인만 23년도에 공사한 것은 표시해 두었으니 참고한다 | 마스터의 '사유' 를 읽어 다른 라인·다른 방 공사는 뺀다. 뺀 것은 문의 목록에 | `readers/masters.applies` |
@@ -79,7 +80,7 @@
 | **10 Lot 이상**: Cpk 까지 같이 | Cpk 계산 파일을 더 만든다 | 같은 곳 |
 | 16. 안정성시험 경향표는 **13항 자료를 참고해 최신 파일로 신규 작성** | 지난 경향표 값을 이어받고 올해 시점을 덧붙인다 | `excel_attach._write_trend` |
 | HLF-QC-126-06 은 **표선 추가 + 제조번호 가운데 맞춤** | 서식 파일에서 셀 서식 번호를 읽어 쓴다 | `stability_xlsx.style_at` |
-| **작성본은 제품 해당 폴더에 저장** | 워드·엑셀 모두 제품 폴더에 쓴다 | `server._handle_report`, `engine/writer.py` |
+| **작성본은 제품 폴더 아래 별도 폴더('PQR 작성본')에 저장** | 워드·엑셀을 그 폴더에 만들고, 그 폴더는 다시 자료로 읽지 않는다 | `engine/collect.OUTPUT_DIR`, `server._made_dir`, `build.find_final_report` |
 
 ## 5. 대시보드
 

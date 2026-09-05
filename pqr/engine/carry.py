@@ -92,6 +92,24 @@ def _wanted(headers):
     return {k: h for k, h in enumerate(headers) if any(w in h for w in SAME_EVERY_YEAR)}
 
 
+# 왼쪽에 항목 이름이 오고 오른쪽이 그 값인 표 — 3항 '대상 제품' 이 그렇다.
+LABEL_KEY = "점검항목"
+ROW_NUMBER = ("No.", "연번", "번호")
+
+
+def _label_columns(headers):
+    """줄 이름이 곧 항목인 표의 값 열 — 항목 열과 연번 열만 뺀다.
+
+    3항 대상 제품(제형·제품분류·제품명·허가번호·허가일자·사용기한·보관조건 …)은
+    해마다 바뀌지 않고, 허가증 PDF 에 글자 정보가 없으면 읽을 데가 전년도 결재본뿐이다
+    (담당자 2026-09: "3항 대상 제품 정보는 전년도 pqr 에서 정보를 가져와").
+    """
+    if not any(LABEL_KEY in h for h in headers):
+        return {}
+    return {k: h for k, h in enumerate(headers)
+            if h and LABEL_KEY not in h and not any(w in h for w in ROW_NUMBER)}
+
+
 def carry(document, old_document, log=None):
     """빈 칸에 전년도 값을 넣는다. 넣은 칸 수를 돌려준다."""
     new_by, old_by = _tables_by_section(document), _tables_by_section(old_document)
@@ -105,7 +123,7 @@ def carry(document, old_document, log=None):
                 break
             old = olds[i]
             head, old_head = _headers(table), _headers(old)
-            want = _wanted(head)
+            want = _wanted(head) or _label_columns(head)
             if not want:
                 continue
             if [h for h in head if h] != [h for h in old_head if h]:
@@ -192,6 +210,22 @@ def _grid_text(table):
     return out
 
 
+def section_grids(old_document, *sections):
+    """전년도 결재본의 항 표를 글자 그대로 읽는다 — {항: [[칸 글자]]}.
+
+    서식이 개정되며 항 번호가 밀리므로(13.2 → 13.3), 앞에 적은 항부터 찾아 하나만 담는다.
+    """
+    by = _tables_by_section(old_document)
+    out = {}
+    for section in sections:
+        for name in ([section] if isinstance(section, str) else section):
+            got = by.get(name)
+            if got:
+                out[section if isinstance(section, str) else section[0]] = _grid_text(got[0])
+                break
+    return out
+
+
 def stability_tables(old_document):
     """전년도 결재본의 13항 표를 글자 그대로 읽는다 — {"13.1": [[…]], "13.3": [[…]]}.
 
@@ -200,14 +234,4 @@ def stability_tables(old_document):
     올해 시험일지를 읽지 못했을 때, 13항을 빈칸으로 두는 대신 여기서 읽은 전년도
     내용을 옮겨 놓고 '갱신 필요' 로 알린다. 서식은 해가 바뀌며 13.2 가 13.3 이 되었다.
     """
-    by = _tables_by_section(old_document)
-    out = {}
-    first = (by.get("13.1") or [None])[0]
-    if first is not None:
-        out["13.1"] = _grid_text(first)
-    for section in ("13.3", "13.2"):
-        got = by.get(section)
-        if got:
-            out["13.3"] = _grid_text(got[0])
-            break
-    return out
+    return section_grids(old_document, "13.1", ("13.3", "13.2"))

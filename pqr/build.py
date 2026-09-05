@@ -607,8 +607,16 @@ def find_final_report(folder, matcher=None, include_drafts=False):
         return None
     drafts = _auto_drafts(folder)
     authored, generated = [], []
-    for name in sorted(os.listdir(folder)):
-        path = os.path.join(folder, name)
+    # 만든 보고서는 제품 폴더 아래 'PQR 작성본' 에 둔다. 예전에 폴더 바로 아래 만든 것도
+    # 있으므로 두 곳을 함께 본다.
+    places = [folder]
+    made = os.path.join(folder, OUTPUT_DIR)
+    if os.path.isdir(made):
+        places.append(made)
+        drafts.update(_auto_drafts(made))
+    for place in places:
+      for name in sorted(os.listdir(place)):
+        path = os.path.join(place, name)
         if not os.path.isfile(path) or name.startswith("~$") or name.startswith("."):
             continue
         if not name.lower().endswith(FINAL_SUFFIXES):
@@ -625,6 +633,8 @@ def find_final_report(folder, matcher=None, include_drafts=False):
     return max(candidates, key=os.path.getmtime)
 
 
+from .engine.collect import OUTPUT_DIR
+
 SIDE_FILES = (AUTO_DRAFT_MARKER, "PQR 문의 목록", "PQR 작성 기록")
 
 
@@ -639,6 +649,8 @@ def has_source_files(folder, matcher=None):
         return False
     for name in os.listdir(folder):
         if not os.path.isfile(os.path.join(folder, name)):
+            if name == OUTPUT_DIR:
+                continue                      # 우리가 만든 보고서를 넣는 곳
             return True                       # 항 번호를 단 자료 폴더
         if name.startswith(("~$", ".", "_읽어보기")):
             continue

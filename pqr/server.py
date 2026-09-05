@@ -159,6 +159,13 @@ def _vision_hook():
         return None
 
 
+def _made_dir(folder):
+    """만든 보고서를 두는 폴더 (없으면 만든다) — 근거 자료와 섞이지 않게 한다."""
+    path = os.path.join(folder, build_module.OUTPUT_DIR)
+    os.makedirs(path, exist_ok=True)
+    return path
+
+
 ISSUE_LIST_NAME = "PQR 문의 목록 - %s.txt"
 
 
@@ -932,8 +939,10 @@ class Handler(BaseHTTPRequestHandler):
                 if value.isdigit():
                     year = int(value)
                     break
+            # 만든 보고서와 첨부 엑셀은 제품 폴더 아래 'PQR 작성본' 에 둔다 — 근거 자료와
+            # 섞이지 않게(담당자 2026-09). 첨부는 보고서와 같은 자리에 만들어진다.
             target = os.path.join(
-                folder, docx_report.report_filename(product, self.workspace.data.get("period")))
+                _made_dir(folder), docx_report.report_filename(product, self.workspace.data.get("period")))
             # 1) 자동 완성 엔진 — 결재본을 열어 올린 자료 값으로 채우고 회사 조판 규칙을 적용합니다.
             steps = []
             try:
@@ -998,13 +1007,13 @@ class Handler(BaseHTTPRequestHandler):
                                     "log": (engine_result.get("log") or [])}
                         write_issue_list(folder, product, issues)
                     else:                          # 그제야 자료 상태 요약본
-                        final = docx_report.write_docx(self.workspace.data, code, folder,
+                        final = docx_report.write_docx(self.workspace.data, code, _made_dir(folder),
                                                        config=self.workspace.config)
                         based_on = {"engine": False, "engine_error": engine_error,
                                     "previous": os.path.basename(previous) if previous else None}
                         issues = list(issues) + [("보고서", os.path.basename(previous or ""), engine_error)]
         else:
-            final = docx_report.write_docx(self.workspace.data, code, folder,
+            final = docx_report.write_docx(self.workspace.data, code, _made_dir(folder),
                                            config=self.workspace.config)
         # 만든 파일이 Word 에서 열리는지 확인합니다 — 깨진 파일을 '완성본' 으로 내놓지 않습니다.
         from .engine import verify as verify_module
@@ -1015,7 +1024,7 @@ class Handler(BaseHTTPRequestHandler):
                 os.remove(final)
             except OSError:
                 pass
-            final = docx_report.write_docx(self.workspace.data, code, folder,
+            final = docx_report.write_docx(self.workspace.data, code, _made_dir(folder),
                                            config=self.workspace.config)
             based_on = dict(based_on or {}, engine=False, broken=reason)
             issues = list(issues) + [("보고서", "", "만든 보고서가 Word 에서 열리지 않아 요약본으로 대신했습니다 — %s" % reason)]
@@ -1024,14 +1033,15 @@ class Handler(BaseHTTPRequestHandler):
         if issues:
             write_issue_list(folder, product, issues)
         self.workspace.rebuild()
-        # '어디 있지?' 를 없앱니다 — 제출용 보고서가 있는 제품 폴더를 바로 열어 줍니다.
-        opened = open_in_file_manager(folder)
+        # '어디 있지?' 를 없앱니다 — 만든 보고서가 있는 폴더를 바로 열어 줍니다.
+        opened = open_in_file_manager(os.path.dirname(os.path.abspath(final)))
         # 만든 첨부 엑셀(안정성 경향 분석 · Cpk 계산)을 화면에 알려 준다 — 담당자가 무엇이
         # 나왔는지 바로 보게(담당자 2026-09: "워드 보고서와 안정성 경향표 엑셀 2개가 작성").
         made = [name for name, _ in ((engine_result or {}).get("attachments") or [])]
         return {"ok": True, "files": [os.path.abspath(p) for p in written],
                 "final": os.path.abspath(final), "final_name": os.path.basename(final),
                 "based_on": based_on, "issues": issues, "made": made,
+                "made_dir": os.path.dirname(os.path.abspath(final)),
                 "engine": bool(engine_result),
                 "folder": os.path.abspath(folder),
                 "out_dir": os.path.abspath(out_dir), "opened": opened,

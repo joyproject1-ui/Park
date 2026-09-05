@@ -100,9 +100,10 @@ def find_form(folder, depth=2):
     if not folder or not os.path.isdir(folder):
         return None
     places = [folder]
+    from .collect import is_output_dir
     for name in sorted(os.listdir(folder)):
         sub = os.path.join(folder, name)
-        if os.path.isdir(sub) and not name.startswith("."):
+        if os.path.isdir(sub) and not name.startswith(".") and not is_output_dir(name):
             places.append(sub)
             if depth > 1:
                 places.extend(os.path.join(sub, n) for n in sorted(os.listdir(sub))

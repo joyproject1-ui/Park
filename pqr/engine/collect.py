@@ -44,6 +44,7 @@ class ProductData(object):
         self.pv_reasons = {}        # {제조번호: 밸리데이션 실시 사유} — 전년도 결재본 10.1 에서
         self.prev_stability = {}    # 전년도 결재본의 13.1 · 13.3 표 (올해 시험일지를 못 읽었을 때)
         self.previous_name = ""     # 참고한 전년도 결재본 파일 이름
+        self.prev_sections = {}     # 전년도 결재본의 항별 표 (10.1 등)
         self.folder = ""            # 이 자료를 읽은 제품 폴더
         self.previous_report = None
         self.files = {}           # item -> [paths]
@@ -74,8 +75,18 @@ def _item_of(name):
     return m.group(1) if m else None
 
 
+# 만든 보고서를 넣는 폴더 — 자료가 아니므로 읽을 때는 지나친다.
+# (담당자 2026-09: "작성 완료본은 해당 폴더에 별도의 폴더를 만들어서 파일을 생성해줘")
+OUTPUT_DIR = "PQR 작성본"
+
+
+def is_output_dir(name):
+    return os.path.basename(str(name).rstrip("/\\")) == OUTPUT_DIR
+
+
 def _walk(folder):
-    for root, _, files in os.walk(folder):
+    for root, dirs, files in os.walk(folder):
+        dirs[:] = [d for d in dirs if not is_output_dir(d)]
         for name in files:
             if name.startswith("~$") or name.startswith("."):
                 continue
@@ -137,8 +148,8 @@ def discover(folder, workdir=None, depth=3):
 
     def scan(root, left):
         for name in sorted(os.listdir(root)):
-            if name.startswith("~$") or name.startswith("."):
-                continue
+            if name.startswith("~$") or name.startswith(".") or is_output_dir(name):
+                continue                          # 우리가 만든 보고서는 자료가 아니다
             path = os.path.join(root, name)
             item = _item_of(name)
             if os.path.isdir(path):

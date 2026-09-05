@@ -1213,6 +1213,16 @@ def fill(document, data, product, period, today=None, log=None):
     pv_n = 0
     for tb in t101:
         pv_n += fill_pv(tb)
+    if not pv_n:
+        # PV 마스터에서 평가 연도 보고서를 찾지 못하면 전년도 결재본의 10.1 을 옮긴다 —
+        # 빈칸으로 두지 않는다(담당자 2026-09: "10.1 … 전년도 PQR 내용도 참고하고").
+        옛 = (getattr(data, "prev_sections", None) or {}).get("10.1") or []
+        for tb in t101:
+            pv_n += _carry_rows(tb, 옛, getattr(data, "previous_name", ""))
+        if pv_n:
+            issues.append(("10.1", getattr(data, "previous_name", ""),
+                           "평가 연도의 PV 를 마스터파일에서 찾지 못해 전년도 결재본의 10.1 을 "
+                           "옮겼습니다 — 최신 PV 마스터파일로 확인하세요"))
     log("10.1 PV 행: %d" % pv_n)
 
     본문 = _text(document.element.body)          # 보고서에 실제로 실린 설비만 문의 목록에 올린다
@@ -1727,6 +1737,48 @@ def _fill_stability(document, stab, log, assay_limits=None):
             fill_trend(t133[1], stab.get("trend_exp", []), stab.get("trend_exp_lots", ""), stab.get("trend_exp_comment", ""))
     log("13항: 안정성 %d/%d/%d 표" % (len(t131), len(t132), len(t133)))
 
+
+
+def _carry_rows(table, grid, source, first_col_number=True):
+    """전년도 표의 자료 줄을 열 이름이 같은 칸만 골라 옮긴다.
+
+    서식이 개정되며 열이 하나 늘거나 이름이 바뀌므로, 자리로 옮기면 값이 밀린다.
+    옮긴 줄 수를 돌려준다.
+    """
+    if len(grid) < 2 or not table.rows:
+        return 0
+    width = E.grid_width(table)
+    새머리 = {CARRY.squeeze(E.cell_text(c)): i
+              for i, c in E.grid_cells(table.rows[0], width).items() if E.cell_text(c).strip()}
+    옛머리 = {CARRY.squeeze(t): j for j, t in enumerate(grid[0]) if t.strip()}
+    같은열 = {i: 옛머리[name] for name, i in 새머리.items() if name in 옛머리}
+    if not 같은열:
+        return 0
+    줄 = [row for row in grid[1:]
+          if not CARRY.squeeze(row[0] if row else "").startswith("특이사항")
+          and any((row[j] or "").strip() for j in 같은열.values())]
+    if not 줄:
+        return 0
+    끝 = len(table.rows) - 1
+    if CARRY.squeeze(E.cell_text(E.raw_cells(table.rows[-1])[0])).startswith("특이사항"):
+        끝 -= 1
+    f, l = E.fit_rows(table, 1, 끝, len(줄))
+    for k, row in enumerate(줄):
+        cells = E.grid_cells(table.rows[f + k], width)
+        for i, cell in cells.items():
+            j = 같은열.get(i)
+            글 = (row[j] if j is not None else "") or ""
+            if j is None and i == 0 and first_col_number:
+                글 = str(k + 1)               # 연번은 새로 매긴다
+            elif j is None:
+                continue
+            E.set_vmerge(cell, False)
+            if "\n" in 글:
+                E.set_cell_plain(cell, *글.split("\n"))
+            else:
+                E.set_cell(cell, 글.strip())
+            E.clear_diag(cell)
+    return len(줄)
 
 
 def _carry_stability(document, prev, why_of, log, issues, source=""):
