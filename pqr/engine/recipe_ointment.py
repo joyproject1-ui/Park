@@ -1300,6 +1300,7 @@ def fill(document, data, product, period, today=None, log=None):
                  for k, v in data.equipment.items()}
     sp_lookup = {}
     빠진것 = {}                                  # 다른 라인·다른 방 공사라 빼 둔 적격성평가
+    대신넣음 = {}                                # 뺄 것뿐이라 그대로 넣은 적격성평가
     for k, v in data.support.items():
         pq = [(d.split(" (")[0].strip(), dt.split("/")[0].strip()) for d, dt in v.get("PQ", []) if d and dt]
         if not pq:
@@ -1326,9 +1327,17 @@ def fill(document, data, product, period, today=None, log=None):
             keep = [(d.split(" (")[0].strip(), dt.split("/")[0].strip())
                     for (d, dt), w in zip(got, why)
                     if d and dt and masters_mod.applies(w, LINE)]
-            for (d, dt), w in zip(got, why):
-                if d and dt and not masters_mod.applies(w, LINE):
-                    빠진것.setdefault(k, []).append(d)
+            excluded = [(d.split(" (")[0].strip(), dt.split("/")[0].strip())
+                        for (d, dt), w in zip(got, why)
+                        if d and dt and not masters_mod.applies(w, LINE)]
+            if not keep and excluded:
+                # 이 설비의 IQ·OQ 가 '다른 라인·다른 방 공사' 문서뿐이면(주사용수 분배시스템 IQ15/OQ15,
+                # 질소 분배라인 IOQ23 …) 빈칸에 사선을 긋지 않고 그 문서를 넣되 확인을 남긴다
+                # (담당자 2026-09-06: "보고서도 IQ, OQ 가 작성되지 않고").
+                대신넣음.setdefault(k, []).extend(d for d, _ in excluded)
+                return excluded
+            for d, _ in excluded:
+                빠진것.setdefault(k, []).append(d)
             return keep
 
         sp_lookup[k] = {"PQ": pq, "IQ": 우리것("IQ"), "OQ": 우리것("OQ")}
@@ -1337,6 +1346,11 @@ def fill(document, data, product, period, today=None, log=None):
         if 보이는 and k in 본문:
             issues.append(("10.3~10.5", k, "다른 라인·다른 방 공사라 빼 둠: %s — 확인 필요"
                            % ", ".join(보이는)))
+    for k, docs in 대신넣음.items():
+        보이는 = [d for d in dict.fromkeys(docs)]
+        if 보이는 and k in 본문:
+            issues.append(("10.3~10.5", k, "이 설비의 IQ·OQ 는 다른 라인·다른 방 공사 문서뿐이라 그대로 넣었습니다: %s "
+                                          "— 이 라인에 맞는 문서인지 확인" % ", ".join(보이는)))
     upd = 0
     for prefix in ("10.2",):
         for t in _tables(document, prefix):

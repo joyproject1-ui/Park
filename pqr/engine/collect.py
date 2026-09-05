@@ -414,7 +414,9 @@ def collect(folder, product_name=None, log=None):
                 logs = handwriting.read_folder(scanned, specs or None, log)
                 if logs:
                     try:                                            # 지난 경향표가 있으면 그 값이 우선
-                        from .readers import trend as trend_reader
+                        # (trend_reader 는 파일 맨 위에서 가져온 것 — 여기서 다시 import 하면 함수 전체에서
+                        #  지역 변수가 되어 아래 경향표 읽기가 'cannot access local variable' 로 넘어졌다,
+                        #  담당자 PC 작성 기록 2026-09-06 08:14)
                         sheets = []
                         for tp in got.get("16", []) + got.get("13", []) + got.get("첨부", []):
                             if (tp.lower().endswith(".xlsx") and not os.path.basename(tp).startswith("~$")
