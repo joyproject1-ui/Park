@@ -29,7 +29,14 @@ if not defined PY (
   exit /b 1
 )
 
-rem Install or refresh the libraries the auto-report engine needs (quiet).
-%PY% -m pip install -q -r requirements.txt --disable-pip-version-check >nul 2>&1
+rem Install or refresh the libraries the auto-report engine needs.
+rem Output goes to "설치 기록.txt" so a failed install (e.g. the handwriting reader) can be diagnosed.
+%PY% -m pip install -q -r requirements.txt --disable-pip-version-check > "설치 기록.txt" 2>&1
+if errorlevel 1 (
+  echo.
+  echo   [!] Some libraries failed to install. See "설치 기록.txt" and send it to the maintainer.
+  echo       The report still works; the handwriting reader for item 13 may be off.
+  echo.
+)
 %PY% -m pqr update
 pause

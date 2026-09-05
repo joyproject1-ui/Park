@@ -24,14 +24,25 @@ PERIODS = ["3M", "6M", "9M", "12M", "18M", "24M", "36M", "48M"]   # 초기 다�
 DPI = 200
 
 
+_WHY = ""
+
+
 def available():
+    """판독기를 쓸 수 있는가. 못 쓰면 why() 가 까닭(빠진 패키지·오류)을 돌려준다."""
+    global _WHY
     try:
         import numpy  # noqa: F401
         import pypdfium2  # noqa: F401
         from rapidocr_onnxruntime import RapidOCR  # noqa: F401
+        _WHY = ""
         return True
-    except Exception:
+    except Exception as error:
+        _WHY = "%s: %s" % (type(error).__name__, error)
         return False
+
+
+def why():
+    return _WHY
 
 
 _OCR = None

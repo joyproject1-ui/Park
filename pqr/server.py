@@ -329,8 +329,10 @@ class Workspace(object):
             from .engine import vision, handwriting
             payload["handwriting_reader"] = ("api" if vision.available()
                                             else "offline" if handwriting.available() else False)
-        except Exception:
+            payload["handwriting_why"] = "" if payload["handwriting_reader"] else handwriting.why()
+        except Exception as error:
             payload["handwriting_reader"] = False
+            payload["handwriting_why"] = str(error)
         payload["revision"] = self.revision
         payload["reference"] = {"folder": self.reference_folder(),
                                 "files": self.reference_files()}
