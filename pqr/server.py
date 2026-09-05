@@ -977,6 +977,10 @@ class Handler(BaseHTTPRequestHandler):
                     build_module.mark_auto_draft(folder, target)
                 else:
                     build_module.unmark_auto_draft(folder, target)   # 예전 초안 표시가 남아 있으면 완성본으로 안 보인다
+                    # 지난번 실패 원인 파일이 남아 있으면 지운다 — 성공한 폴더에 실패 파일이 있으면 헷갈린다
+                    stale = os.path.join(_made_dir(folder), FAIL_NOTE_NAME % product.get("code", ""))
+                    if os.path.isfile(stale):
+                        os.remove(stale)
                 based_on = {"previous": os.path.basename(previous) if previous else None,
                             "previous_year": year,
                             "form": os.path.basename(form) if form else None,
@@ -1063,7 +1067,21 @@ class Handler(BaseHTTPRequestHandler):
         # 만든 첨부 엑셀(안정성 경향 분석 · Cpk 계산)을 화면에 알려 준다 — 담당자가 무엇이
         # 나왔는지 바로 보게(담당자 2026-09: "워드 보고서와 안정성 경향표 엑셀 2개가 작성").
         made = [name for name, _ in ((engine_result or {}).get("attachments") or [])]
+        # 작성본 폴더에 지금 무엇이 있는지(이름·시각) — "저장되어 있지 않네"(담당자 2026-09) 를
+        # 화면에서 바로 확인할 수 있게 한다.
+        made_dir = os.path.dirname(os.path.abspath(final))
+        listing = []
+        try:
+            for name in sorted(os.listdir(made_dir)):
+                path = os.path.join(made_dir, name)
+                if os.path.isfile(path) and not name.startswith("."):
+                    listing.append({"name": name,
+                                    "modified": _dt.datetime.fromtimestamp(os.path.getmtime(path))
+                                                .strftime("%Y-%m-%d %H:%M:%S")})
+        except OSError:
+            pass
         return {"ok": True, "files": [os.path.abspath(p) for p in written],
+                "made_listing": listing,
                 "final": os.path.abspath(final), "final_name": os.path.basename(final),
                 "based_on": based_on, "issues": issues, "made": made,
                 "made_dir": os.path.dirname(os.path.abspath(final)),
