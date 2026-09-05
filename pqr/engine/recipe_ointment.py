@@ -1485,6 +1485,13 @@ def fill(document, data, product, period, today=None, log=None):
             E.set_cell_plain(E.raw_cells(tb.rows[-1])[0], "특이사항 (Comment)", "* 안정성 시험일지 판독 필요 — 담당자 확인 후 기재")
         issues.append(("13", "", "안정성 시험(13.1~13.3) 값을 읽지 못해 '확인 필요' 로 두었음 — 시험일지 판독 필요"))
 
+    # 13.2 — 양식은 '* 시판 후 안정성 시험 이력 없음.' 한 줄뿐이라 13.2 항이 비어 보인다
+    # (담당자 2026-09: "13.2항이 없어 — 13.2 시판 후 안정성 이력 없음 이런식으로").
+    p132 = find_para(document, "시판 후 안정성 시험 이력 없음")
+    if p132 is not None and not p132.text.strip().startswith("13.2"):
+        E.set_para_text(p132._p, "13.2 시판 후 안정성 시험 이력 없음.")
+        log("13.2 줄: 항 번호 붙임")
+
     # ---------- 14·15항 ----------
     us_export = "미국" in (name or "")           # 계획서 비고로 갈라진 '(미국 수출용)' 건
     returns = "평가 년도 내 반품 이력 없음." if us_export else "사용기한 경과 외 반품이력 없음"
@@ -1768,8 +1775,8 @@ def _fill_stability26(document, logs, period, spec, log, issues, why_of=None):
                 lo_hi = re.findall(r"\d+(?:\.\d+)?", spec.get(part, ""))
                 ok = len(lo_hi) < 2 or (float(lo_hi[0]) <= min(values[k]) and max(values[k]) <= float(lo_hi[1]))
                 E.set_cell(cells[k], "적합" if ok else "부적합")
-    for ri in bold_rows:                          # 관리 규격은 굵게 (담당자 지시 2026-09)
-        E.bold_row(table, ri)
+    for ri in bold_rows:                          # 관리 규격은 보통 글씨 (담당자 2026-09: "굵게 처리 하지 않음")
+        E.unbold_row(table, ri)
     log("13항: 장기 안정성 실시 %d Lot · 경향 분석 %d Lot × 성분 %d" % (len(rows), len(trend), len(parts)))
 
 
@@ -2019,11 +2026,13 @@ def _carry_133(document, grid, source):
                     E.set_cell(cell, (row[i] or "").strip())
                     E.clear_diag(cell)
         옮김 += len(장기)
-    for row in table.rows:
+    for ri, row in enumerate(table.rows):
         머리 = CARRY.squeeze(E.cell_text(E.raw_cells(row)[0]))
         옛 = 라벨.get(머리)
         if 옛 is None:
             continue
+        if 머리 == "관리규격":
+            E.unbold_row(table, ri)               # 담당자 2026-09: 관리 규격은 굵게 하지 않는다
         cells = E.grid_cells(row, width)
         for name, i in 새성분.items():
             j = 옛성분.get(name)

@@ -916,6 +916,26 @@ def zero_cell_spacing(document, skip=()):
     return n
 
 
+def unbold_row(table, row_index, first_col=1):
+    """그 행 first_col 이후 칸의 글씨를 보통으로. 담당자 2026-09(뒤집힌 지시): "관리 규격 기준 굵게
+    처리 하지 않음" — 앞선 '굵게' 지시를 이것이 대신한다."""
+    if row_index >= len(table.rows):
+        return 0
+    n = 0
+    for k, cell in grid_cells(table.rows[row_index]).items():
+        if k < first_col:
+            continue
+        for run in cell._tc.iter(qn("w:r")):
+            rpr = get_or_add(run, "rPr")
+            for tag in ("b", "bCs"):
+                b = rpr.find(qn("w:" + tag))
+                if b is None:
+                    b = get_or_add(rpr, tag)
+                b.set(qn("w:val"), "0")
+            n += 1
+    return n
+
+
 def bold_row(table, row_index, first_col=1):
     """그 행 first_col 이후 칸의 글씨를 굵게. 굵게 한 런 수를 돌려준다.
 
@@ -1932,10 +1952,12 @@ def tidy_cell_lines(table, headers, align=None, valign="center"):
 
 
 def merge_remark_column(table, header="비고", first_data=1):
-    """비고 열의 자료 줄을 하나로 합치고 사선을 한 번만 긋는다.
+    """비고 열을 2025 결재본처럼: 자료 줄들은 한 묶음에 사선 하나, 최댓값·최솟값·평균 줄은 또
+    한 묶음에 사선 하나. 머리글(비고 제목이 세로로 이어진 줄)은 손대지 않는다.
 
-    담당자 2026-09: "7. 수율현황표 비고의 사선 셀병합". 줄마다 사선을 그으면
-    작은 사선이 여러 개 보인다 — 결재본은 한 칸에 큰 사선 하나다.
+    담당자 2026-09: "7. 수율현황표 비고의 사선 셀병합" → "오른쪽 7항 표의 비고는 왼쪽 25년
+    PQR 표의 비고항과 동일하게". 예전 코드는 머리글 둘째 줄부터 끝까지 한 묶음으로 합쳐
+    사선이 머리글에서 시작했다.
     """
     width = grid_width(table)
     if len(table.rows) <= first_data:
@@ -1945,19 +1967,47 @@ def merge_remark_column(table, header="비고", first_data=1):
     col = next((i for name, i in head.items() if header in name), None)
     if col is None:
         return 0
-    cells = []
-    for row in table.rows[first_data:]:
-        cell = grid_cells(row, width).get(col)
-        if cell is None or cell_text(cell).strip():
-            break                                   # 글이 있는 칸은 합치지 않는다
-        cells.append(cell)
-    if len(cells) < 2:
+    blocks, current, header_cells = [], None, []
+    seen_data = False
+    for row in table.rows:
+        cells = grid_cells(row, width)
+        cell = cells.get(col)
+        first = re.sub(r"\s+", "", cell_text(cells.get(0))) if cells.get(0) is not None else ""
+        kind = ("data" if re.match(r"^\d+$", first)
+                else "stat" if first.startswith(("최댓값", "최솟값", "평균")) else None)
+        if cell is None:
+            current = None
+            continue
+        if kind is None:
+            if not seen_data:
+                header_cells.append(cell)             # 비고 제목이 세로로 이어진 머리글 줄
+            current = None
+            continue
+        seen_data = True
+        if cell_text(cell).strip():
+            current = None                            # 글이 있는 칸은 합치지 않는다
+            continue
+        if current is None or current[0] != kind:
+            current = (kind, [])
+            blocks.append(current)
+        current[1].append(cell)
+    if not blocks:
         return 0
-    for k, cell in enumerate(cells):
+    # 머리글: 첫 칸이 시작, 나머지는 이어짐 (예전 코드가 둘째 줄을 '시작' 으로 바꿔 놓았을 수 있다)
+    for k, cell in enumerate(header_cells):
         clear_diag(cell)
-        set_vmerge(cell, "restart" if k == 0 else "continue")
-    add_diag(cells[0])
-    return len(cells)
+        set_vmerge(cell, "restart" if k == 0 else None)
+    n = 0
+    for kind, cells in blocks:
+        for k, cell in enumerate(cells):
+            clear_diag(cell)
+            if len(cells) == 1:
+                set_vmerge(cell, False)
+            else:
+                set_vmerge(cell, "restart" if k == 0 else None)
+        add_diag(cells[0])
+        n += len(cells)
+    return n
 
 
 def equal_columns(table, names):

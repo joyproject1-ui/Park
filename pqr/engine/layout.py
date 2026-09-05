@@ -253,6 +253,18 @@ def apply(document, log=None, product_title=None, edms=None):
     log("항 제목 줄맞춤: %d" % E.align_section_titles(document))
     log("9.2 소제목 번호 바로잡음: %d" % E.renumber_subheadings(document, "9.2"))
     log("‘확인 필요’ 노랑 표시: %d" % E.highlight(document, "확인 필요"))
+    # 13.3 관리 규격 줄은 어느 경로로 채웠든 보통 글씨 — 담당자 2026-09: "관리 규격 기준 굵게 처리 하지 않음"
+    plain = 0
+    for t in T:
+        head = re.sub(r"\s+", "", _header_text(t))
+        if "시험항목" not in head:
+            continue
+        for ri, row in enumerate(t.rows):
+            if re.sub(r"\s+", "", E.cell_text(E.raw_cells(row)[0])).startswith("관리규격"):
+                plain += E.unbold_row(t, ri)
+    log("13.3 관리 규격 보통 글씨: %d" % plain)
+    # 프로그램이 남긴 안내(전년도 값을 옮겼으니 갱신하라는 줄)도 노랑 — 담당자 2026-09
+    log("옮김 안내 노랑 표시: %d" % E.highlight(document, "옮긴 것입니다"))
     log("행 분할 금지: %d" % E.no_split_rows(document))
     keep = 0
     for ti in _tables_under(document, ("8.2.1", "8.2.2", "13.2")):
