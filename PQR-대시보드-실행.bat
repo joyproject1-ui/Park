@@ -38,7 +38,6 @@ if not defined PY (
 
 rem Install or refresh the libraries the auto-report engine needs.
 rem Output goes to install-log.txt so a failed install (e.g. the handwriting reader) can be diagnosed.
-rem (ASCII only in this file: cmd.exe reads .bat files in the OEM code page and breaks on Korean.)
 %PY% -m pip install -q -r requirements.txt --disable-pip-version-check > install-log.txt 2>&1
 if errorlevel 1 (
   echo.
