@@ -2593,8 +2593,11 @@ function renderSourceNote(){
 function versionNote(){
   const version = SOURCE.program_version;
   if (!version) return "";
+  const reader = SOURCE.handwriting_reader === true
+    ? ` · 손글씨 시험일지 판독: <b>켜짐</b>`
+    : ` · 손글씨 시험일지 판독: <b>꺼짐</b>(API 키 없음 — 13항은 <code>13. 안정성시험일지 판독.json</code> 이 있어야 올해 값)`;
   return `<br><span class="muted">프로그램 버전: ${esc(version)}`
-    + ` · 화면이 바뀌지 않으면 <code>PQR-업데이트.bat</code> 을 실행하세요.</span>`;
+    + ` · 화면이 바뀌지 않으면 <code>PQR-업데이트.bat</code> 을 실행하세요.${reader}</span>`;
 }
 
 function boot(source){

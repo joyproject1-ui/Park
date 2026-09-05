@@ -155,6 +155,13 @@ def report():
         lines.append(_line(None, "Excel COM", "Windows 가 아니라 건너뜁니다"))
     lines.append("")
 
+    lines.append("손글씨 안정성시험일지 판독(13항):")
+    key_on = bool(os.environ.get("ANTHROPIC_API_KEY"))
+    lines.append(_line(key_on, "ANTHROPIC_API_KEY",
+                       "켜짐 — 시험일지 PDF 를 프로그램이 직접 읽습니다" if key_on
+                       else "없음 — '13. 안정성시험일지 판독.json' 이 제품 폴더에 있어야 13항이 올해 값입니다"))
+    lines.append("")
+
     lines.append("판정:")
     if really or (really is None and soffice):
         lines.append("  옛 워드(.doc) 결재본을 바꿀 수 있습니다 — '보고서 작성' 이 결재본 양식으로 만듭니다.")

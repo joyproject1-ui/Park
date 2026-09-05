@@ -324,6 +324,12 @@ class Workspace(object):
                     "trend", "leadtime", "sources", "narrative")}
         payload["issue_count"] = len([i for i in data.get("issues", []) if i["level"] == "error"])
         payload["program_version"] = program_version()
+        # 손글씨 안정성시험일지 판독이 켜져 있는지 — API 키(ANTHROPIC_API_KEY)가 있어야 켜진다
+        try:
+            from .engine import vision
+            payload["handwriting_reader"] = bool(vision.available())
+        except Exception:
+            payload["handwriting_reader"] = False
         payload["revision"] = self.revision
         payload["reference"] = {"folder": self.reference_folder(),
                                 "files": self.reference_files()}
