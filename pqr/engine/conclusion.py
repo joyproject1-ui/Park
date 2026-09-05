@@ -26,8 +26,23 @@ JUDGE = ("Cpk ≥ 1 : 공정능력 충분", "1 > Cpk : 공정능력 부족")
 HEAD_SHADE = "E6E6E6"
 
 
-def texts(full_name, short_name, produced, n_lots, year, write_year, quarter, low_cpk):
-    """결론 문단 목록. low_cpk: [(항목 이름, Cpk)] — 1 미만인 것만.
+def deviation_sentence(closed, open_):
+    """조치가 끝나지 않은 일탈이 있을 때의 문단 (한림 결재본 PQR25 퀴노비드안연고 16.2 문안).
+
+    closed·open_: 문서번호 목록. 진행 중인 것이 없으면 None — 그때는 이 문단을 넣지 않는다.
+    """
+    if not open_:
+        return None
+    total = len(closed) + len(open_)
+    done = ("%d건(%s)은 적절하게 조치 완료됨을 확인하였으며 " % (len(closed), ", ".join(closed))) if closed else ""
+    return ("점검기간 동안 발생한 내수용 제품의 일탈 %d건 중 %s현재 조치 사항 진행 중인 %d건(%s)에 대해서는 "
+            "차년도 제품품질평가에서 조치 사항이 적절하게 완료되었는지 확인하도록 한다."
+            % (total, done, len(open_), ", ".join(open_)))
+
+
+def texts(full_name, short_name, produced, n_lots, year, write_year, quarter, low_cpk, open_deviation=None):
+    """결론 문단 목록. low_cpk: [(항목 이름, Cpk)] — 1 미만인 것만. open_deviation: 진행 중인
+    일탈이 있을 때 deviation_sentence() 가 만든 문단(없으면 None).
 
     full_name 은 머리글의 정식 제품명(성분명까지), short_name 은 계획서 이름 — 16.3 은 짧은
     이름을 쓴다(배포본 예: '큐티스점안액 공정 개선'). produced 가 False 면 생산이력 없음 문구.
@@ -39,8 +54,11 @@ def texts(full_name, short_name, produced, n_lots, year, write_year, quarter, lo
              "만족하며, 기준에 적합한 제품이 일관되게 제조되고 있어 표준제조공정이 적절하다고 판단됨. 이에 따라, "
              "시정 및 예방조치 또는 재밸리데이션 진행 여부 검토 시, 해당되는 사항은 없음을 확인하였음." % full_name)
     if not low_cpk:
-        return [final]                 # 문단이 하나면 번호를 붙이지 않는다 (담당자 확인 2026-09)
-    return [
+        if not open_deviation:
+            return [final]             # 문단이 하나면 번호를 붙이지 않는다 (담당자 확인 2026-09)
+        # 한림 결재본(PQR25 퀴노비드안연고): 16.1 종합 + 16.2 진행 중 일탈
+        return ["16.1 " + final, "16.2 " + open_deviation]
+    out = [
         "16.1 본 제품 품질 평가를 통해 공정능력을 평가한 결과 Cpk 값이 1 미만인 항목이 아래 표와 같이 "
         "검토되어 해당 시험항목에 대한 검토 진행함.",
         "16.2 %d년 생산된 %dLot에 사용된 원료 검토 결과, 모든 항목에서 기준 내 적합한 결과였으며 제품 시험 "
@@ -50,6 +68,9 @@ def texts(full_name, short_name, produced, n_lots, year, write_year, quarter, lo
         % (write_year, quarter, short_name),
         "16.4 " + final,
     ]
+    if open_deviation:
+        out.append("16.5 " + open_deviation)
+    return out
 
 
 def plan_quarter(today):
@@ -167,13 +188,14 @@ class _Shim(object):
         self._tc = tc
 
 
-def apply(document, full_name, short_name, produced, n_lots, year, write_year, quarter, cpk):
+def apply(document, full_name, short_name, produced, n_lots, year, write_year, quarter, cpk,
+          open_deviation=None):
     """16항을 배포본 문안으로 다시 쓴다. 넣은 문단 수를 돌려준다(제목을 못 찾으면 0)."""
     head, tail = _heading_16(document)
     if head is None:
         return 0
     low = low_cpk_items(cpk or {})
-    lines = texts(full_name, short_name, produced, n_lots, year, write_year, quarter, low)
+    lines = texts(full_name, short_name, produced, n_lots, year, write_year, quarter, low, open_deviation)
     template = _template_para(tail, head)
     old_tbl = next((el for el in tail if el.tag == qn("w:tbl")), None)
     new_tbl = _cpk_table(document, old_tbl, low) if low else None

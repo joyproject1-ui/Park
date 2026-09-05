@@ -230,7 +230,12 @@ def apply(document, log=None, product_title=None, edms=None):
         if ti == toc or len(tbl.rows) > 21 or E.table_chars(tbl) > 1200:
             continue
         if E.est_height(tbl) > PAGE_BODY * 0.8:
-            E._keep_next(tbl.rows[0]); continue
+            E._keep_next(tbl.rows[0])
+            # 12 Lot 처럼 표가 한 쪽을 넘으면 요약 5줄(최댓값~Cpk 판정)이 다음 쪽에 홀로 남았다
+            # (2026-09 합성 12 Lot 점검) — 마지막 자료 줄과 함께 넘긴다.
+            if E.cell_text(E.raw_cells(tbl.rows[-1])[0]).strip().startswith("Cpk"):
+                E.keep_tail_together(tbl, 6)
+            continue
         whole += E.keep_table_together(tbl)
     log("표 통째로 유지 행: %d" % whole)
     for ti, tbl in enumerate(T):

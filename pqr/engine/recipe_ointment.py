@@ -1500,9 +1500,14 @@ def fill(document, data, product, period, today=None, log=None):
     # 10 Lot 미만이라 Cpk 를 산출하지 않았다는 말은 당연한 것이라 결론에 적지 않는다(담당자 지시).
     from . import conclusion
     plan_year, plan_q = conclusion.plan_quarter(today)      # 계획서 기한 = 작성일의 다음 분기
+    # 조치가 끝나지 않은 일탈(완료일이 없는 것)이 있으면 16.2 로 다음 해 확인을 남긴다
+    # (한림 결재본 PQR25 퀴노비드안연고 문안; 2026-09 점검).
+    dev_open = [d.get("doc_no") or "" for d in devs if not d.get("completed")]
+    dev_closed = [d.get("doc_no") or "" for d in devs if d.get("completed")]
     written = conclusion.apply(
         document, full_name, name or full_name, produced=bool(dom or exp), n_lots=len(dom),
-        year=year_from, write_year=plan_year, quarter=plan_q, cpk=cpk_dom)
+        year=year_from, write_year=plan_year, quarter=plan_q, cpk=cpk_dom,
+        open_deviation=conclusion.deviation_sentence(dev_closed, dev_open))
     if not written:
         issues.append(("16", "", "'16. 결론' 제목을 찾지 못해 결론을 다시 쓰지 못함 — 확인 필요"))
     log("16항 완료")
@@ -1520,6 +1525,7 @@ def fill(document, data, product, period, today=None, log=None):
     # 17 참고 자료에서 첨부 문서(안정성 결과표·경향 분석 결과)를 18 항으로 옮긴다.
     ref = find_para(document, "17. 참고 자료")
     if ref is not None:
+        _cpk_references(document, ref, qc.cpk_applies(len(dom)), log)
         moved, tail = [], []
         node = ref._p.getnext()
         while node is not None and node.tag == qn("w:p"):
@@ -1555,6 +1561,53 @@ def fill(document, data, product, period, today=None, log=None):
             log("17·18항: 첨부 문서 %d줄을 18항으로 나눔" % len(moved))
 
     return {"issues": issues, "cover_title": (cover.text.strip() if cover is not None else None), "cpk": cpk_dom}
+
+
+CPK_SHEETS = ("- 제품품질평가 경향분석 Sheet(한쪽 규격 용)(HLF-QC-126-08)",
+              "- 제품품질평가 경향분석 Sheet(양쪽 규격 용)(HLF-QC-126-09)")
+
+
+def _cpk_references(document, ref, applies, log):
+    """17 참고 자료의 Cpk 경향분석 Sheet 줄 — 10 Lot 이상이면 있어야 하고, 미만이면 없어야 한다.
+
+    한림 결재본(PQR25 퀴노비드안연고, 18 Lot)은 '별표 17' 줄 다음에 HLF-QC-126-08·-09 두 줄을
+    적었다. 전년도가 10 Lot 미만이던 제품이 올해 넘기면 줄이 없고, 반대면 남는다(2026-09 점검).
+    """
+    lines, node = [], ref._p.getnext()
+    while node is not None and node.tag == qn("w:p"):
+        text = _text(node).strip()
+        if re.match(r"^\s*18\.", text):
+            break
+        if text.startswith("-"):
+            lines.append(node)
+        node = node.getnext()
+    have = [n for n in lines if "HLF-QC-126-08" in _text(n) or "HLF-QC-126-09" in _text(n)]
+    if not applies:
+        for n in have:
+            n.getparent().remove(n)
+        if have:
+            log("17항: 10 Lot 미만이라 Cpk 경향분석 Sheet 참고 %d줄 뺌" % len(have))
+        return
+    if len(have) >= 2 or not lines:
+        return
+    # '별표 17' 줄 뒤(없으면 첨부 문서 줄 앞·마지막 참고 줄 뒤)에 넣는다
+    anchor = next((n for n in lines if "별표" in _text(n)), None)
+    if anchor is None:
+        plain = [n for n in lines if "HLF-QC-104" not in _text(n) and "HLF-QC-126-06" not in _text(n)]
+        anchor = (plain or lines)[-1]
+    present = "".join(_text(n) for n in have)
+    added = 0
+    for text in CPK_SHEETS:
+        code = text[text.rindex("(") + 1:-1]
+        if code in present:
+            continue
+        new = copy.deepcopy(anchor)
+        E.set_para_text(new, text)
+        anchor.addnext(new)
+        anchor = new
+        added += 1
+    if added:
+        log("17항: Cpk 경향분석 Sheet 참고 %d줄 넣음" % added)
 
 
 def _fill_numbers(t, f, l, lots, n, cpk, rec, put, is_dom, limits=None):
