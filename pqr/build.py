@@ -684,6 +684,63 @@ def collect_final_reports(input_dir, items):
     return result
 
 
+def product_folders(input_dir):
+    """입력 폴더의 제품 폴더 이름 {제품코드: 폴더 이름}."""
+    result = {}
+    if not input_dir or not os.path.isdir(input_dir):
+        return result
+    for folder in sorted(os.listdir(input_dir)):
+        if not os.path.isdir(os.path.join(input_dir, folder)) or folder.startswith("."):
+            continue
+        code = _folder_product_code(folder)
+        if code and code not in result:
+            result[code] = folder
+    return result
+
+
+# 완성본과 함께 보는 첨부 엑셀(안정성 경향분석 Sheet 등)을 이름으로 알아보는 실마리
+ATTACHMENT_HINTS = ("HLF-QC-126", "경향", "Sheet", "안정성")
+
+
+def final_attachment_files(folder, matcher=None):
+    """완성본 옆의 첨부 엑셀 경로 목록 — 'PQR 작성본' 폴더를 먼저, 그다음 제품 폴더를 봅니다.
+
+    담당자 2026-09: "현재 작성본에는 안정성 경향 엑셀파일도 첨부되어 있어야지" — 재작성 창과
+    '완성본 열기' 가 워드와 함께 이 목록을 보여 주고 엽니다.
+    """
+    matcher = matcher or (lambda name: None)
+    rows = []
+    for place in (os.path.join(folder, OUTPUT_DIR), folder):
+        if not os.path.isdir(place):
+            continue
+        for name in sorted(os.listdir(place)):
+            path = os.path.join(place, name)
+            if not os.path.isfile(path) or name.startswith("~$") or name.startswith("."):
+                continue
+            if not name.lower().endswith((".xlsx", ".xlsm", ".xls")):
+                continue
+            if matcher(name):                 # 항 번호로 시작하면 근거 자료입니다
+                continue
+            if not any(hint in name for hint in ATTACHMENT_HINTS):
+                continue
+            rows.append(path)
+    return rows
+
+
+def final_report_time(folder, matcher=None):
+    """완성본이 언제 만들어졌는지 — '프로그램 버전' 과 같은 꼴(YYYY-MM-DD HH:MM)로 돌려줍니다.
+
+    담당자 2026-09: 업데이트 뒤 '완성본 열기' 를 눌렀는데 옛 프로그램이 만든 파일이 열려
+    "지시한 것이 하나도 반영 안 됐다" 고 했습니다. 작성본이 프로그램보다 오래됐으면 화면이
+    '재작성 필요' 라고 알려 줍니다.
+    """
+    found = find_final_report(folder, matcher)
+    if not found:
+        return ""
+    import datetime
+    return datetime.datetime.fromtimestamp(os.path.getmtime(found)).strftime("%Y-%m-%d %H:%M")
+
+
 def _checks(context, config, meta=None):
     """평가항목별 자료 상태를 config 의 item_rules 로 판정합니다.
 
@@ -1049,6 +1106,7 @@ def build(input_dir=None, files=None, today=None, config=None, period=None):
     # 항 번호가 붙은 파일·폴더 — 표로 못 읽는 자료도 수집 현황에는 보여야 합니다.
     item_files_by_product = collect_item_files(input_dir, config["items"]) if input_dir else {}
     final_reports = collect_final_reports(input_dir, config["items"]) if input_dir else {}
+    folder_for_code = product_folders(input_dir) if input_dir else {}
     matcher = item_matcher(config["items"])
     presence["unknown"] = [path for path in presence["unknown"]
                            if not matcher(os.path.basename(path))]
@@ -1206,6 +1264,12 @@ def build(input_dir=None, files=None, today=None, config=None, period=None):
             # 더 이상 폴더의 자료로 뒷받침되지 않으므로 다시 작성해야 합니다
             # (담당자 2026-09: "자료가 없으면 보고서 완료 버튼이 보고서 작성 버튼으로").
             "final_report": final_reports.get(code, ""),
+            "final_report_time": (final_report_time(os.path.join(input_dir, folder_for_code[code]))
+                                  if final_reports.get(code) and folder_for_code.get(code) else ""),
+            # 완성본 옆의 첨부 엑셀(안정성 경향분석) 이름 — 재작성 창이 워드와 함께 보여 줍니다.
+            "final_attachments": ([os.path.basename(path) for path in final_attachment_files(
+                                       os.path.join(input_dir, folder_for_code[code]), item_matcher(config["items"]))]
+                                  if final_reports.get(code) and folder_for_code.get(code) else []),
             # 3항(대상 제품)에 그대로 들어가는 허가 정보 — 제출용 보고서가 씁니다.
             "license": {name: meta.get(name, "") for name in
                         ("product_class", "license_no", "license_date",

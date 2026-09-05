@@ -47,3 +47,29 @@ class 보고서완료_재작성창(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class 옛_작성본_경고(unittest.TestCase):
+    """담당자 2026-09: 업데이트 뒤 '완성본 열기' 를 눌렀는데 옛 프로그램이 만든 파일이 열려
+    "지시한 것이 하나도 반영 안 됐다". 작성본이 프로그램보다 오래되면 '재작성 필요' 로 보인다."""
+    @classmethod
+    def setUpClass(cls):
+        with io.open(INDEX, encoding="utf-8") as handle:
+            cls.html = handle.read()
+
+    def test_작성_시각과_프로그램_버전을_견준다(self):
+        self.assertIn("function staleReport(d)", self.html)
+        self.assertIn("made < version", self.html)
+
+    def test_오래된_작성본은_단추와_창에서_경고한다(self):
+        self.assertIn('id="rd-stale"', self.html)
+        self.assertIn("재작성 필요 ⚠", self.html)
+        self.assertIn("옛 프로그램이 만든 작성본입니다", self.html)
+
+    def test_완성본_열기는_폴더와_엑셀도_연다고_알린다(self):
+        self.assertIn("작성본 폴더", self.html)
+        self.assertIn("payload.folder_opened", self.html)
+
+    def test_재작성_창에_첨부_엑셀도_보인다(self):
+        self.assertIn("product.final_attachments", self.html)
+        self.assertIn("첨부 엑셀: <code>", self.html)

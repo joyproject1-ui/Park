@@ -527,6 +527,40 @@ class FinalAttachmentTest(ItemUploadTest):
         self.assertEqual(result["name"], final_name)
         self.assertIn(sheet_name, [row["name"] for row in result["attachments"]])
 
+    def test_final_opens_word_excel_and_folder_together(self):
+        """담당자 2026-09: "워드만 열리는데 해당 엑셀파일과 해당 폴더도 같이 열리게"."""
+        folder, final_name, sheet_name = self.prepare()
+        import pqr.server as server_module
+        opened = []
+        original = server_module.open_in_file_manager
+        server_module.open_in_file_manager = lambda path: (opened.append(path) or True)
+        try:
+            result = self.call("/api/final", {"product": "HP-110"})
+        finally:
+            server_module.open_in_file_manager = original
+        self.assertTrue(result["ok"], result.get("error"))
+        names = [os.path.basename(path) for path in opened]
+        self.assertEqual(names[0], final_name)                  # 워드가 먼저
+        self.assertIn(sheet_name, names)                        # 첨부 엑셀
+        self.assertIn(os.path.abspath(folder), [os.path.abspath(p) for p in opened])  # 폴더
+        self.assertTrue(result["folder_opened"])
+        self.assertEqual(result["opened_files"][0], final_name)
+        self.assertNotIn("path", result["attachments"][0])      # 화면에는 이름만
+
+    def test_final_attachments_include_the_made_folder(self):
+        """프로그램이 만든 첨부 엑셀은 'PQR 작성본' 폴더에 있다 — 거기도 본다."""
+        folder, _, _ = self.prepare()
+        from pqr import build as build_module
+        made = os.path.join(folder, build_module.OUTPUT_DIR)
+        os.makedirs(made, exist_ok=True)
+        name = "HLF-QC-126-06 안정성 시험 경향 분석 결과 - 히알루론점안액.xlsx"
+        with open(os.path.join(made, name), "wb") as handle:
+            handle.write(b"excel")
+        result = self.call("/api/final", {"product": "HP-110"})
+        self.assertIn(name, [row["name"] for row in result["attachments"]])
+        good = self.call("/api/file-open", {"product": "HP-110", "name": name})
+        self.assertTrue(good["ok"], good.get("error"))
+
     def test_attachment_can_be_opened_but_not_outside_the_folder(self):
         _, _, sheet_name = self.prepare()
         good = self.call("/api/file-open", {"product": "HP-110", "name": sheet_name})

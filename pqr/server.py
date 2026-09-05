@@ -470,25 +470,16 @@ class Workspace(object):
                 "folder": os.path.abspath(folder),
                 "name": os.path.basename(target)}
 
-    ATTACHMENT_HINTS = ("HLF-QC-126", "경향", "Sheet", "안정성")
+    ATTACHMENT_HINTS = build_module.ATTACHMENT_HINTS
 
     def final_attachments(self, code):
-        """완성본과 함께 보는 첨부 엑셀 목록 (경향분석 Sheet 등)."""
+        """완성본과 함께 보는 첨부 엑셀 목록 (경향분석 Sheet 등) — 작성본 폴더와 제품 폴더."""
         folder = self.product_folder(code)
         matcher = build_module.item_matcher(self.data["items"])
         rows = []
-        for name in sorted(os.listdir(folder)):
-            path = os.path.join(folder, name)
-            if not os.path.isfile(path) or name.startswith("~$") or name.startswith("."):
-                continue
-            if not name.lower().endswith((".xlsx", ".xlsm", ".xls")):
-                continue
-            if matcher(name):                 # 항 번호로 시작하면 근거 자료입니다
-                continue
-            if not any(hint in name for hint in self.ATTACHMENT_HINTS):
-                continue
+        for path in build_module.final_attachment_files(folder, matcher):
             stat = os.stat(path)
-            rows.append({"name": name, "size": stat.st_size,
+            rows.append({"name": os.path.basename(path), "size": stat.st_size, "path": path,
                          "modified": _dt.datetime.fromtimestamp(stat.st_mtime)
                                      .strftime("%Y-%m-%d %H:%M")})
         return rows
@@ -498,10 +489,12 @@ class Workspace(object):
         base = os.path.basename(name or "")
         if not base or base != name or _UNSAFE.search(base):
             raise UploadError("파일 이름이 올바르지 않습니다.")
-        path = os.path.join(self.product_folder(code), base)
-        if not os.path.isfile(path):
-            raise UploadError("파일을 찾지 못했습니다: %s" % base)
-        return path
+        folder = self.product_folder(code)
+        for place in (folder, os.path.join(folder, build_module.OUTPUT_DIR)):
+            path = os.path.join(place, base)
+            if os.path.isfile(path):
+                return path
+        raise UploadError("파일을 찾지 못했습니다: %s" % base)
 
     def bundle_product(self, code):
         """제품 폴더의 자료를 zip 하나로 묶습니다.
@@ -1066,12 +1059,22 @@ class Handler(BaseHTTPRequestHandler):
         if not target:
             return {"ok": False, "error": "완성본 파일이 없습니다. 파일 이름에 '완성본' 또는 "
                     "'제출' 이 들어간 문서(.docx 등)를 제품 폴더에 넣으세요."}
+        # 담당자 2026-09: "워드만 열리는데 해당 엑셀파일과 해당 폴더도 같이 열리게" —
+        # 워드, 첨부 엑셀(경향분석), 작성본이 든 폴더를 차례로 엽니다.
+        attachments = self.workspace.final_attachments(code)
+        made_dir = os.path.dirname(os.path.abspath(target))
         opened = open_in_file_manager(target)
+        opened_files = [os.path.basename(target)] if opened else []
+        for row in attachments:
+            if open_in_file_manager(row["path"]):
+                opened_files.append(row["name"])
+        folder_opened = open_in_file_manager(made_dir)
         return {"ok": True, "path": os.path.abspath(target),
                 "name": os.path.basename(target), "opened": opened,
-                "folder": os.path.abspath(folder),
-                # 워드만 열면 경향분석 Sheet 를 다시 찾아야 합니다 — 같이 알려 줍니다.
-                "attachments": self.workspace.final_attachments(code),
+                "folder": made_dir, "folder_opened": folder_opened,
+                "opened_files": opened_files,
+                "attachments": [{key: value for key, value in row.items() if key != "path"}
+                                for row in attachments],
                 "hint": "" if opened else "파일을 자동으로 열지 못했습니다. 위 경로를 파일 탐색기에 붙여넣으세요."}
 
     def _handle_item_files(self):

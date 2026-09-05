@@ -326,6 +326,35 @@ class FinalReportTest(unittest.TestCase):
         self.assertEqual(os.path.basename(build_module.find_final_report(
             self.folder, include_drafts=True)), os.path.basename(path))
 
+    def test_final_report_time_is_recorded(self):
+        """담당자 2026-09: 옛 프로그램이 만든 작성본을 열어 보고 "반영이 안 됐다" — 언제 만든
+        것인지 데이터에 남겨 화면이 '재작성 필요' 를 알릴 수 있게 합니다."""
+        import time
+        self.assertEqual(self.product()["final_report_time"], "")
+        name = "[HP-110] 히알루론점안액 2025년 제품품질평가 (제출용).docx"
+        with open(os.path.join(self.folder, name), "wb") as handle:
+            handle.write(b"final")
+        stamp = time.mktime((2026, 9, 1, 9, 30, 0, 0, 0, -1))
+        os.utime(os.path.join(self.folder, name), (stamp, stamp))
+        product = self.product()
+        self.assertEqual(product["final_report"], name)
+        self.assertEqual(product["final_report_time"], "2026-09-01 09:30")
+
+    def test_final_attachments_are_listed_with_the_report(self):
+        """담당자 2026-09: "현재 작성본에는 안정성 경향 엑셀파일도 첨부되어 있어야지"."""
+        name = "[HP-110] 히알루론점안액 2025년 제품품질평가 (제출용).docx"
+        made = os.path.join(self.folder, build_module.OUTPUT_DIR)
+        os.makedirs(made)
+        with open(os.path.join(made, name), "wb") as handle:
+            handle.write(b"final")
+        sheet = "HLF-QC-126-06 안정성 시험 경향 분석 결과 - 히알루론점안액.xlsx"
+        with open(os.path.join(made, sheet), "wb") as handle:
+            handle.write(b"excel")
+        with open(os.path.join(self.folder, "13. 안정성 시험 결과.xlsx"), "wb") as handle:
+            handle.write(b"data")                            # 항 번호로 시작하면 근거 자료
+        product = self.product()
+        self.assertEqual(product["final_attachments"], [sheet])
+
     def test_final_docx_is_not_read_as_a_table(self):
         """제출용 보고서가 제품 폴더에 있어도 대장으로 적재되면 안 됩니다."""
         from pqr import docx_report

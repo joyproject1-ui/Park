@@ -244,6 +244,9 @@ td.wrap{white-space:normal;min-width:220px}
 .bulk-btn[disabled]{opacity:.55;cursor:default}
 .final-btn{margin-top:5px;color:var(--accent);border-color:var(--accent);font-weight:700}
 .final-btn[disabled]{opacity:.55;cursor:default}
+.final-btn.stale{background:#b45309;border-color:#b45309;color:#fff}
+.final-btn.stale:hover{background:#92400e;color:#fff}
+.up-note.warn{background:#fff7ed;border:1px solid #fdba74;color:#7c2d12;padding:10px 12px;border-radius:10px}
 
 /* chips */
 .tag{display:inline-flex;align-items:center;gap:5px;font-size:11.5px;font-weight:600;padding:3px 9px;border-radius:999px;border:1px solid transparent;white-space:nowrap}
@@ -963,6 +966,9 @@ tbody tr:hover{background:var(--accent-soft)}
       <b>재작성</b>을 누르면 제품 폴더의 자료로 워드·첨부 엑셀을 <b>다시 만들어 덮어씁니다</b>
       (전년도 결재본과 최신 자료를 다시 읽습니다). 이전 작성본을 남기려면 먼저 다른 이름으로 복사해 두세요.</div>
     <div class="up-path" id="rd-file"></div>
+    <div class="up-note warn" id="rd-stale" hidden>⚠ 이 작성본은 <b>프로그램이 새로워지기 전</b>에 만들어졌습니다 — 그 뒤에 지시하신
+      작성 방법(줄간격·들여쓰기·셀병합·전년도 이어받기 등)이 들어 있지 않습니다.
+      <b>보고서 재작성</b>을 누르면 지금 프로그램의 규칙으로 다시 만듭니다.</div>
   </div>
   <div class="modal-foot">
     <button class="btn ghost" id="rd-open">완성본 열기</button>
@@ -1374,6 +1380,12 @@ async function openFolder(code){
 }
 /* 자료 수집 100% 가 되면 이 버튼이 생깁니다. 누르면 그 제품의 보고서 초안을 만듭니다.
    제출용 완성본 문서(이름에 '완성본'/'제출')가 제품 폴더에 올라오면 옆에 완성본 단추가 붙습니다. */
+/* 작성본이 지금 프로그램보다 먼저 만들어졌으면 담당자의 최근 지시가 들어 있지 않습니다
+   (담당자 2026-09: 업데이트 뒤 옛 파일을 열어 보고 "하나도 반영 안 됐다"). */
+function staleReport(d){
+  const made = d.final_report_time || "", version = SOURCE.program_version || "";
+  return !!(d.final_report && made && version && made < version);
+}
 function reportButton(d){
   const off = uploadEnabled() ? "" : `disabled title="python -m pqr serve 로 실행한 경우에만 동작합니다"`;
   // 버튼은 두 개: 자료를 한꺼번에 올리는 버튼과 보고서 버튼.
@@ -1381,8 +1393,9 @@ function reportButton(d){
   let html = `<button class="mini bulk-btn" data-bulk="${d.code}" ${off}>파일 한번에 올리기</button> `
     ;   /* '자료 묶기' 단추는 자동 완성 엔진이 들어오며 뺐다 — 보고서는 폴더의 자료로 프로그램이 바로 만든다. */
   if (d.final_report){
-    html += `<button class="mini final-btn" data-final="${d.code}"
-      ${off || `title="${esc(d.final_report)} — 누르면 재작성·완성본 열기·취소를 고릅니다"`}>보고서 완료 📄</button>`;
+    const stale = staleReport(d);
+    html += `<button class="mini final-btn${stale ? " stale" : ""}" data-final="${d.code}"
+      ${off || `title="${esc(d.final_report)} — 누르면 재작성·완성본 열기·취소를 고릅니다"`}>${stale ? "재작성 필요 ⚠" : "보고서 완료 📄"}</button>`;
   } else {
     const ready = d.pct >= 100;
     const gate = ready ? off
@@ -1565,12 +1578,14 @@ async function openFinal(code){
     const files = payload.attachments || [];
     // 보고서를 화면에 띄웁니다 — 서버가 워드를 PDF 로 바꿔 새 창에 보여 줍니다.
     window.open(`api/final-view?product=${encodeURIComponent(code)}`, "_blank", "noopener");
-    showToast(`📄 <b>${esc(payload.name)}</b> — 새 창에 보고서를 띄웠습니다 (워드 파일도 함께 열립니다)`
+    // 워드·첨부 엑셀·작성본 폴더가 함께 열립니다 (담당자 2026-09).
+    showToast(`📄 <b>${esc(payload.name)}</b> — 새 창에 보고서를 띄웠습니다`
+      + `<br>워드${files.length ? `와 첨부 엑셀 ${files.length}개` : ``}${payload.folder_opened ? `, 작성본 폴더` : ``}가 함께 열립니다`
       + (files.length
-          ? `<br>첨부 엑셀 ${files.length}개 — 눌러서 여세요<br>`
-            + files.map(f=>`<button class="mini attach-open" data-attach="${esc(f.name)}"
+          ? `<br>` + files.map(f=>`<button class="mini attach-open" data-attach="${esc(f.name)}"
                  data-code="${esc(code)}">📊 ${esc(f.name)}</button>`).join(" ")
-          : `<br><span class="muted">첨부 엑셀이 제품 폴더에 없습니다 — 경향분석 Sheet 를 함께 두세요.</span>`)
+          : `<br><span class="muted">첨부 엑셀이 없습니다 — 보고서를 재작성하면 안정성 경향 엑셀이 함께 만들어집니다.</span>`)
+      + `<br><span class="muted">${esc(payload.folder || "")}</span>`
       + (payload.hint ? "<br>" + esc(payload.hint) : ""));
   } catch (error) { showToast("완성본 열기 실패: " + esc(error.message)); }
 }
@@ -1584,7 +1599,17 @@ function openRedo(code, button){
   if (!product) return;
   redoCode = code; redoButton = button;
   $("#rd-product").textContent = `${product.code} · ${product.name}`;
-  $("#rd-file").innerHTML = `현재 작성본: <code>${esc(product.final_report || "")}</code>`;
+  const stale = staleReport(product);
+  const sheets = product.final_attachments || [];
+  $("#rd-file").innerHTML = `현재 작성본: <code>${esc(product.final_report || "")}</code>`
+    // 담당자 2026-09: "현재 작성본에는 안정성 경향 엑셀파일도 첨부되어 있어야지"
+    + (sheets.length
+        ? sheets.map(n=>`<br>첨부 엑셀: <code>${esc(n)}</code>`).join("")
+        : `<br><span class="muted">첨부 엑셀(안정성 경향) 없음 — 재작성하면 함께 만들어집니다</span>`)
+    + (product.final_report_time ? `<br>만든 때: ${esc(product.final_report_time)}` : ``)
+    + (SOURCE.program_version ? ` · 프로그램 버전: ${esc(SOURCE.program_version)}` : ``);
+  $("#rd-stale").hidden = !stale;
+  $("#rd-title").textContent = stale ? "옛 프로그램이 만든 작성본입니다 — 다시 만드세요" : "보고서를 다시 만들까요?";
   redoLastFocus = document.activeElement;
   scrim.classList.add("open"); redoModal.classList.add("open");
   $("#rd-cancel").focus();
