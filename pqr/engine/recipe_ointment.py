@@ -751,6 +751,16 @@ def fill(document, data, product, period, today=None, log=None):
 
     # Cpk 한계는 이 제품의 9.1 허용기준에서 읽는다 — 퀴노비드 숫자를 다른 제품에 쓰지 않는다
     limits = dict(DEFAULT_LIMITS)
+    # 성분별 함량 규격은 완제 성적서(9.2.4)에 성분마다 적혀 있다 — {성분: (하한, 상한)}
+    parts = {}
+    for lot in dom + exp:
+        for a in (rec(lot, "924").get("assays") or []):
+            try:
+                if a.get("part") and a["part"] not in parts:
+                    parts[a["part"]] = (float(a["lo"]), float(a["hi"]))
+            except (TypeError, ValueError, KeyError):
+                pass
+    limits["assay_parts"] = parts
     t91_all = _tables(document, "9.1")
     if t91_all:
         found = parse_limits({"particle": spec_of(t91_all[0], ("입자도",)),
@@ -1069,7 +1079,14 @@ def fill(document, data, product, period, today=None, log=None):
             if len(vals) != len(texts):
                 return None
             if "함량" in lab:
-                got = cpk_bi(vals, *limits["assay"])
+                # 주성분이 둘이면 성분마다 규격이 다르다(디겐타: 플루오로메톨론 90~110, 겐타마이신
+                # 90~120). 열 이름에 든 성분의 규격을 쓴다 — 2026-09 점검에서 둘 다 90~110 으로 계산됐다.
+                lo, hi = limits["assay"]
+                for part_name, (plo, phi) in (limits.get("assay_parts") or {}).items():
+                    if part_name and re.sub(r"\s+", "", part_name) in re.sub(r"\s+", "", lab):
+                        lo, hi = plo, phi
+                        break
+                got = cpk_bi(vals, lo, hi)
             elif "입자도" in lab:
                 got = cpk_uni(vals, limits["particle"])
             elif "금속성이물" in lab:
@@ -1089,8 +1106,14 @@ def fill(document, data, product, period, today=None, log=None):
             issues.append(("9.2", ", ".join(sorted(miss)),
                            "이 성분의 함량을 성적서에서 찾지 못해 칸을 비웠습니다 — 원본에서 확인해 적으세요"))
         out = {}
+        parts = [n for n in (limits.get("assay_parts") or {}) if n]
         for lab, v in found.items():
             key = "assay" if "함량" in lab else "particle" if "입자도" in lab else "metal"
+            if key == "assay" and len(parts) > 1:
+                squeezed = re.sub(r"\s+", "", lab)
+                part = next((n for n in parts if re.sub(r"\s+", "", n) in squeezed), "")
+                if part:
+                    key = "assay/%s" % part           # 16.1 표에 '함량(성분)' 으로 적힌다
             out[key] = v
         return out
 

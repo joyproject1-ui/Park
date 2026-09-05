@@ -254,8 +254,17 @@ def fill(table, lots, value, cpk=None):
             elif cpk is not None:
                 pair = cpk(labs[k], got[k])
                 if pair:
+                    # 디겐타 2026 양식은 함량 열의 'Cpk' 칸과 'Cpk 판정 결과' 칸이 세로로 병합돼
+                    # 있어 판정('충분')이 숨었다(2026-09 점검). 값을 쓰는 칸은 병합을 푼다.
+                    if _has_vmerge(cell):
+                        E.set_vmerge(cell, False)
                     E.set_cell(cell, pair[0] if "Cpk" in head and "판정" not in head else pair[1])
     return {labs[k]: v for k, v in got.items()}
+
+
+def _has_vmerge(cell):
+    pr = cell._tc.find(qn("w:tcPr"))
+    return pr is not None and pr.find(qn("w:vMerge")) is not None
 
 
 # ---------- 9.2 아래 표 모으기 ----------

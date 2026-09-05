@@ -58,13 +58,15 @@ def _previous_xls(previous_path, workdir):
     return found
 
 
-def _fill_cpk_xlsx(src_xls, dst_xlsx, values, today):
+def _fill_cpk_xlsx(src_xls, dst_xlsx, values, today, cells=None):
     """Excel·LibreOffice 가 없을 때의 대비책 — .xlsx 로 바꿔 값만 채운다(그래프는 사라진다)."""
     tmp = dst_xlsx + ".tmp.xlsx"
     convert.to_xlsx(src_xls, tmp)
     wb = load_workbook(tmp)
     ws = wb.worksheets[0]
     ws["K4"] = today
+    for ref, value in (cells or {}).items():
+        ws[ref] = value
     for i in range(35):
         ws.cell(row=10 + i, column=2).value = values[i] if i < len(values) else None
     wb.save(dst_xlsx)
@@ -78,8 +80,61 @@ def fill_cpk(src_xls, dst_xls, values, today):
     return dst_xls
 
 
-def write_cpk_files(folder, data, previous_path, today, lots=None):
-    """내수용 Lot 의 완제 성적서 값으로 Cpk 파일 4종을 제품 폴더에 만든다. [(이름, 경로)]"""
+def cpk_jobs(data, lots, product_name=""):
+    """만들 Cpk 파일 목록 — [{"word", "label", "values", "cells"}].
+
+    - 주성분이 둘이면 함량은 성분마다 한 파일 (디겐타: 플루오로메톨론 90~110, 겐타마이신 90~120).
+      2026-09 점검: 첫 성분 값만 한 파일에 들어가고 둘째 성분 파일이 없었다.
+    - 시트 머리(제품명 C4 · 공정 C5 · 시험항목 K5)와 규격(양쪽 N6/P6, 한쪽 P6)은 올해 값으로
+      적는다 — 전년도 파일을 물려받으므로 제품명·규격이 그대로 남아 있었다.
+    """
+    def rec(lot):
+        return (data.coa.get(lot) or {}).get("924") or {}
+    jobs = []
+    head = {"C4": ("%s (내수용)" % product_name).strip() if product_name else None, "C5": "포장 완료 후"}
+    head = {k: v for k, v in head.items() if v}
+    for word, key in CPK_ITEMS:
+        if key == "assay":
+            parts = []
+            for lot in lots:
+                for a in rec(lot).get("assays") or []:
+                    if a.get("part") and a["part"] not in [p for p, _ in parts]:
+                        parts.append((a["part"], (_num(a.get("lo")), _num(a.get("hi")))))
+            if len(parts) > 1:
+                for part, (lo, hi) in parts:
+                    vals = []
+                    for lot in lots:
+                        v = next((_num(a.get("value")) for a in rec(lot).get("assays") or []
+                                  if a.get("part") == part), None)
+                        if v is not None:
+                            vals.append(v)
+                    cells = dict(head, K5="함량(%%) - %s" % part)
+                    if lo is not None and hi is not None:
+                        cells.update(N6=lo, P6=hi)
+                    jobs.append({"word": word, "label": "함량(%s)" % part, "values": vals, "cells": cells})
+                continue
+            vals = [_num(rec(l).get("assay")) for l in lots]
+            cells = dict(head, K5="함량(%)")
+            spec = [(_num(a.get("lo")), _num(a.get("hi"))) for l in lots for a in rec(l).get("assays") or []]
+            if spec and spec[0][0] is not None and spec[0][1] is not None:
+                cells.update(N6=spec[0][0], P6=spec[0][1])
+            jobs.append({"word": word, "label": "함량", "values": [v for v in vals if v is not None], "cells": cells})
+            continue
+        vals = [_num(rec(l).get(key)) for l in lots]
+        cells = dict(head, K5=word if key != "particle" else "입자도(㎛)")
+        if key == "particle":
+            usl = next((_num(rec(l).get("particle_spec")) for l in lots if rec(l).get("particle_spec")), None)
+            if usl is not None:
+                cells.update(O6=None, P6=usl)
+        jobs.append({"word": word, "label": word, "values": [v for v in vals if v is not None], "cells": cells})
+    return jobs
+
+
+def write_cpk_files(folder, data, previous_path, today, lots=None, product_name=""):
+    """내수용 Lot 의 완제 성적서 값으로 Cpk 파일들을 만든다. [(이름, 경로)]
+
+    전년도 결재본의 Cpk 파일을 서식으로 물려받아(수식·그래프 보존) 값·머리·규격을 갈아 끼운다.
+    """
     lots = lots or data.domestic
     from . import qc
     if not qc.cpk_applies(len(lots)):
@@ -90,23 +145,29 @@ def write_cpk_files(folder, data, previous_path, today, lots=None):
     work = tempfile.mkdtemp(prefix="pqr-cpk-")
     sources = _previous_xls(previous_path, work)
     out = []
-    for word, key in CPK_ITEMS:
+    missing = set()
+    for job in cpk_jobs(data, lots, product_name):
+        word = job["word"]
         src = sources.get(word)
         if not src:
-            data.issues.append(("첨부", "", "전년도 결재본에 '%s Cpk 계산 파일' 이 없어 만들지 못함" % word))
+            if word not in missing:
+                missing.add(word)
+                data.issues.append(("첨부", "", "전년도 결재본에 '%s Cpk 계산 파일' 이 없어 만들지 못함" % word))
             continue
-        vals = [_num((data.coa.get(l) or {}).get("924", {}).get(key)) for l in lots]
-        vals = [v for v in vals if v is not None]
+        vals = job["values"]
         name = os.path.basename(src)
+        if job["label"] != word:                  # 성분별 파일: '함량' → '함량(플루오로메톨론)'
+            name = name.replace(word, job["label"], 1)
         dst = os.path.join(folder, name)
+        cells = dict(job["cells"], K4=today)
         try:
-            fill_cpk(src, dst, vals, today)
+            xls_fill.fill(src, dst, cells, vals)
             out.append((name, dst))
         except xls_fill.FillError as error:
             name = re.sub(r"\.xls$", ".xlsx", name)
             dst = os.path.join(folder, name)
             try:                                  # 그래프는 잃지만 값이라도 남긴다
-                _fill_cpk_xlsx(src, dst, vals, today)
+                _fill_cpk_xlsx(src, dst, vals, today, cells)
                 out.append((name, dst))
                 data.issues.append(("첨부", name, "%s — 그래프 없이 값만 채웠습니다" % error))
             except Exception as second:

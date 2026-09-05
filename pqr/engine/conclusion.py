@@ -66,9 +66,15 @@ def low_cpk_items(cpk):
     """{'assay': 0.93, 'particle': 0.79, 'metal': 24.1} → [('함량', 0.93), ('입자도', 0.79)] (1 미만만, 표 순서)."""
     out = []
     for key in ("assay", "particle", "metal"):
-        v = cpk.get(key)
-        if v is not None and v < 1:
-            out.append((CPK_NAMES[key], v))
+        for full, v in cpk.items():
+            # 주성분이 둘이면 'assay/성분' 으로 들어온다 → '함량(성분)'
+            if full != key and not full.startswith(key + "/"):
+                continue
+            if v is not None and v < 1:
+                name = CPK_NAMES[key]
+                if "/" in full:
+                    name = "%s(%s)" % (name, full.split("/", 1)[1])
+                out.append((name, v))
     return out
 
 
