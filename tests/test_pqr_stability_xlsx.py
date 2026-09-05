@@ -292,3 +292,61 @@ class PointsShownTest(unittest.TestCase):
         self.assertIn("'함량'!$C$72:$J$72", out)        # J = 36M
         self.assertIn('<c:ptCount val="8"/>', out)
         self.assertNotIn("$L$71", out)
+
+
+class TrendSeedTest(unittest.TestCase):
+    """지난 경향표 + 올해 시험일지 → 최신 경향표 (담당자 2026-09)."""
+
+    def _seed(self):
+        return [{"sheet": "함량(A성분)", "item": "함량 - A성분(%)", "product": "테스트연고",
+                 "storage": "", "lcl": 90, "ucl": 110,
+                 "lots": [("OGTD01", {"Initial": 100.4, "12M": 97.2}),
+                          ("OGW701", {"Initial": 98.3, "12M": 98.8})]}]
+
+    def _logs(self):
+        return [{"lot": "OGW701", "points": [
+                    {"period": "18M", "done": "2025.03.25", "assays": {"A성분": 97.9}},
+                    {"period": "24M", "done": "2026.09.10", "assays": {"A성분": 98.5}}]},
+                {"lot": "OGY301", "points": [
+                    {"period": "Initial", "done": "2025.05.12", "assays": {"A성분": 97.7}}]}]
+
+    def _data(self, seed, logs):
+        class Data(object):
+            pass
+        data = Data()
+        data.stability_trend, data.stability_logs = seed, logs
+        data.coa, data.issues, data.period = {}, [], {"from": 2025, "to": 2025}
+        return data
+
+    def _sheets(self, seed, logs):
+        from pqr.engine import excel_attach
+        made = {}
+        original = excel_attach.stability_xlsx.build_multi
+
+        def spy(form, out, product, sheets, **kw):
+            made["sheets"] = sheets
+            return out
+        excel_attach.stability_xlsx.build_multi = spy
+        try:
+            excel_attach._write_trend("form.xlsx", "/tmp", self._data(seed, logs),
+                                      {"name": "테스트연고"}, "2026.09.05", None)
+        finally:
+            excel_attach.stability_xlsx.build_multi = original
+        return made.get("sheets") or []
+
+    def test_지난_값에_올해_시점만_덧붙인다(self):
+        sheets = self._sheets(self._seed(), self._logs())
+        self.assertEqual(len(sheets), 1)
+        lots = dict(sheets[0]["lots"])
+        self.assertEqual(lots["OGW701"], {"Initial": 98.3, "12M": 98.8, "18M": 97.9})
+        self.assertEqual(lots["OGTD01"], {"Initial": 100.4, "12M": 97.2})   # 지난 값 그대로
+        self.assertEqual(lots["OGY301"], {"Initial": 97.7})                 # 새 Lot 은 뒤에
+        self.assertEqual([lot for lot, _ in sheets[0]["lots"]], ["OGTD01", "OGW701", "OGY301"])
+
+    def test_시험일지가_없어도_지난_경향표로_만든다(self):
+        sheets = self._sheets(self._seed(), [])
+        self.assertEqual(len(dict(sheets[0]["lots"])), 2)
+
+    def test_평가_기간을_넘어선_시점은_넣지_않는다(self):
+        sheets = self._sheets(self._seed(), self._logs())
+        self.assertNotIn("24M", dict(sheets[0]["lots"])["OGW701"])          # 2026 완료분

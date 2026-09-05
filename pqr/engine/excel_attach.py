@@ -15,6 +15,7 @@ from openpyxl import load_workbook
 
 from . import convert
 from . import stability_xlsx
+from .readers import trend as trend_reader
 from . import xls_fill
 
 CPK_ITEMS = [   # (파일 이름에 든 낱말, 완제 성적서 항목)
@@ -210,8 +211,8 @@ def write_stability_workbook(folder, data, product, today, input_dir=None, repor
     if not form:
         data.issues.append(("첨부", "", "안정성 경향 분석 서식(HLF-QC-126-06)을 찾지 못해 만들지 못함 — 제품 폴더나 입력 폴더의 '서식' 폴더에 두세요"))
         return []
-    if logs:
-        return _from_logs(form, folder, data, product, today, logs, report_path)
+    if logs or getattr(data, "stability_trend", None):
+        return _write_trend(form, folder, data, product, today, report_path)
     if not points:
         data.issues.append(("첨부", "", "안정성 시험일지 판독값이 없어 경향 분석 파일을 만들지 못함 — 시험일지를 올리거나 담당자가 직접 기입"))
         return []
@@ -234,50 +235,101 @@ def write_stability_workbook(folder, data, product, today, input_dir=None, repor
 FORM_SHEETS = ("함량", "A", "B", "기타", "총", "pH", "삼투압")
 
 
-def _from_logs(form, folder, data, product, today, logs, report_path):
-    """시험일지 판독값(성분별 함량)으로 경향 분석 파일을 만든다 — 성분마다 시트 한 장.
-
-    평가 기간 안에 끝난 시점까지만 넣는다. 보고서 13.3 의 경향 범위와 같은 값이어야
-    한 벌의 자료로 읽힌다.
-    """
-    year_to = int((getattr(data, "period", None) or {}).get("to") or 0) or None
-    parts, spec = [], {}
-    for lot in data.coa.values() if isinstance(data.coa, dict) else []:
+def _assay_limits(data):
+    """{성분: (하한, 상한)} — 완제 성적서의 함량 규격. 제품마다 다르므로 여기서 읽는다."""
+    out = {}
+    for lot in (data.coa or {}).values():
         for a in (lot.get("924") or {}).get("assays") or []:
-            if a.get("part") and a["part"] not in parts:
-                parts.append(a["part"])
-                spec[a["part"]] = (_num(a.get("lo")) or 90, _num(a.get("hi")) or 110)
-    if not parts:
-        for one in logs:
-            for point in one.get("points", []):
-                for part in (point.get("assays") or {}):
-                    if part not in parts:
-                        parts.append(part)
-    if not parts:
-        data.issues.append(("첨부", "", "시험일지 판독값에 성분별 함량이 없어 경향 분석 파일을 만들지 못함"))
-        return []
+            part = (a.get("part") or "").strip()
+            if part and part not in out:
+                lo, hi = _num(a.get("lo")), _num(a.get("hi"))
+                if lo is not None and hi is not None:
+                    out[part] = (lo, hi)
+    return out
 
-    def rows_for(part):
-        out = []
-        for one in logs:
-            vals = {}
-            for point in one.get("points", []):
-                got = re.findall(r"\d{4}", point.get("done") or "")
-                if year_to and got and int(got[0]) > year_to:
-                    continue
-                value = _num((point.get("assays") or {}).get(part))
-                if value is not None:
-                    vals[point["period"]] = float(value)
-            if vals:
-                out.append((one["lot"], vals))
+
+def _same_part(a, b):
+    a, b = re.sub(r"\s+", "", a or ""), re.sub(r"\s+", "", b or "")
+    return bool(a) and bool(b) and (a in b or b in a)
+
+
+def _write_trend(form, folder, data, product, today, report_path):
+    """안정성 경향 분석(HLF-QC-126-06)을 새로 만든다 — 지난 경향표 + 올해 시험일지.
+
+    담당자 지시(2026-09): "16. 안정성시험 경향표를 13항 안정성 시험 자료를 참고해서 최신
+    파일로 신규 작성." 지난 경향표의 값은 담당자가 옮겨 적어 둔 것이라 그대로 이어받고,
+    올해 시험일지에서 읽은 시점만 덧붙인다. 평가 기간을 넘어선 시점(다음 해에 끝난 시험)은
+    넣지 않는다 — 보고서 13.3 의 경향 범위와 같은 값이어야 한 벌의 자료로 읽힌다.
+    """
+    seed = list(getattr(data, "stability_trend", None) or [])
+    logs = list(getattr(data, "stability_logs", None) or [])
+    year_to = int((getattr(data, "period", None) or {}).get("to") or 0) or None
+    limits = _assay_limits(data)
+
+    def points_of(one, part):
+        out = {}
+        for point in one.get("points", []):
+            got = re.findall(r"\d{4}", point.get("done") or "")
+            if year_to and got and int(got[0]) > year_to:
+                continue
+            value = _num((point.get("assays") or {}).get(part))
+            if value is not None:
+                out[point["period"]] = float(value)
         return out
 
-    sheets = []
-    for i, part in enumerate(parts[:len(FORM_SHEETS)]):
-        lo, hi = spec.get(part, (90, 110))
-        sheets.append({"form_sheet": FORM_SHEETS[i], "name": "함량(%s)" % part,
-                       "item": "함량 - %s(%%)" % part, "lots": rows_for(part),
-                       "lcl": float(lo), "ucl": float(hi)})
+    parts = []                                    # [(성분, 시험항목 글, 하한, 상한, 지난 Lot)]
+    for sheet in seed:
+        part = trend_reader.component_of(sheet.get("item"))
+        lo, hi = limits.get(next((k for k in limits if _same_part(k, part)), ""), (None, None))
+        parts.append((part, sheet.get("item") or ("함량 - %s(%%)" % part),
+                      lo if lo is not None else sheet.get("lcl"),
+                      hi if hi is not None else sheet.get("ucl"),
+                      list(sheet.get("lots") or [])))
+    if not parts:                                 # 지난 경향표가 없는 첫해 — 성적서·시험일지에서
+        names = list(limits)
+        if not names:
+            names = [part for one in logs for point in one.get("points", [])
+                     for part in (point.get("assays") or {})]
+            names = list(dict.fromkeys(names))
+        for part in names:
+            lo, hi = limits.get(part, (90, 110))
+            parts.append((part, "함량 - %s(%%)" % part, lo, hi, []))
+    if not parts:
+        data.issues.append(("첨부", "", "안정성 경향 분석에 넣을 성분을 찾지 못해 만들지 못함 — "
+                                        "지난 경향표(HLF-QC-126-06)나 시험일지 판독값이 필요합니다"))
+        return []
+
+    sheets, added = [], 0
+    for i, (part, item, lo, hi, old_lots) in enumerate(parts[:len(FORM_SHEETS)]):
+        rows = []
+        seen = {}
+        for lot, values in old_lots:              # 지난 경향표의 차례를 지킨다
+            seen[lot] = dict(values)
+            rows.append(lot)
+        for one in logs:
+            values = points_of(one, part)
+            if not values:
+                continue
+            lot = one["lot"]
+            if lot not in seen:
+                seen[lot] = {}
+                rows.append(lot)
+            for period, value in values.items():
+                if seen[lot].get(period) != value:
+                    added += 1
+                seen[lot][period] = value
+        sheets.append({"form_sheet": FORM_SHEETS[i], "name": "함량(%s)" % part, "item": item,
+                       "lots": [(lot, seen[lot]) for lot in rows],
+                       "lcl": float(lo if lo is not None else 90),
+                       "ucl": float(hi if hi is not None else 110)})
+    if not any(sheet["lots"] for sheet in sheets):
+        data.issues.append(("첨부", "", "안정성 시험 결과값이 없어 경향 분석 파일을 만들지 못함 — "
+                                        "13항에 시험일지 판독값(.json)이나 지난 경향표를 두세요"))
+        return []
+    if not added:
+        data.issues.append(("첨부", "", "13항 시험일지에서 새 시점을 읽지 못해 지난 경향표 값만 "
+                                        "옮겼습니다 — 올해 시점을 직접 채우세요"))
+
     name = "HLF-QC-126-06 안정성 시험 경향 분석 결과 - %s.xlsx" % (product.get("name") or "")
     dst = os.path.join(folder, name)
     stability_xlsx.build_multi(form, dst, product.get("name") or "", sheets,

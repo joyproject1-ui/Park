@@ -1586,8 +1586,12 @@ async function makeReport(code, button){
         + ((base && base.broken) ? `<br><span class="muted">Word 검사: ${esc(base.broken)}</span>` : ``)
         + `<br><span class="muted">제품 폴더의 <code>PQR 작성 기록</code> 파일에 어디서 멈췄는지 그대로 들어 있습니다.</span>`;
     }
+    const made = payload.made || [];
     showToast(head
-      + `<br>📄 ${esc(payload.final_name || "")}<br>${esc(payload.folder || "")}`
+      + `<br>📄 ${esc(payload.final_name || "")}`
+      + (made.length ? `<br>📊 함께 만든 첨부 ${made.length}개<ul class="issue-list">`
+          + made.map(n=>`<li>${esc(n)}</li>`).join("") + `</ul>` : "")
+      + `<br>${esc(payload.folder || "")}`
       + (payload.opened ? "" : "<br>(자동으로 열리지 않으면 위 경로를 파일 탐색기에 붙여넣으세요)"));
     // 방금 만든 제출용 보고서를 바로 열 수 있게 옆에 완성본 단추를 세웁니다.
     // (표를 다시 그리므로 이 button 은 사라집니다 — 상태는 데이터에서 옵니다.)

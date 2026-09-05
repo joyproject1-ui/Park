@@ -13,7 +13,7 @@ import zipfile
 
 from .. import build as build_module
 from .readers import coa as coa_reader, erp, license as license_reader, deviation, change, \
-    masters, yield_sheet, suppliers
+    masters, yield_sheet, suppliers, trend as trend_reader
 from .pdftext import is_scanned, PdfTextError
 
 ITEM_RE = re.compile(r"^\s*(\d{1,2}(?:\.\d+)*)[.\s]")
@@ -40,6 +40,7 @@ class ProductData(object):
         self.api_chain = {}
         self.stability_files = []   # 스캔 PDF (손글씨) — 비전 판독 대상
         self.stability_logs = []    # 13항 시험일지 판독 결과 (비전 또는 담당자가 적은 .json)
+        self.stability_trend = []   # 이미 채워 둔 안정성 경향표(HLF-QC-126-06) 를 다시 읽은 것
         self.pv_reasons = {}        # {제조번호: 밸리데이션 실시 사유} — 전년도 결재본 10.1 에서
         self.previous_report = None
         self.files = {}           # item -> [paths]
@@ -309,6 +310,21 @@ def collect(folder, product_name=None, log=None):
                 log("  [13] %s — 안정성 시험일지 판독 결과 %d Lot" % (os.path.basename(p), len(data.stability_logs)))
             except Exception as error:
                 note("13", p, "안정성 판독 파일을 읽지 못했습니다 — %s" % error)
+    # 이미 채워 둔 경향표(HLF-QC-126-06)는 13항·16항 어디에 있든 바탕으로 삼는다 —
+    # 담당자가 손으로 옮겨 적어 둔 값이라 스캔 판독보다 믿을 만하다.
+    for item in ("13", "16", "첨부"):
+        for p in got.get(item, []):
+            if not p.lower().endswith(".xlsx") or os.path.basename(p).startswith("~$"):
+                continue
+            try:
+                if trend_reader.is_trend_file(p):
+                    sheets = trend_reader.read_trend(p)
+                    if sheets:
+                        data.stability_trend = sheets
+                        log("  [%s] %s — 지난 경향표 %d 시트를 이어받습니다"
+                            % (item, os.path.basename(p), len(sheets)))
+            except Exception as error:
+                note(item, p, "경향표를 읽지 못했습니다 — %s" % error)
     # 16 전년도 결재본
     for p in got.get("16", []):
         if p.lower().endswith((".doc", ".docx")):

@@ -1026,9 +1026,12 @@ class Handler(BaseHTTPRequestHandler):
         self.workspace.rebuild()
         # '어디 있지?' 를 없앱니다 — 제출용 보고서가 있는 제품 폴더를 바로 열어 줍니다.
         opened = open_in_file_manager(folder)
+        # 만든 첨부 엑셀(안정성 경향 분석 · Cpk 계산)을 화면에 알려 준다 — 담당자가 무엇이
+        # 나왔는지 바로 보게(담당자 2026-09: "워드 보고서와 안정성 경향표 엑셀 2개가 작성").
+        made = [name for name, _ in ((engine_result or {}).get("attachments") or [])]
         return {"ok": True, "files": [os.path.abspath(p) for p in written],
                 "final": os.path.abspath(final), "final_name": os.path.basename(final),
-                "based_on": based_on, "issues": issues,
+                "based_on": based_on, "issues": issues, "made": made,
                 "engine": bool(engine_result),
                 "folder": os.path.abspath(folder),
                 "out_dir": os.path.abspath(out_dir), "opened": opened,
