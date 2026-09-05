@@ -75,9 +75,8 @@ def _item_of(name):
     return m.group(1) if m else None
 
 
-# 만든 보고서를 넣는 폴더 — 자료가 아니므로 읽을 때는 지나친다.
-# (담당자 2026-09: "작성 완료본은 해당 폴더에 별도의 폴더를 만들어서 파일을 생성해줘")
-OUTPUT_DIR = "PQR 작성본"
+# 만든 보고서를 넣는 폴더 — 자료가 아니므로 읽을 때는 지나친다 (정의는 build 에).
+OUTPUT_DIR = build_module.OUTPUT_DIR
 
 
 def is_output_dir(name):

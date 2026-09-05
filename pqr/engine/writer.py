@@ -323,9 +323,15 @@ def write_report(folder, product, period, out_path, today=None, recipe=None, log
     # 여기서 한 번 계산해 둔다 — 그러지 않으면 파일을 열었을 때 목차가 모두 '1' 로 보인다.
     if convert.refresh_fields(out_path):
         log_("목차 쪽수·머리글을 Word 로 다시 계산했습니다")
-    else:
-        log_("Word 가 없어 목차 쪽수는 파일을 열 때 계산됩니다 — 숫자가 모두 1 이면 "
-             "Ctrl+A 를 누르고 F9 를 누르세요")
+    # Word 가 없거나 계산 결과가 비어 있으면 PDF 로 쪽을 세어 직접 적는다 — 제한된 보기에서는
+    # dirty 필드를 다시 계산하지 않아 빈 칸이 그대로 보였다 (담당자 2026-09).
+    from . import toc as toc_module
+    try:
+        if toc_module.empty_results(out_path):
+            if not toc_module.fill_page_numbers(out_path, log_):
+                log_("목차 쪽 번호를 세지 못했습니다 — 파일을 열고 Ctrl+A, F9 를 누르세요")
+    except Exception as error:
+        log_("목차 쪽 번호 계산 실패: %s — Ctrl+A, F9 로 갱신하세요" % error)
     # 첨부 엑셀 — Cpk 계산 파일 4종(결재본 것을 물려받아 값 갱신) + 안정성 경향 분석
     attachments = []
     try:

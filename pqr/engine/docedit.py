@@ -1638,20 +1638,27 @@ def draw_block_line(table, first, last, weight="0.5pt"):
     from docx.table import _Cell
     trs = table._tbl.findall(qn("w:tr"))[first:last + 1]
     width = sum(_width(tc) for tc in trs[0].findall(qn("w:tc")))
+    # 행 높이를 '정확히' 로 못 박는다 — 그래야 선의 아래 끝이 행 아래 모서리에 딱 맞는다.
+    # 어림한 높이로 그리면 Word 와 LibreOffice 에서 줄이 표 밖으로 나가거나 모자란다
+    # (담당자 2026-09: "8.2.3 표안의 선이 표 밖으로 안 나가게", "이렇게 진행해줘" — 모서리끼리).
     height = 0
     for tr in trs:
-        pr = tr.find(qn("w:trPr"))
-        h = pr.find(qn("w:trHeight")) if pr is not None else None
+        pr = get_or_add(tr, "trPr")
+        h = pr.find(qn("w:trHeight"))
+        if h is None:
+            h = pr.makeelement(qn("w:trHeight"), {})
+            pr.insert(0, h)
         try:
             hv = int(h.get(qn("w:val")))
-        except (AttributeError, TypeError, ValueError):
+        except (TypeError, ValueError):
             hv = 0
-        height += max(hv, 250)
+        hv = max(hv, 300)
+        h.set(qn("w:val"), str(hv))
+        h.set(qn("w:hRule"), "exact")
+        height += hv
     w_pt, h_pt = width / 20.0, height / 20.0
     margin = 99 / 20.0                                   # 칸 왼쪽 여백(dxa 99)
-    # 선은 칸 안쪽 문단에 앵커된다 — 문단 위쪽은 이미 칸 위에서 조금 내려와 있으므로
-    # 행 높이를 그대로 쓰면 왼쪽 아래가 표 밖으로 삐져나온다 (담당자 2026-09).
-    drop, rise = h_pt * 0.42, 2.0
+    drop, rise = h_pt, 0.0
     _VML_ID[0] += 1
     sid = _VML_ID[0]
     xml = (
@@ -1664,7 +1671,7 @@ def draw_block_line(table, first, last, weight="0.5pt"):
         'mso-position-horizontal:absolute;mso-position-horizontal-relative:text;'
         'mso-position-vertical:absolute;mso-position-vertical-relative:text;'
         'mso-wrap-style:square" '
-        f'from="0,{drop:.2f}pt" to="{w_pt - 2 * margin:.2f}pt,{rise:.2f}pt" '
+        f'from="{-margin:.2f}pt,{drop:.2f}pt" to="{w_pt - margin:.2f}pt,{rise:.2f}pt" '
         f'o:allowincell="t" strokecolor="black" strokeweight="{weight}">'
         '<w10:wrap type="none"/><w10:anchorlock/>'
         '</v:line></w:pict></w:r>'

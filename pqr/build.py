@@ -633,7 +633,10 @@ def find_final_report(folder, matcher=None, include_drafts=False):
     return max(candidates, key=os.path.getmtime)
 
 
-from .engine.collect import OUTPUT_DIR
+# 만든 보고서를 넣는 폴더 — 자료가 아니므로 읽을 때는 지나친다.
+# (담당자 2026-09: "작성 완료본은 해당 폴더에 별도의 폴더를 만들어서 파일을 생성해줘")
+# 상수는 여기 두고 engine.collect 가 가져다 쓴다 — collect 가 build 를 읽으므로 반대로 두면 돈다.
+OUTPUT_DIR = "PQR 작성본"
 
 SIDE_FILES = (AUTO_DRAFT_MARKER, "PQR 문의 목록", "PQR 작성 기록")
 
