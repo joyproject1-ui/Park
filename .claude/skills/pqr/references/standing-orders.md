@@ -70,8 +70,8 @@
 | 표 안 간격 조정 — '같은 스타일의 단락 사이에 공백 삽입 안 함' | `contextualSpacing` 을 켠다 | `docedit.zero_cell_spacing` |
 | **1·3항 제목 줄맞춤** (번호 뒤 빈칸 통일) | 글자 자리로 찾아 그 런만 고친다 | `docedit.align_section_titles` |
 | **16항 아래와 17항 시작부분은 한 칸 띄운다 — 모든 항이 마찬가지** | 항 제목 앞에 빈 줄 한 줄 | `docedit.space_before_sections` |
-| 목차는 **점선 길이**를 페이지 번호 왼쪽에 맞춘다 | 목차 글자 크기를 줄이지 않는다 | `docedit.table_font_size(skip=목차)` |
-| 페이지 번호(목차 쪽수)가 맞아야 한다 | 만든 자리에서 Word 로 필드를 다시 계산한다 | `engine/convert.refresh_fields` |
+| 목차는 **점선 길이**를 페이지 번호 왼쪽에 맞춘다 | 목차 글자 크기를 줄이지 않는다 | `docedit.table_font_size` (목차는 skip) |
+| 페이지 번호(목차 쪽수)가 맞아야 한다 | PDF 로 쪽을 세어 목차 필드에 숫자를 적고, Word 가 열자마자 다시 계산해 전부 1 로 만들지 않도록 updateFields 를 없앤다 | `toc.fill_page_numbers`, `polish.clear_update_fields` |
 | **목차 쪽 번호가 비거나 전부 1 이면 안 된다** | PDF 로 쪽을 세어 필드 결과에 숫자를 직접 적고 dirty 표시를 뗀다. settings 의 `updateFields` 는 **넣지 않는다** — 켜 두면 Word 가 열자마자 쪽 나눔 전에 계산해 전부 1 이 된다 | `toc.fill_page_numbers`, `polish.clear_update_fields` |
 | 7항 **최댓값·최솟값·평균은 공정 열에 맞춘다** | 그리드 열 번호로 짚는다 | `docedit.grid_cells` |
 | 7항 **비고의 사선은 한 칸으로 합친다** | 자료 줄·요약 줄의 비고를 세로 병합하고 사선 하나 | `docedit.merge_remark_column` |
@@ -81,7 +81,7 @@
 | **4항·16항 본문은 왼쪽 2글자 들여쓰기** | 서식의 내어쓰기·첫줄 들여쓰기를 지우고 `leftChars=200` | `docedit.set_section_indent` |
 | **'특이사항 (Comment)' 글은 제목 바로 아래 줄에** | 제목과 글 사이 빈 문단을 없애고, 표 안 문단마다 `beforeAutospacing`·`afterAutospacing`·`beforeLines`·`afterLines` 를 **0 으로 분명히 적는다** — 서식의 'Normal (Web)' 스타일이 물려주는 autospacing 때문에 Word 에서만 한 줄이 벌어졌다(LibreOffice 미리보기에는 안 보인다) | `docedit.tidy_comment_cells`, `docedit.zero_cell_spacing` |
 | 10.2~10.5 **IQ·OQ·PQ 칸 너비는 같게** | 세 열을 같은 폭으로 나눈다 | `layout.py` |
-| 10.4·10.5 **설비명은 표 안에서 나뉘지 않고 가운데** ('현재 단락을 나누지 않음') | 그 칸 문단에 `keepLines` 를 켜고 세로 가운데 | `docedit.keep_lines` |
+| 10.4·10.5 **설비명은 표 안에서 나뉘지 않고 가운데** ('현재 단락을 나누지 않음') | 그 칸 문단에 `keepLines` 를 켜고 세로 가운데 | `docedit.keep_lines_in_cells` |
 | **전체 줄에 사선이 그어졌으면 칸마다의 사선은 지운다** (11.2 등) | 가로지르는 선이 있는 표에서는 낱칸 사선을 빼낸다 | `docedit.diag_all_empty` |
 | 12항 **변경사항의 불필요한 엔터를 지운다** | 칸 끝의 빈 문단을 없앤다 | `docedit.tidy_cell_lines` |
 | 12항 **변경 내용은 굵은 글씨로 쓰지 않는다** | 첫 줄(문서번호·변경명)만 굵게, 아래 내용은 보통 | `recipe_ointment` 12항 |
