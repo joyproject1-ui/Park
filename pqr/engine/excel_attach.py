@@ -328,7 +328,7 @@ def _write_trend(form, folder, data, product, today, report_path):
     year_to = lotcode.year_of((getattr(data, "period", None) or {}).get("to"))
     limits = _assay_limits(data)
 
-    def points_of(one, part):
+    def points_of(one, part, shaky=None):
         out = {}
         for point in one.get("points", []):
             got = re.findall(r"\d{4}", point.get("done") or "")
@@ -337,6 +337,8 @@ def _write_trend(form, folder, data, product, today, report_path):
             value = _num((point.get("assays") or {}).get(part))
             if value is not None:
                 out[point["period"]] = float(value)
+                if shaky is not None and part in (point.get("unsure") or []):
+                    shaky.add(point["period"])     # 손글씨 판독이 애매한 값 — 시트에서 노랑
         return out
 
     parts = []                                    # [(성분, 시험항목 글, 하한, 상한, 지난 Lot)]
@@ -364,15 +366,18 @@ def _write_trend(form, folder, data, product, today, report_path):
     sheets, added = [], 0
     for i, (part, item, lo, hi, old_lots) in enumerate(parts[:len(FORM_SHEETS)]):
         rows = []
-        seen = {}
+        seen, unsure = {}, {}
         for lot, values in old_lots:              # 지난 경향표의 차례를 지킨다
             seen[lot] = dict(values)
             rows.append(lot)
         for one in logs:
-            values = points_of(one, part)
+            shaky = set()
+            values = points_of(one, part, shaky)
             if not values:
                 continue
             lot = one["lot"]
+            if shaky:
+                unsure[lot] = shaky
             if lot not in seen:
                 seen[lot] = {}
                 rows.append(lot)
@@ -381,7 +386,7 @@ def _write_trend(form, folder, data, product, today, report_path):
                     added += 1
                 seen[lot][period] = value
         sheets.append({"form_sheet": FORM_SHEETS[i], "name": "함량(%s)" % part, "item": item,
-                       "lots": [(lot, seen[lot]) for lot in rows],
+                       "lots": [(lot, seen[lot]) for lot in rows], "unsure": unsure,
                        "lcl": float(lo if lo is not None else 90),
                        "ucl": float(hi if hi is not None else 110)})
     if not any(sheet["lots"] for sheet in sheets):

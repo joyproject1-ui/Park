@@ -121,6 +121,48 @@ def strip_floating_lines(xml_bytes):
     return "".join(out).encode("utf-8"), removed
 
 
+UNSURE_RGB = "FFFF9900"       # 주황 — 서식의 결과 칸이 이미 노랑이라 노랑으로는 구별이 안 된다
+
+
+def yellow_styles(styles_xml, sources, rgb=UNSURE_RGB):
+    """애매한 판독값 칸에 쓸 채움 서식을 찾거나 만든다. {본래 s: 표시 s}
+
+    담당자 2026-09: "애매한 것만 노랑마크로" — 워드는 노랑 형광, 엑셀은 결과 칸이 원래
+    노랑이라 주황으로 칠한다.
+    """
+    xml = styles_xml.decode("utf-8")
+    fs = re.search(r'<fills count="(\d+)">(.*?)</fills>', xml, re.S)
+    fills = re.findall(r"<fill>.*?</fill>|<fill/>", fs.group(2), re.S)
+    want_fill = ('<fill><patternFill patternType="solid"><fgColor rgb="%s"/>'
+                 '<bgColor indexed="64"/></patternFill></fill>' % rgb)
+    yellow = next((i for i, f in enumerate(fills) if ('rgb="%s"' % rgb) in f and 'solid' in f), None)
+    if yellow is None:
+        fills.append(want_fill)
+        yellow = len(fills) - 1
+        xml = xml.replace(fs.group(0), '<fills count="%d">%s</fills>' % (len(fills), "".join(fills)), 1)
+    cs = re.search(r'<cellXfs count="(\d+)">(.*?)</cellXfs>', xml, re.S)
+    xfs = re.findall(r"<xf [^>]*/>|<xf [^>]*>.*?</xf>", cs.group(2), re.S)
+    mapping, added = {}, False
+    for sid in sources:
+        base = xfs[sid]
+        want = re.sub(r'fillId="\d+"', 'fillId="%d"' % yellow, base)
+        if 'fillId=' not in want:
+            want = want.replace("<xf ", '<xf fillId="%d" ' % yellow, 1)
+        if 'applyFill=' not in want:
+            want = want.replace("<xf ", '<xf applyFill="1" ', 1)
+        else:
+            want = re.sub(r'applyFill="\d"', 'applyFill="1"', want)
+        found = next((i for i, x in enumerate(xfs) if x == want), None)
+        if found is None:
+            xfs.append(want)
+            added = True
+            found = len(xfs) - 1
+        mapping[sid] = found
+    if added:
+        xml = xml.replace(cs.group(0), '<cellXfs count="%d">%s</cellXfs>' % (len(xfs), "".join(xfs)), 1)
+    return xml.encode("utf-8"), mapping
+
+
 def diagonal_styles(styles_xml, sources):
     """빈 칸에 쓸 '사선 테두리' 서식을 찾거나 만든다. {본래 s: 사선 s} 를 돌려준다."""
     xml = styles_xml.decode("utf-8")
@@ -385,8 +427,9 @@ def style_at(xml, ref, default):
 
 
 def _fill_sheet(data, sheet_name, product, lots, item, storage, lcl, ucl, remark,
-                prepared_by, prepared_on):
+                prepared_by, prepared_on, unsure=None):
     """서식 한 시트에 값과 그래프를 채운다. (시트 이름, 부품 경로) 를 돌려준다."""
+    unsure = unsure or {}
     sheet, part = _sheet_part(data, sheet_name)
     xml = data[part].decode("utf-8")
     xml = set_cell(xml, "C3", product)
@@ -396,11 +439,15 @@ def _fill_sheet(data, sheet_name, product, lots, item, storage, lcl, ucl, remark
     xml = set_cell(xml, "J4", ucl)
     xml = set_cell(xml, "M3", prepared_by)
     xml = set_cell(xml, "M4", prepared_on)
+    if unsure:
+        remark = (remark + "\n" if remark and remark != "N/A" else "") + \
+            "주황 칸: 손글씨 시험일지 판독이 애매한 값 — 시험일지와 대조 필요"
     xml = set_cell(xml, "A27", remark)
     lot_style = style_at(xml, "B%d" % FIRST_ROW, LOT_STYLE)
     value_style = style_at(xml, "C%d" % FIRST_ROW, VALUE_STYLE)
     data["xl/styles.xml"], diag = diagonal_styles(data["xl/styles.xml"],
                                                   (lot_style, value_style))
+    data["xl/styles.xml"], yellow = yellow_styles(data["xl/styles.xml"], (value_style,))
     for i in range(ROWS):
         row = FIRST_ROW + i
         name = lots[i][0] if i < len(lots) else None
@@ -409,8 +456,11 @@ def _fill_sheet(data, sheet_name, product, lots, item, storage, lcl, ucl, remark
                        style=str(lot_style if name else diag[lot_style]))
         for col, p in zip(COLS, POINTS):               # 빈 칸에는 사선 (GMP 공란 없음)
             v = vals.get(p)
-            xml = set_cell(xml, "%s%d" % (col, row), v,
-                           style=str(value_style if v is not None else diag[value_style]))
+            shaky = name is not None and p in (unsure.get(name) or ())
+            style = value_style if v is not None else diag[value_style]
+            if v is not None and shaky:
+                style = yellow[value_style]            # 손글씨 판독이 애매한 값 — 노랑
+            xml = set_cell(xml, "%s%d" % (col, row), v, style=str(style))
     for i in range(ROWS):                              # 그래프가 보는 미러 행의 캐시값
         row = MIRROR_ROW + i
         name = lots[i][0] if i < len(lots) else None
@@ -493,6 +543,6 @@ def build_multi(form, out, product, sheets, storage="25±2℃\n60±5%RH", remark
         keep.append(spec["name"])
         _fill_sheet(data, spec["name"], product, spec["lots"], spec.get("item", "함량(%)"),
                     storage, spec.get("lcl", 90), spec.get("ucl", 110), remark,
-                    prepared_by, prepared_on)
+                    prepared_by, prepared_on, unsure=spec.get("unsure"))
     names = drop_sheets(data, names, keep)
     return _save(data, names, out)

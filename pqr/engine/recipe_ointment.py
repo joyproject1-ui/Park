@@ -1696,6 +1696,12 @@ def _fill_stability26(document, logs, period, spec, log, issues, why_of=None):
 
     rows, trend = [], []
     for one in logs:
+        for p in one.get("points", []):
+            shaky = p.get("unsure") or []
+            if shaky and upto(p):
+                what = ", ".join("완료 일자" if u == "done" else "함량(%s)" % u for u in shaky)
+                issues.append(("13", one.get("lot", ""), "%s 시점 손글씨 판독이 애매함 — %s (노랑/주황 표시) 시험일지와 대조하세요"
+                               % (p.get("period"), what)))
         taken = [p for p in one.get("points", []) if during(p)]
         seen = [p for p in one.get("points", []) if upto(p)]
         if taken:
@@ -1720,6 +1726,9 @@ def _fill_stability26(document, logs, period, spec, log, issues, why_of=None):
                     break
                 E.set_cell(cells[k], *(value if isinstance(value, list) else str(value).split("\n")))
                 E.set_vmerge(cells[k], False)
+            # 손글씨 판독이 애매한 완료 일자는 노랑 (담당자 2026-09: "애매한 것만 노랑마크로")
+            if any("done" in (p.get("unsure") or []) for p in taken) and len(cells) > 6:
+                E.highlight_cell(cells[6])
         if not any(one.get("why") or (why_of or {}).get(one["lot"]) for one, _ in rows):
             issues.append(("13.1", "", "장기 안정성 시험의 ‘실시 사유’ 는 시험일지에 없습니다 — "
                                        "변경관리·PV 내용을 보고 직접 적으세요"))
@@ -1757,6 +1766,11 @@ def _fill_stability26(document, logs, period, spec, log, issues, why_of=None):
                 continue
             values[k] += got
             E.set_cell(cells[k], "%s ~ %s" % (_trim(min(got)), _trim(max(got))))
+            # 범위에 보이는 값(최소·최대)이 애매한 판독이면 그 칸을 노랑으로
+            shaky = [float(p["assays"].get(part)) for p in taken
+                     if part in (p.get("unsure") or []) and p["assays"].get(part) is not None]
+            if any(v in (min(got), max(got)) for v in shaky):
+                E.highlight_cell(cells[k])
     bold_rows = set()
     for ri in heads:
         cells = _grid_cells_of(table.rows[ri], len(labels))

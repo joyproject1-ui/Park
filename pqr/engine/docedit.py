@@ -204,6 +204,16 @@ def highlight(document, needle="확인 필요", color="yellow"):
     return n
 
 
+def highlight_cell(cell, color="yellow"):
+    """칸 안 모든 런에 형광펜 — 손글씨 판독이 애매한 값(담당자 2026-09: "애매한 것만 노랑마크")."""
+    n = 0
+    for run in cell._tc.iter(qn("w:r")):
+        rpr = get_or_add(run, "rPr")
+        get_or_add(rpr, "highlight").set(qn("w:val"), color)
+        n += 1
+    return n
+
+
 # ---------- 문서 전체 ----------
 def loose(text):
     """빈칸 차이를 지운 꼴 — 같은 문구라도 결재본마다 일반 공백과 \xa0(줄바꿈 없는 공백)가 섞여 있다.
