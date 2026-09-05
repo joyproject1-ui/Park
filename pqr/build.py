@@ -625,6 +625,31 @@ def find_final_report(folder, matcher=None, include_drafts=False):
     return max(candidates, key=os.path.getmtime)
 
 
+SIDE_FILES = (AUTO_DRAFT_MARKER, "PQR 문의 목록", "PQR 작성 기록")
+
+
+def has_source_files(folder, matcher=None):
+    """제품 폴더에 근거 자료가 하나라도 있는가.
+
+    보고서 자신과, 프로그램이 옆에 남긴 글(문의 목록·작성 기록·초안 표시)은 자료가
+    아니다. 담당자가 폴더를 비우면 그 보고서는 더 이상 뒷받침되지 않는다
+    (담당자 2026-09: "자료가 없으면 보고서 완료 버튼이 보고서 작성 버튼으로").
+    """
+    if not folder or not os.path.isdir(folder):
+        return False
+    for name in os.listdir(folder):
+        if not os.path.isfile(os.path.join(folder, name)):
+            return True                       # 항 번호를 단 자료 폴더
+        if name.startswith(("~$", ".", "_읽어보기")):
+            continue
+        if any(name.startswith(side) for side in SIDE_FILES):
+            continue
+        if name.lower().endswith(FINAL_SUFFIXES) and any(k in name for k in FINAL_KEYWORDS):
+            continue                          # 보고서 자신
+        return True
+    return False
+
+
 def collect_final_reports(input_dir, items):
     """제품 폴더마다 완성본 보고서가 올라와 있는지 봅니다. {제품코드: 파일 이름}"""
     result = {}
@@ -639,7 +664,7 @@ def collect_final_reports(input_dir, items):
         if not code:
             continue
         found = find_final_report(folder_path, matcher)
-        if found:
+        if found and has_source_files(folder_path, matcher):
             result[code] = os.path.basename(found)
     return result
 
@@ -1161,7 +1186,10 @@ def build(input_dir=None, files=None, today=None, config=None, period=None):
             "form_group": form_group(meta.get("form", ""), config, name),
             "group": meta.get("group", ""),
             "item_files": item_files_by_product.get(code, {}),
-            # 폴더에 완성본(제출용) 보고서가 올라오면 화면에 '완성본' 단추가 생깁니다.
+            # 폴더에 완성본(제출용) 보고서가 올라오면 화면에 '보고서 완료' 단추가 생깁니다.
+            # 단, 근거 자료가 제품 폴더에서 사라졌으면 완료로 세우지 않습니다 — 그 보고서는
+            # 더 이상 폴더의 자료로 뒷받침되지 않으므로 다시 작성해야 합니다
+            # (담당자 2026-09: "자료가 없으면 보고서 완료 버튼이 보고서 작성 버튼으로").
             "final_report": final_reports.get(code, ""),
             # 3항(대상 제품)에 그대로 들어가는 허가 정보 — 제출용 보고서가 씁니다.
             "license": {name: meta.get(name, "") for name in

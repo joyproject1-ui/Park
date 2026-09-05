@@ -353,6 +353,25 @@ class FinalReportTest(unittest.TestCase):
         self.assertIn("제품품질평가", text)
         self.assertIn("레보클린", text)
 
+    def test_자료가_없으면_보고서_완료로_세우지_않는다(self):
+        """담당자 2026-09: "자료가 없으면 보고서 완료 버튼이 보고서 작성 버튼으로".
+
+        폴더에서 근거 자료를 지우면 그 보고서는 더 이상 폴더의 자료로 뒷받침되지 않는다 —
+        완료로 세워 두면 다시 만들 수 없다.
+        """
+        완성본 = os.path.join(self.folder,
+                              "[HP-110] 레보클린 2026년 제품품질평가 (제출용).docx")
+        shutil.copy(os.path.join(os.path.dirname(__file__), "..", "pqr", "data",
+                                 "edms_form.docx"), 완성본)
+        product = self.product()
+        self.assertTrue(product["collected"])                 # 자료가 있을 때는
+        self.assertTrue(product["final_report"])              # 완료로 선다
+        for name in os.listdir(self.folder):                  # 근거 자료를 모두 치우면
+            if name != os.path.basename(완성본):
+                os.remove(os.path.join(self.folder, name))
+        product = self.product()
+        self.assertEqual(product["final_report"], "")         # 다시 '보고서 작성' 으로
+
     def test_evidence_only_product_does_not_get_a_settled_conclusion(self):
         """근거 PDF 만 있고 수치를 읽지 못했으면 '규격에 만족' 결론을 확정하지 않습니다."""
         import zipfile
