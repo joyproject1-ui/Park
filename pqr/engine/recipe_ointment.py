@@ -7,6 +7,7 @@
 """
 import copy
 import datetime as _dt
+import os
 import re
 import statistics
 
@@ -1347,6 +1348,11 @@ def fill(document, data, product, period, today=None, log=None):
         _fill_stability26(document, logs, period, spec, log, issues, why)
     elif stab:
         _fill_stability(document, stab, log, limits["assay"])
+    elif _carry_stability(document, getattr(data, "prev_stability", None) or {},
+                          dict(getattr(data, "pv_reasons", None) or {},
+                               **CARRY.pv_reasons(document)), log, issues,
+                          getattr(data, "previous_name", "")):
+        pass                    # 전년도 결재본에서 옮겨 왔다 — 빈칸으로 두지 않는다
     else:
         for prefix in ("13.1", "13.2"):
             for tb in _tables(document, prefix):
@@ -1691,3 +1697,162 @@ def _fill_stability(document, stab, log, assay_limits=None):
             fill_trend(t133[1], stab.get("trend_exp", []), stab.get("trend_exp_lots", ""), stab.get("trend_exp_comment", ""))
     log("13항: 안정성 %d/%d/%d 표" % (len(t131), len(t132), len(t133)))
 
+
+
+def _carry_stability(document, prev, why_of, log, issues, source=""):
+    """전년도 결재본의 13.1 · 13.3 을 그대로 옮겨 놓는다 (담당자 2026-09).
+
+    올해 안정성 시험일지를 읽지 못했을 때 13항을 빈칸으로 두지 않기 위한 것이다.
+    옮긴 값은 작년 것이므로 두 표의 '특이사항' 에 갱신하라는 줄을 덧붙이고 문의 목록에도 남긴다.
+    값을 새로 지어내지는 않는다 — 전년도 결재본에 적힌 글자를 그대로 옮길 뿐이다.
+    """
+    쓴표 = 0
+    쓴표 += _carry_131(document, prev.get("13.1") or [], why_of or {}, source)
+    쓴표 += _carry_133(document, prev.get("13.3") or [], source)
+    if 쓴표:
+        log("13항: 전년도 결재본에서 옮겨 옴 (표 %d개)" % 쓴표)
+        issues.append(("13", os.path.basename(source or ""),
+                       "올해 안정성 시험일지를 읽지 못해 전년도 결재본의 13항을 그대로 옮겼습니다 "
+                       "— 13항 최신 안정성 시험 자료를 올려 다시 만드세요"))
+    return 쓴표
+
+
+def _carry_131(document, grid, why_of, source):
+    """13.1 장기 안정성 실시 내역 — 열 이름이 같은 칸만 옮긴다.
+
+    서식이 바뀌며 마지막 열이 '비고' 에서 '실시 사유' 가 되었다. 이름이 다르면 옮기지 않고,
+    실시 사유는 10.1 밸리데이션 사유에서 채운다.
+    """
+    if len(grid) < 2:
+        return 0
+    tables = _tables(document, "13.1")
+    if not tables:
+        return 0
+    table = tables[0]
+    width = E.grid_width(table)
+    새머리 = {CARRY.squeeze(t): i for i, t in
+              enumerate(E.cell_text(c) for c in E.grid_cells(table.rows[0], width).values())}
+    옛머리 = {CARRY.squeeze(t): j for j, t in enumerate(grid[0])}
+    같은열 = {i: 옛머리[name] for name, i in 새머리.items() if name in 옛머리}
+    lot_col = 옛머리.get("제조번호")
+    줄 = [row for row in grid[1:]
+          if lot_col is not None and CARRY.LOT.match((row[lot_col] or "").strip())]
+    if not 줄:
+        return 0
+    f, l = E.fit_rows(table, 1, len(table.rows) - 2, len(줄))
+    for k, row in enumerate(줄):
+        cells = E.grid_cells(table.rows[f + k], width)
+        for i, cell in cells.items():
+            if i == 0:
+                E.set_cell(cell, str(k + 1)); E.set_vmerge(cell, False)
+                E.clear_diag(cell)
+                continue
+            j = 같은열.get(i)
+            글 = (row[j] if j is not None else "") or ""
+            if not 글 and i == max(새머리.values() or [0]):
+                글 = why_of.get((row[lot_col] or "").strip(), "")
+            E.set_vmerge(cell, False)
+            if "\n" in 글:
+                E.set_cell_plain(cell, *글.split("\n"))
+            else:
+                E.set_cell(cell, 글)
+            E.clear_diag(cell)
+    _note_carried(table, source, _old_comment(grid))
+    return 1
+
+
+def _carry_133(document, grid, source):
+    """13.3 경향 분석 결과 — 성분 이름으로 열을 맞춰 옮긴다."""
+    if len(grid) < 3:
+        return 0
+    tables = _tables(document, "13.3")
+    if not tables:
+        return 0
+    table = tables[0]
+    width = E.grid_width(table)
+
+    # 열은 그리드 번호로 짚는다 — '시험항목' 칸이 두 열을 덮어 자리로 세면 한 칸씩 밀린다.
+    새성분 = {CARRY.squeeze(E.cell_text(c)): i
+              for i, c in E.grid_cells(table.rows[1], width).items()
+              if CARRY.squeeze(E.cell_text(c))}
+    옛성분 = {CARRY.squeeze(t): j for j, t in enumerate(grid[1]) if CARRY.squeeze(t)}
+    if not 새성분 or not 옛성분:
+        return 0
+    라벨 = {}                                    # 옛 표의 '관리규격·최소·최대·경향분석결과' 줄
+    장기 = []                                    # 연도별 값 줄
+    for row in grid[2:]:
+        머리 = CARRY.squeeze(row[0]) if row else ""
+        if 머리.startswith("특이사항"):
+            continue
+        if 머리 in ("관리규격", "최소", "최대", "경향분석결과"):
+            라벨[머리] = row
+        elif any((row[k] or "").strip() for k in 옛성분.values()):
+            장기.append(row)
+    if not 장기 and not 라벨:
+        return 0
+    옮김 = 0
+    첫줄 = next((i for i, r in enumerate(table.rows)
+                 if CARRY.squeeze(E.cell_text(E.raw_cells(r)[0])) == "장기"), None)
+    끝줄 = next((i for i, r in enumerate(table.rows)
+                 if CARRY.squeeze(E.cell_text(E.raw_cells(r)[0])) == "관리규격"), None)
+    if 첫줄 is not None and 끝줄 is not None and 장기:
+        f, l = E.fit_rows(table, 첫줄, 끝줄 - 1, len(장기))
+        for k, row in enumerate(장기):
+            cells = E.grid_cells(table.rows[f + k], width)
+            for name, i in 새성분.items():
+                j = 옛성분.get(name)
+                if j is not None and i in cells:
+                    E.set_vmerge(cells[i], False)
+                    E.set_cell(cells[i], (row[j] or "").strip())
+                    E.clear_diag(cells[i])
+            # 연도 칸(성분 열이 아닌 칸)도 그리드 번호 그대로 옮긴다 — 표 너비가 같을 때만.
+            if len(grid[1]) == width:
+                for i, cell in cells.items():
+                    if i == 0 or i in 새성분.values():
+                        continue
+                    E.set_vmerge(cell, False)
+                    E.set_cell(cell, (row[i] or "").strip())
+                    E.clear_diag(cell)
+        옮김 += len(장기)
+    for row in table.rows:
+        머리 = CARRY.squeeze(E.cell_text(E.raw_cells(row)[0]))
+        옛 = 라벨.get(머리)
+        if 옛 is None:
+            continue
+        cells = E.grid_cells(row, width)
+        for name, i in 새성분.items():
+            j = 옛성분.get(name)
+            if j is not None and i in cells:
+                E.set_vmerge(cells[i], False)
+                E.set_cell(cells[i], (옛[j] or "").strip())
+                E.clear_diag(cells[i])
+        옮김 += 1
+    if not 옮김:
+        return 0
+    _note_carried(table, source, _old_comment(grid))
+    return 1
+
+
+def _note_carried(table, source, 옛글=None):
+    """표 맨 아래 '특이사항' 칸을 전년도 문안으로 바꾸고, 어디서 옮겼는지 한 줄 덧붙인다.
+
+    옮겨 온 값이 작년 것이므로 문안도 작년 것이어야 앞뒤가 맞는다 — 빈 서식의 예시
+    문구를 그대로 두면 표에 없는 해를 가리키게 된다.
+    """
+    last = E.raw_cells(table.rows[-1])[0]
+    글 = E.cell_text(last)
+    if not 글.lstrip().startswith("특이사항"):
+        return
+    바탕 = 옛글 if 옛글 is not None else 글.split("\n")[1:]
+    줄 = [l for l in 바탕 if l.strip() and l.strip() != "N/A"]
+    줄.append("* 전년도 결재본%s의 내용을 옮긴 것입니다 — 올해 안정성 시험 자료로 갱신하세요."
+              % (("(%s)" % os.path.basename(source)) if source else ""))
+    E.set_cell_plain(last, "특이사항 (Comment)", *줄)
+
+
+def _old_comment(grid):
+    """전년도 표 맨 아래 '특이사항' 칸의 글줄 (머리말 '특이사항 (Comment)' 은 뺀다)."""
+    if not grid:
+        return None
+    글 = (grid[-1] or [""])[0] or ""
+    return 글.split("\n")[1:] if 글.lstrip().startswith("특이사항") else None

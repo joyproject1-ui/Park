@@ -273,6 +273,9 @@ def write_report(folder, product, period, out_path, today=None, recipe=None, log
             old_document = docx.Document(prev_docx)
             carry_module.carry(document, old_document, log_)
             data.pv_reasons = carry_module.pv_reasons(old_document)
+            # 올해 안정성 시험일지를 읽지 못했을 때 13항을 빈칸으로 두지 않으려고 미리 읽어 둔다
+            data.prev_stability = carry_module.stability_tables(old_document)
+            data.previous_name = os.path.basename(previous)
             if data.pv_reasons:
                 log_("전년도 10.1 에서 밸리데이션 사유 %d Lot" % len(data.pv_reasons))
         except Exception as error:

@@ -171,3 +171,43 @@ def pv_reasons(document):
                 for lot in LOT.findall(E.cell_text(cells[lot_col]).replace("\n", " ")):
                     out.setdefault(lot, why)
     return out
+
+
+def _grid_text(table):
+    """[[그리드 열마다의 글자]] — 가로 병합은 덮는 열 모두에 같은 글자를 넣는다."""
+    grid = table._tbl.find(qn("w:tblGrid"))
+    width = len(grid.findall(qn("w:gridCol"))) if grid is not None else 0
+    out = []
+    for row in table.rows:
+        line, col = [""] * width, 0
+        for cell in E.raw_cells(row):
+            pr = cell._tc.find(qn("w:tcPr"))
+            span_el = pr.find(qn("w:gridSpan")) if pr is not None else None
+            span = int(span_el.get(qn("w:val"))) if span_el is not None else 1
+            text = E.cell_text(cell)
+            for k in range(col, min(col + span, width)):
+                line[k] = text
+            col += span
+        out.append(line)
+    return out
+
+
+def stability_tables(old_document):
+    """전년도 결재본의 13항 표를 글자 그대로 읽는다 — {"13.1": [[…]], "13.3": [[…]]}.
+
+    담당자 2026-09: "안정성도 공란인데 전년도 PQR 결재본 참고해서 작성한 다음에
+    13항 최신 안정성 시험 파일로 업로드해서 작성하면 돼."
+    올해 시험일지를 읽지 못했을 때, 13항을 빈칸으로 두는 대신 여기서 읽은 전년도
+    내용을 옮겨 놓고 '갱신 필요' 로 알린다. 서식은 해가 바뀌며 13.2 가 13.3 이 되었다.
+    """
+    by = _tables_by_section(old_document)
+    out = {}
+    first = (by.get("13.1") or [None])[0]
+    if first is not None:
+        out["13.1"] = _grid_text(first)
+    for section in ("13.3", "13.2"):
+        got = by.get(section)
+        if got:
+            out["13.3"] = _grid_text(got[0])
+            break
+    return out

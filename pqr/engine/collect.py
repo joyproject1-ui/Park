@@ -42,6 +42,8 @@ class ProductData(object):
         self.stability_logs = []    # 13항 시험일지 판독 결과 (비전 또는 담당자가 적은 .json)
         self.stability_trend = []   # 이미 채워 둔 안정성 경향표(HLF-QC-126-06) 를 다시 읽은 것
         self.pv_reasons = {}        # {제조번호: 밸리데이션 실시 사유} — 전년도 결재본 10.1 에서
+        self.prev_stability = {}    # 전년도 결재본의 13.1 · 13.3 표 (올해 시험일지를 못 읽었을 때)
+        self.previous_name = ""     # 참고한 전년도 결재본 파일 이름
         self.previous_report = None
         self.files = {}           # item -> [paths]
         self.issues = []          # [(항, 파일, 설명)]
