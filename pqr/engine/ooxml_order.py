@@ -76,17 +76,35 @@ _SEQ = {"pPr": PPR, "rPr": RPR, "tcPr": TCPR, "trPr": TRPR,
         "tcBorders": TCBORDERS, "tblPr": TBLPR, "tbl": TBL, "tblBorders": TBLBORDERS,
         "settings": SETTINGS}
 
+# 속성 요소가 맨 앞에 와야 하는 부모 — 나머지 자식(w:t, w:br, w:tab …)은 모두 그 뒤다.
+# 담당자 PC 의 양식(최종 공양식 2026PQR)은 12항 run 에 rPr 이 없어 get_or_add(run, "rPr") 가
+# KeyError 'r' 로 넘어져 보고서가 요약본으로 떨어졌다(2026-09-05 22:18 작성 기록).
+_HEAD = {"r": ["rPr"], "p": ["pPr"], "tc": ["tcPr"], "tr": ["trPr"]}
+
 
 def _local(el):
     return el.tag.split("}")[-1]
 
 
 def place(parent, child):
-    """child 를 parent 의 스키마 순서에 맞는 자리에 넣는다(이미 붙어 있어도 재배치)."""
-    seq = _SEQ[_local(parent)]
+    """child 를 parent 의 스키마 순서에 맞는 자리에 넣는다(이미 붙어 있어도 재배치).
+
+    순서표에 없는 부모면 맨 뒤에 붙인다 — 어떤 요소 때문에 보고서 전체가 멈추면 안 된다.
+    """
+    kind = _local(parent)
     name = _local(child)
     if child.getparent() is not None:
         child.getparent().remove(child)
+    if kind in _HEAD:
+        if name in _HEAD[kind]:
+            parent.insert(0, child)                # 속성 요소는 언제나 맨 앞
+        else:
+            parent.append(child)
+        return child
+    seq = _SEQ.get(kind)
+    if seq is None:
+        parent.append(child)
+        return child
     try:
         rank = seq.index(name)
     except ValueError:
@@ -115,7 +133,9 @@ def get_or_add(parent, name):
 
 def resort(parent):
     """이미 어긋난 자식들을 스키마 순서대로 다시 세운다."""
-    seq = _SEQ[_local(parent)]
+    seq = _SEQ.get(_local(parent))
+    if seq is None:
+        return 0
     kids = list(parent)
     order = []
     for i, k in enumerate(kids):
