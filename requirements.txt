@@ -7,3 +7,7 @@ pdfplumber>=0.11      # PDF 글자를 표 배치 그대로 읽기 (pdftotext -la
 pdfminer.six>=20221105   # pdfplumber 가 쓰는 PDF 엔진
 anthropic>=0.60        # 손글씨 안정성시험일지 판독 (Claude 비전) — API 키가 있을 때만 쓴다
 pywin32>=306; sys_platform == "win32"   # Windows 에서 Word·Excel 로 .doc/.xls 변환 (COM)
+rapidocr-onnxruntime>=1.3   # 손글씨 안정성시험일지 오프라인 판독 (모델 내장, 인터넷·API 키 불필요)
+pypdfium2>=4            # 스캔 PDF 를 그림으로 바꿔 판독기에 넣는다
+numpy>=1.24             # 판독기·표선 찾기
+pillow>=9               # 그림 다루기

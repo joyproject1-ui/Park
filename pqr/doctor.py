@@ -157,9 +157,16 @@ def report():
 
     lines.append("손글씨 안정성시험일지 판독(13항):")
     key_on = bool(os.environ.get("ANTHROPIC_API_KEY"))
-    lines.append(_line(key_on, "ANTHROPIC_API_KEY",
-                       "켜짐 — 시험일지 PDF 를 프로그램이 직접 읽습니다" if key_on
-                       else "없음 — '13. 안정성시험일지 판독.json' 이 제품 폴더에 있어야 13항이 올해 값입니다"))
+    try:
+        from .engine import handwriting
+        offline = handwriting.available()
+    except Exception:
+        offline = False
+    lines.append(_line(key_on, "ANTHROPIC_API_KEY (Claude 비전)",
+                       "켜짐 — 시험일지 PDF 를 정확히 읽습니다" if key_on else "없음 — 오프라인 판독기로 대신합니다"))
+    lines.append(_line(offline, "오프라인 판독기 (RapidOCR)",
+                       "설치됨 — 깨끗이 읽힌 값만 쓰고 애매한 칸은 노랑/주황으로 표시합니다" if offline
+                       else "없음 — PQR-업데이트.bat 을 실행하면 설치됩니다"))
     lines.append("")
 
     lines.append("판정:")

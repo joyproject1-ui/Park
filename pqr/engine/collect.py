@@ -388,6 +388,52 @@ def collect(folder, product_name=None, log=None):
                 log("  [13] %s — 안정성 시험일지 판독 결과 %d Lot" % (os.path.basename(p), len(data.stability_logs)))
             except Exception as error:
                 note("13", p, "안정성 판독 파일을 읽지 못했습니다 — %s" % error)
+    # 판독 파일(.json)도 없고 Claude 비전(API 키)도 없으면 PC 에서 오프라인으로 손글씨를 읽는다
+    # (담당자 2026-09: "API 안 하고 json 없이 최대한 판독, 애매한 것만 노랑"). 깨끗이 읽힌 값만
+    # 쓰고 나머지는 '애매' 로 남겨 보고서가 노랑·주황으로 칠한다. 결과는 판독 파일로 저장해
+    # 다음부터는 그것을 쓴다 — 담당자가 값을 손보면 그 값이 우선이다.
+    scanned = [p for p, is_scan in data.stability_files if is_scan]
+    if scanned and not data.stability_logs:
+        try:
+            from . import vision as vision_mod
+            api_on = vision_mod.available()
+        except Exception:
+            api_on = False
+        if not api_on:
+            from . import handwriting
+            if handwriting.available():
+                specs = {}
+                for recs in data.coa.values():
+                    for a in (recs.get("924") or {}).get("assays") or []:
+                        try:
+                            if a.get("part") and a["part"] not in specs:
+                                specs[a["part"]] = (float(a["lo"]), float(a["hi"]))
+                        except (TypeError, ValueError, KeyError):
+                            pass
+                log("  [13] 손글씨 시험일지 %d장을 오프라인으로 판독합니다 (API 키 없음)" % len(scanned))
+                logs = handwriting.read_folder(scanned, specs or None, log)
+                if logs:
+                    try:                                            # 지난 경향표가 있으면 그 값이 우선
+                        from .readers import trend as trend_reader
+                        sheets = []
+                        for tp in got.get("16", []) + got.get("13", []) + got.get("첨부", []):
+                            if (tp.lower().endswith(".xlsx") and not os.path.basename(tp).startswith("~$")
+                                    and trend_reader.is_trend_file(tp)):
+                                try:
+                                    sheets += trend_reader.read_trend(tp)
+                                except Exception:
+                                    pass
+                        handwriting.merge_known(logs, sheets, log)
+                    except Exception:
+                        pass
+                    data.stability_logs += logs
+                    shaky = sum(len(p.get("unsure") or []) for one in logs for p in one["points"])
+                    note("13", "", "손글씨 시험일지 %d장을 오프라인으로 판독했습니다 — 애매한 칸 %d개는 "
+                                   "노랑(워드)·주황(엑셀)으로 표시했으니 시험일지와 대조하세요" % (len(logs), shaky))
+                    handwriting.save_cache(folder, logs, log)
+            else:
+                note("13", "", "손글씨 시험일지를 읽을 판독기가 없습니다 — PQR-업데이트.bat 을 실행해 "
+                               "판독기(RapidOCR)를 설치하거나 API 키를 두세요")
     # 이미 채워 둔 경향표(HLF-QC-126-06)는 13항·16항 어디에 있든 바탕으로 삼는다 —
     # 담당자가 손으로 옮겨 적어 둔 값이라 스캔 판독보다 믿을 만하다.
     for item in ("13", "16", "첨부"):

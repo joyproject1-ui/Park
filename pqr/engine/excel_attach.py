@@ -331,14 +331,16 @@ def _write_trend(form, folder, data, product, today, report_path):
     def points_of(one, part, shaky=None):
         out = {}
         for point in one.get("points", []):
-            got = re.findall(r"\d{4}", point.get("done") or "")
+            got = re.findall(r"\d{4}", point.get("done") or "") or \
+                re.findall(r"\d{4}", point.get("expected") or "")     # 일자를 못 읽었으면 예정 시기로
             if year_to and got and int(got[0]) > year_to:
                 continue
             value = _num((point.get("assays") or {}).get(part))
+            if shaky is not None and part in (point.get("unsure") or []):
+                shaky.add(point["period"])         # 손글씨 판독이 애매한 시점 — 시트에서 주황(값은 비움)
+                continue
             if value is not None:
                 out[point["period"]] = float(value)
-                if shaky is not None and part in (point.get("unsure") or []):
-                    shaky.add(point["period"])     # 손글씨 판독이 애매한 값 — 시트에서 노랑
         return out
 
     parts = []                                    # [(성분, 시험항목 글, 하한, 상한, 지난 Lot)]
@@ -373,18 +375,20 @@ def _write_trend(form, folder, data, product, today, report_path):
         for one in logs:
             shaky = set()
             values = points_of(one, part, shaky)
-            if not values:
+            if not values and not shaky:
                 continue
             lot = one["lot"]
-            if shaky:
-                unsure[lot] = shaky
             if lot not in seen:
                 seen[lot] = {}
                 rows.append(lot)
+            # 지난 경향표(담당자가 옮겨 적은 값)가 우선 — 판독값은 거기 없는 시점만 더한다
             for period, value in values.items():
-                if seen[lot].get(period) != value:
+                if period not in seen[lot]:
+                    seen[lot][period] = value
                     added += 1
-                seen[lot][period] = value
+            shaky = set(shaky) - set(seen[lot])
+            if shaky:
+                unsure[lot] = shaky
         sheets.append({"form_sheet": FORM_SHEETS[i], "name": "함량(%s)" % part, "item": item,
                        "lots": [(lot, seen[lot]) for lot in rows], "unsure": unsure,
                        "lcl": float(lo if lo is not None else 90),

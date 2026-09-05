@@ -1682,17 +1682,24 @@ def _fill_stability26(document, logs, period, spec, log, issues, why_of=None):
     year_to = lotcode.year_of((period or {}).get("to"))
     _trim = lambda v: ("%%.%df" % _decimals_of(logs)) % v
 
-    def done_year(point):
+    def years_of(point):
         got = re.findall(r"\d{4}", point.get("done") or "")
-        return int(got[0]) if got else None
+        if got:
+            return [int(got[0])]
+        if point.get("expected"):
+            # 완료 일자를 못 읽은 시점(오프라인 판독) — 제조일자+기간으로 어림한 시기. 연말(9~12월)
+            # 예정이면 이듬해에 끝났을 수도 있어 두 해 모두 후보로 둔다. 13.1 에는 '확인 필요' 노랑으로 선다.
+            y, mo = int(point["expected"][:4]), int(point["expected"][5:7])
+            return [y] + ([y + 1] if mo >= 9 else [])
+        return []
 
     def upto(point):        # 13.3 경향: 평가 연도까지 끝난 시점
-        got = done_year(point)
-        return (not year_to) or (got is not None and got <= year_to)
+        years = years_of(point)
+        return (not year_to) or (bool(years) and min(years) <= year_to)
 
     def during(point):      # 13.1 실시 내역: 평가 연도에 끝난 시점
-        got = done_year(point)
-        return (not year_to) or got == year_to
+        years = years_of(point)
+        return (not year_to) or (year_to in years)
 
     rows, trend = [], []
     for one in logs:
@@ -1720,7 +1727,8 @@ def _fill_stability26(document, logs, period, spec, log, issues, why_of=None):
             cells = E.raw_cells(table.rows[f + i])
             why = one.get("why") or (why_of or {}).get(one["lot"]) or ""
             put = [str(i + 1), one.get("year") or "", [p["period"] for p in taken], one["lot"],
-                   one.get("pack") or "", one.get("store") or "", [p["done"] for p in taken], why]
+                   one.get("pack") or "", one.get("store") or "",
+                   [p["done"] or "확인 필요" for p in taken], why]
             for k, value in enumerate(put):
                 if k >= len(cells):
                     break
@@ -1728,6 +1736,8 @@ def _fill_stability26(document, logs, period, spec, log, issues, why_of=None):
                 E.set_vmerge(cells[k], False)
             # 손글씨 판독이 애매한 완료 일자는 노랑 (담당자 2026-09: "애매한 것만 노랑마크로")
             if any("done" in (p.get("unsure") or []) for p in taken) and len(cells) > 6:
+                if not any(p.get("done") for p in taken):
+                    E.set_cell(cells[6], "확인 필요")
                 E.highlight_cell(cells[6])
         if not any(one.get("why") or (why_of or {}).get(one["lot"]) for one, _ in rows):
             issues.append(("13.1", "", "장기 안정성 시험의 ‘실시 사유’ 는 시험일지에 없습니다 — "
@@ -1760,16 +1770,20 @@ def _fill_stability26(document, logs, period, spec, log, issues, why_of=None):
         if cells.get(1) is not None:
             E.set_cell(cells[1], "%s%s" % (one.get("year") or "", mark))
         for k, part in parts:
-            got = [p["assays"].get(part) for p in taken]
-            got = [float(x) for x in got if x is not None]
-            if not got or cells.get(k) is None:
+            if cells.get(k) is None:
                 continue
-            values[k] += got
-            E.set_cell(cells[k], "%s ~ %s" % (_trim(min(got)), _trim(max(got))))
-            # 범위에 보이는 값(최소·최대)이 애매한 판독이면 그 칸을 노랑으로
-            shaky = [float(p["assays"].get(part)) for p in taken
-                     if part in (p.get("unsure") or []) and p["assays"].get(part) is not None]
-            if any(v in (min(got), max(got)) for v in shaky):
+            shaky = [p for p in taken if part in (p.get("unsure") or [])]
+            got = [p["assays"].get(part) for p in taken if part not in (p.get("unsure") or [])]
+            got = [float(x) for x in got if x is not None]
+            if not got and not shaky:
+                continue
+            if got:
+                values[k] += got
+                E.set_cell(cells[k], "%s ~ %s" % (_trim(min(got)), _trim(max(got))))
+            else:
+                E.set_cell(cells[k], "확인 필요")                 # 그해 값을 하나도 못 읽었다
+            # 애매한 판독이 섞인 해는 칸을 노랑으로 — 값은 깨끗이 읽힌 것만으로 범위를 냈다
+            if shaky:
                 E.highlight_cell(cells[k])
     bold_rows = set()
     for ri in heads:

@@ -458,8 +458,8 @@ def _fill_sheet(data, sheet_name, product, lots, item, storage, lcl, ucl, remark
             v = vals.get(p)
             shaky = name is not None and p in (unsure.get(name) or ())
             style = value_style if v is not None else diag[value_style]
-            if v is not None and shaky:
-                style = yellow[value_style]            # 손글씨 판독이 애매한 값 — 노랑
+            if shaky:
+                style = yellow[value_style]            # 손글씨 판독이 애매한 시점 — 주황(값이 없으면 빈 주황 칸)
             xml = set_cell(xml, "%s%d" % (col, row), v, style=str(style))
     for i in range(ROWS):                              # 그래프가 보는 미러 행의 캐시값
         row = MIRROR_ROW + i

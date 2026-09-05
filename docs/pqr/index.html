@@ -2593,9 +2593,12 @@ function renderSourceNote(){
 function versionNote(){
   const version = SOURCE.program_version;
   if (!version) return "";
-  const reader = SOURCE.handwriting_reader === true
-    ? ` · 손글씨 시험일지 판독: <b>켜짐</b>`
-    : ` · 손글씨 시험일지 판독: <b>꺼짐</b>(API 키 없음 — 13항은 <code>13. 안정성시험일지 판독.json</code> 이 있어야 올해 값)`;
+  const hw = SOURCE.handwriting_reader;
+  const reader = hw === "api" || hw === true
+    ? ` · 손글씨 시험일지 판독: <b>Claude 비전(API)</b>`
+    : hw === "offline"
+      ? ` · 손글씨 시험일지 판독: <b>오프라인(RapidOCR)</b> — 애매한 칸은 노랑/주황`
+      : ` · 손글씨 시험일지 판독: <b>꺼짐</b> — <code>PQR-업데이트.bat</code> 을 실행하면 오프라인 판독기가 설치됩니다`;
   return `<br><span class="muted">프로그램 버전: ${esc(version)}`
     + ` · 화면이 바뀌지 않으면 <code>PQR-업데이트.bat</code> 을 실행하세요.${reader}</span>`;
 }

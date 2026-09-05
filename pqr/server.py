@@ -326,8 +326,9 @@ class Workspace(object):
         payload["program_version"] = program_version()
         # 손글씨 안정성시험일지 판독이 켜져 있는지 — API 키(ANTHROPIC_API_KEY)가 있어야 켜진다
         try:
-            from .engine import vision
-            payload["handwriting_reader"] = bool(vision.available())
+            from .engine import vision, handwriting
+            payload["handwriting_reader"] = ("api" if vision.available()
+                                            else "offline" if handwriting.available() else False)
         except Exception:
             payload["handwriting_reader"] = False
         payload["revision"] = self.revision
