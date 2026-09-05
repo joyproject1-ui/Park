@@ -79,6 +79,41 @@ def _tables(document, prefix):
     return [document.tables[i] for i in find_tables(document, prefix)]
 
 
+def _note_numbers_under(document, prefix):
+    """prefix 항(9.2 …) 안에 이미 있는 각주 번호들 — 양식의 '1) 모든 Lot 의 …' 같은 것."""
+    numbers = set()
+    body = document.element.body
+    inside = False
+    for el in body.iterchildren():
+        if el.tag != qn("w:p"):
+            continue
+        text = "".join(t.text or "" for t in el.iter(qn("w:t"))).strip()
+        if not text:
+            continue
+        m = re.match(r"^(\d{1,2}(?:\.\d+)*)[.\s]", text)
+        if m and len(text) < 80:
+            inside = m.group(1).startswith(prefix)
+            continue
+        if inside:
+            n = re.match(r"^(\d)\)", text)
+            if n:
+                numbers.add(int(n.group(1)))
+    return numbers
+
+
+def _mark_header(table, word, number):
+    """머리행 칸(예: '개개')의 글 끝에 각주 번호 'n)' 를 붙인다 — 뒤에서 윗첨자로 바뀐다."""
+    for row in table.rows[:3]:
+        for cell in row.cells:
+            if re.sub(r"\s+", "", cell.text) == word:
+                paragraphs = [p for p in cell.paragraphs if p.text.strip()]
+                if not paragraphs or not paragraphs[-1].runs:
+                    return False
+                paragraphs[-1].runs[-1].text += "%d)" % number
+                return True
+    return False
+
+
 def _by_header(tables, *words):
     for t in tables:
         head = re.sub(r"\s+", "", _text(t._tbl.findall(qn("w:tr"))[0]))
@@ -1155,13 +1190,23 @@ def fill(document, data, product, period, today=None, log=None):
     for t in reversed(t91):
         for nt in reversed(notes):
             E.note_after(document, t, nt)
-    for section in ("9.2.1",):
-        tabs = _tables(document, section)
-        tb = _by_header(tabs, "생균수"); tn = _by_header(tabs, "입자도")
-        if tn is not None:
-            E.note_after(document, tn, notes[-1])
-        if tb is not None and odd_bio:
-            E.note_after(document, tb, notes[0])
+    # 9.2 — 질량 각주는 그것을 설명하는 표(포장 질량·기밀도 표) 바로 아래 둔다. 양식에는 이미
+    # '1) 모든 Lot 의 시험결과가 0 개(매)…' 각주가 있으므로 번호는 그다음부터 쓴다
+    # (담당자 2026-09 점검: 11쪽에 '1)' 이 둘이고 질량 표보다 앞에 놓여 있었다).
+    # 표는 detail92.tables_92 로 찾는다 — 양식의 각주 줄('1) 모든 Lot …')이 제목처럼 보여
+    # 제목 기준 찾기(_tables)로는 그 아래 질량 표를 놓친다.
+    from . import detail92 as _d92
+    tabs92 = [t for t, _ in _d92.tables_92(document)]
+    next_no = max(_note_numbers_under(document, "9.2") or [0]) + 1
+    tb = _by_header(tabs92, "생균수")
+    if tb is not None and odd_bio:
+        E.note_after(document, tb, "%d) %s" % (next_no, notes[0].split(") ", 1)[1]))
+        _mark_header(tb, "생균수", next_no)
+        next_no += 1
+    tm = _by_header(tabs92, "질량", "기밀도") or _by_header(tabs92, "질량", "개개")
+    if tm is not None:
+        E.note_after(document, tm, "%d) %s" % (next_no, notes[-1].split(") ", 1)[1]))
+        _mark_header(tm, "개개", next_no)
 
     # ---------- 10항 ----------
     # 10.1 공정밸리데이션: 평가 년도에 보고서가 난 PV 를 채운다 (마스터파일)

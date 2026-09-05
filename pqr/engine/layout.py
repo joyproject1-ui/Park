@@ -246,6 +246,7 @@ def apply(document, log=None, product_title=None, edms=None):
     log("작은 제목 앞 빈 줄: %d" % E.blank_before_subheadings(document))
     log("사선 칸의 N/A 삭제: %d" % E.drop_na_in_diag_cells(document))
     log("항 제목 줄맞춤: %d" % E.align_section_titles(document))
+    log("9.2 소제목 번호 바로잡음: %d" % E.renumber_subheadings(document, "9.2"))
     log("‘확인 필요’ 노랑 표시: %d" % E.highlight(document, "확인 필요"))
     log("행 분할 금지: %d" % E.no_split_rows(document))
     keep = 0

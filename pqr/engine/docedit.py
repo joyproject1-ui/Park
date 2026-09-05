@@ -1102,6 +1102,47 @@ def keep_headings_with_next(document):
     return n
 
 
+def renumber_subheadings(document, parent="9.2"):
+    """parent 아래 소제목 번호가 어긋난 곳을 차례대로 바로잡는다 → 고친 수.
+
+    디겐타안연고 2026 양식에 '9.2.1 · 9.2.2 · 9.2.1.3 포장 완료 후' 처럼 셋째가 어긋나 있다
+    (담당자 2026-09 점검). 9.2.1 아래 9.2.1.1 같은 정상적인 하위 번호는 그대로 둔다 —
+    바로 위 소제목(9.2.k)에 속하지 않는 더 깊은 번호(9.2.a.b, a≠k)만 9.2.(k+1) 로 바꾼다.
+    """
+    import re as _re
+    head = _re.compile(r"^\s*" + _re.escape(parent) + r"\.(\d+)((?:\.\d+)*)(?=[.\s]|$)")
+    last, fixed = 0, 0
+    for p in document.paragraphs:
+        text = p.text
+        m = head.match(text)
+        if not m:
+            if _re.match(r"^\s*\d{1,2}[.\s]", text) and not text.strip().startswith(parent):
+                last = 0                                   # 다른 항으로 넘어갔다
+            continue
+        a, deeper = int(m.group(1)), m.group(2)
+        if not deeper:
+            last = a
+            continue
+        if a == last or not last:
+            continue                                       # 9.2.k 아래의 정상적인 9.2.k.x
+        old = "%s.%d%s" % (parent, a, deeper)
+        new_no = "%s.%d" % (parent, last + 1)
+        # 번호가 여러 run 에 쪼개져 있을 수 있다('9.2.' '1.' '3' ' 포장 완료 후') — 번호를 덮는
+        # run 들을 앞 run 하나로 모아 바꾼다.
+        runs, joined = [], ""
+        for r in p.runs:
+            runs.append(r)
+            joined += r.text
+            if old in joined:
+                runs[0].text = joined.replace(old, new_no, 1)
+                for extra in runs[1:]:
+                    extra.text = ""
+                fixed += 1
+                last += 1
+                break
+    return fixed
+
+
 def superscript_note_marks(document):
     """표 안 값 끝에 붙은 각주 번호('82.621)' 의 '1)')를 윗첨자로 만든다."""
     import copy as _copy
