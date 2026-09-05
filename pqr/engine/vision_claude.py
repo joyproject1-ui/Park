@@ -166,4 +166,29 @@ def read_stability_into(data, log=None):
     stab, issues = build_tables(records, data, period)
     data.stability = stab
     data.issues.extend(issues)
+    _save_records(data, records, log)
     return stab
+
+
+CACHE_NAME = "13. 안정성시험일지 판독.json"
+
+
+def _save_records(data, records, log=None):
+    """판독 결과를 제품 폴더에 남긴다 — 다음 번에는 다시 읽지 않는다.
+
+    시험일지를 압축으로 올리면 프로그램이 임시 폴더에 풀기 때문에, 거기 두면 다음
+    실행에서 사라진다. 제품 폴더에 두어야 담당자가 값을 손보고 다시 만들 수도 있다.
+    """
+    folder = getattr(data, "folder", "") or ""
+    if not records or not folder or not os.path.isdir(folder):
+        return
+    logs = getattr(data, "stability_logs", None) or records
+    path = os.path.join(folder, CACHE_NAME)
+    try:
+        with open(path, "w", encoding="utf-8") as handle:
+            json.dump(logs, handle, ensure_ascii=False, indent=2)
+        if log:
+            log("  손글씨 판독 결과를 %s 에 저장했습니다 — 다음부터는 이 파일을 씁니다"
+                % CACHE_NAME)
+    except OSError as error:
+        data.issues.append(("13", CACHE_NAME, "판독 결과를 저장하지 못했습니다 — %s" % error))

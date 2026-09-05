@@ -44,6 +44,7 @@ class ProductData(object):
         self.pv_reasons = {}        # {제조번호: 밸리데이션 실시 사유} — 전년도 결재본 10.1 에서
         self.prev_stability = {}    # 전년도 결재본의 13.1 · 13.3 표 (올해 시험일지를 못 읽었을 때)
         self.previous_name = ""     # 참고한 전년도 결재본 파일 이름
+        self.folder = ""            # 이 자료를 읽은 제품 폴더
         self.previous_report = None
         self.files = {}           # item -> [paths]
         self.issues = []          # [(항, 파일, 설명)]
@@ -82,13 +83,26 @@ def _walk(folder):
 
 
 def _member_name(info):
-    """한글 이름이 CP437 로 깨져 오는 압축이 흔하다 (Windows 가 만든 압축)."""
+    """한글 이름이 CP437 로 깨져 오는 압축이 흔하다.
+
+    파이썬은 UTF-8 표시가 없는 압축의 이름을 CP437 로 읽는다. 알집·탐색기가 만든 압축은
+    실제로는 CP949 이고, 리눅스·맥이 만든 압축은 표시 없이 UTF-8 인 경우가 있다 —
+    되돌린 바이트를 UTF-8 로 먼저, 안 되면 CP949 로 읽는다.
+    """
     name = info.filename
     if not (info.flag_bits & 0x800):
         try:
-            name = name.encode("cp437").decode("cp949")
-        except (UnicodeEncodeError, UnicodeDecodeError):
-            pass
+            raw = name.encode("cp437")
+        except UnicodeEncodeError:
+            raw = None
+        for enc in ("utf-8", "cp949"):
+            if raw is None:
+                break
+            try:
+                name = raw.decode(enc)
+                break
+            except UnicodeDecodeError:
+                continue
     return name.replace("\\", "/")
 
 
@@ -182,6 +196,7 @@ def _lot_from_name(name):
 def collect(folder, product_name=None, log=None):
     log = log or (lambda *a: None)
     data = ProductData()
+    data.folder = os.path.abspath(folder)
     data.files = discover(folder)
     got = data.files
 
