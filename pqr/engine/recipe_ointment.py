@@ -190,6 +190,31 @@ def _small(para_el):
             get_or_add(rpr, tag).set(qn("w:val"), "18")
 
 
+GROUP_WIDE = re.compile(r"전\s*제품|전\s*품목|일괄|전\s*라인")
+
+
+def change_covers(cc, name, parts=()):
+    """이 변경관리가 이 제품에 해당하는가 — 해당하면 True.
+
+    변경요청서의 '관련 제품' 은 제품 이름을 하나하나 적기도 하지만, '안연고 전 제품',
+    '무균라인에서 생산하는 전 제품' 처럼 무리로 적는 일이 더 잦다. 또 주성분을 건드리는
+    변경은 그 성분을 쓰는 제품 모두에 해당한다(디겐타안연고의 플루오로메톨론 멸균 온도
+    변경 건은 '관련 제품' 이 후메론점안액으로만 적혀 있었지만 디겐타에도 해당한다 —
+    담당자 2026-09: "변경관리는 모두 디겐타안연고에 해당이 되는 내용이야").
+    """
+    where = re.sub(r"\s+", "", (cc.get("products") or "") + " " + (cc.get("title") or ""))
+    if not name:
+        return True
+    if name[:4] in where:
+        return True
+    if any(part and re.sub(r"\s+", "", part) in where for part in parts):
+        return True                       # 주성분을 건드리는 변경
+    # '안연고 전 제품', '무균라인에서 생산하는 전 제품' 처럼 무리로 적은 것은 다 해당한다.
+    # 어느 무리에 드는지는 서류만 봐서 알 수 없고(안연고는 무균라인에서 만든다), 12항 폴더에
+    # 그 변경요청서를 넣은 사람이 담당자다 — 넣었다는 것 자체가 해당한다는 뜻이다.
+    return bool(GROUP_WIDE.search(cc.get("products") or ""))
+
+
 def _spans(cell):
     """이 칸이 덮는 그리드 열 수 — 1 이면 저 혼자, 2 이상이면 옆 칸과 합쳐져 있다."""
     pr = cell._tc.find(qn("w:tcPr"))
@@ -1299,6 +1324,8 @@ def fill(document, data, product, period, today=None, log=None):
 
     # ---------- 12항 ----------
     t12 = _tables(document, "12.")
+    # 주성분 이름 — 주성분을 건드리는 변경은 대상 제품에 이름이 없어도 이 제품에 해당한다
+    주성분 = sorted({r["part"] for r in rules if r.get("part") and "함량" in r.get("item", "")})
     if t12:
         tbl = t12[0]
         # 담당자가 12항에 넣어 준 변경요청서는 모두 싣는다. 변경요청서의 '대상 제품' 에 이 제품
@@ -1306,6 +1333,7 @@ def fill(document, data, product, period, today=None, log=None):
         # 대상이 후메론점안액으로만 적혀 있다). 제품 이름으로 걸러 내면 실제로 있었던 변경이
         # 보고서에서 통째로 빠진다 — 싣고, 이름이 없는 건은 확인해 달라고 남긴다.
         ccs = list(data.changes)
+        간추림 = False
         if ccs:
             f, l = E.fit_rows(tbl, 1, len(tbl.rows) - 2, len(ccs))
             for i, cc in enumerate(ccs):
@@ -1322,17 +1350,19 @@ def fill(document, data, product, period, today=None, log=None):
                         if "위수탁" not in team and not re.search(r"위탁사|위수탁|변경\s*통보", a)]
                 if acts:
                     E.set_cell_plain(c[2], *["%d. %s" % (k, a) for k, a in enumerate(acts, 1)])
-                    issues.append(("12", cc.get("doc_no") or "",
-                                   "조치사항은 변경 실행 계획을 간추린 것입니다 — 이 제품에 해당하지 않는 줄은 지우세요"))
+                    간추림 = True
                 else:
                     E.set_cell_plain(c[2], "확인 필요")
                     issues.append(("12", cc.get("doc_no") or "",
                                    "변경 실행 계획을 읽지 못했습니다 — 조치사항을 직접 적으세요"))
                 E.set_cell(c[3], "확인 필요"); E.set_cell(c[4], "N/A")
-                where = (cc.get("products") or "") + " " + (cc.get("title") or "")
-                if name and name[:4] not in re.sub(r"\s+", "", where):
+                if not change_covers(cc, name, 주성분):
                     issues.append(("12", cc.get("doc_no") or "",
-                                   "변경요청서의 대상 제품에 이 제품 이름이 없습니다 — 이 제품에 해당하는지 확인하세요"))
+                                   "이 제품에 해당하는 변경인지 자동으로 확인하지 못했습니다 "
+                                   "(관련 제품: %s) — 확인하세요" % (cc.get("products") or "적혀 있지 않음")))
+            if 간추림:                       # 같은 안내를 건마다 되풀이하지 않는다
+                issues.append(("12", "", "조치사항은 변경 실행 계획을 간추린 것입니다 — "
+                                         "이 제품에 해당하지 않는 줄은 지우세요"))
             E.set_cell_plain(E.raw_cells(tbl.rows[-1])[0], "특이사항 (Comment)", "N/A")
         else:
             E.set_cell_plain(E.raw_cells(tbl.rows[-1])[0], "특이사항 (Comment)", "평가 년도 내 변경관리 이력 없음.")

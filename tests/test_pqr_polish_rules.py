@@ -114,3 +114,29 @@ class 변경사항_간추리기(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class 변경관리_해당_여부(unittest.TestCase):
+    """담당자가 12항에 넣은 변경관리는 모두 그 제품에 해당한다 (담당자 2026-09).
+
+    '관련 제품' 은 제품 이름을 하나하나 적기보다 무리로 적는 일이 잦다.
+    """
+    성분 = ["플루오로메톨론", "겐타마이신황산염"]
+
+    def _본다(self, products, title=""):
+        from pqr.engine.recipe_ointment import change_covers
+        return change_covers({"products": products, "title": title}, "디겐타안연고", self.성분)
+
+    def test_무리로_적은_것은_해당한다(self):
+        for 관련 in ("안연고 전 제품", "안연고제 전제품 일괄", "무균라인에서 생산하는 전 제품"):
+            self.assertTrue(self._본다(관련), 관련)
+
+    def test_주성분을_건드리는_변경은_해당한다(self):
+        """대상이 후메론점안액으로만 적혀 있어도 플루오로메톨론 변경은 디겐타에도 온다."""
+        self.assertTrue(self._본다("후메론점안액 (다회용, 일회용)", "플루오로메톨론 멸균 온도 변경 건"))
+
+    def test_제품_이름이_적혀_있으면_해당한다(self):
+        self.assertTrue(self._본다("디겐타안연고, 퀴노비드안연고"))
+
+    def test_남의_제품만_적힌_것은_문의로_남긴다(self):
+        self.assertFalse(self._본다("메섹신정", "정제 코팅 조건 변경"))
