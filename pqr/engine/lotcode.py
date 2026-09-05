@@ -69,3 +69,14 @@ def years(lots, today=None):
 def odd_lots(lots, year, today=None):
     """제조 연도가 year 가 아닌 Lot 들 — 자료가 섞여 들어왔는지 짚어 준다."""
     return [lot for lot in lots or [] if made_year(lot, today) not in (None, year)]
+
+
+def year_of(value):
+    """'2025', 2025, '2025-12-31', '2025.12.31' 무엇이 와도 연도(정수)를 돌려줍니다.
+
+    화면에서 넘어오는 평가 기간은 날짜 문자열('2025-12-31')이고, 자료에서 읽은
+    기간은 연도 숫자(2025)입니다. 둘 다 들어오므로 여기서 한 가지로 맞춥니다.
+    연도를 못 읽으면 None 입니다.
+    """
+    got = re.search(r"(19|20)\d{2}", str(value or ""))
+    return int(got.group(0)) if got else None

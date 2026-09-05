@@ -265,26 +265,77 @@ def collect(folder, product_name=None, log=None):
     # 마스터파일이 여럿이면(‘…_OLD’ 와 최신본, IQ·OQ 파일과 PQ 파일) 옛것에 덮이지 않게 합친다.
     # 디겐타안연고 2026 폴더에서 실제로 옛 파일이 최신본을 덮어 PQ 가 2022년 것으로 나왔다.
     def _newest_first(paths):
-        keep = [p_ for p_ in paths if p_.lower().endswith(".xlsx")
-                and "old" not in os.path.basename(p_).lower() and "구버전" not in os.path.basename(p_)]
-        keep = keep or [p_ for p_ in paths if p_.lower().endswith(".xlsx")]
-        return sorted(keep, key=lambda p_: os.path.getmtime(p_), reverse=True)
+        """새 마스터파일 먼저, 옛것(_OLD·구버전)은 뒤에 — 버리지는 않는다.
+
+        옛 파일을 버리면 IQ·OQ 가 통째로 빈다. 디겐타 2026 폴더가 그렇다: 최신본
+        (rev.033)에는 PQ 만 있고 IQ·OQ 는 '…(Rev.32)_OLD(IQ, OQ 정보 확인)' 에만 있다.
+        먼저 온 파일의 값이 이기므로 새것이 옛것에 덮이지 않는다.
+        """
+        xlsx = [p_ for p_ in paths if p_.lower().endswith(".xlsx")]
+        def 옛것(p_):
+            base = os.path.basename(p_)
+            return "old" in base.lower() or "구버전" in base
+        by_time = lambda ps: sorted(ps, key=lambda p_: os.path.getmtime(p_), reverse=True)
+        return by_time([p_ for p_ in xlsx if not 옛것(p_)]) + by_time([p_ for p_ in xlsx if 옛것(p_)])
 
     for p in _newest_first(got.get("10.2", [])):
         try:
             for key, entry in masters.equipment_docs(p).items():
-                data.equipment.setdefault(key, entry)
+                have = data.equipment.setdefault(key, entry)
+                if have is entry:
+                    continue
+                # 같은 장비가 여러 파일에 있으면 문서를 합친다 — 새 파일에 없는 IQ·OQ 를
+                # 옛 파일에서 이어받되, 이미 있는 문서번호는 새 파일 것을 그대로 둔다.
+                본 = {d for d, _ in have["docs"]}
+                have["docs"].extend([(d, dt) for d, dt in entry["docs"] if d not in 본])
+                for key2 in ("name", "line"):
+                    if not have.get(key2):
+                        have[key2] = entry.get(key2, "")
         except Exception as e:
             note("10.2", p, str(e))
-    for p in _newest_first(got.get("10.3-5", []) + got.get("10.3", [])):
-            try:
-                for key, entry in masters.support_docs(p).items():
-                    have = data.support.setdefault(key, entry)
-                    for kind in ("DQ", "IQ", "OQ", "PQ"):
-                        if not have.get(kind) and entry.get(kind):
-                            have[kind] = entry[kind]   # PQ 만 든 파일과 IQ·OQ 만 든 파일을 합친다
-            except Exception as e:
-                note("10.3-5", p, str(e))
+    # 10.3~10.5 는 파일이 두 벌이다 — IQ·OQ 는 '제조지원 설비 마스터파일(IQ, OQ 정보확인)',
+    # PQ 는 '10.5 Qualification Master File …(PQ, 측정위치 타당성 정보 확인)' 에 있다
+    # (담당자 2026-09). 종류마다 제 파일을 먼저 보고, 거기 없을 때만 다른 파일에서 받는다.
+    def _kind_of_file(path):
+        base = os.path.basename(path).upper()
+        if "IQ" in base and "OQ" in base:
+            return "IQOQ"
+        return "PQ" if "PQ" in base else ""
+
+    support_files = _newest_first(got.get("10.3-5", []) + got.get("10.3", []))
+    읽음 = {}
+    for p in support_files:
+        try:
+            읽음[p] = masters.support_docs(p)
+        except Exception as e:
+            note("10.3-5", p, str(e))
+
+    def _entry(path, key):
+        """PQ 마스터의 보고서는 QM… 으로도 적힌다(정기 성능적격성평가) — 모두 PQ 로 본다."""
+        entry = 읽음[path][key]
+        if _kind_of_file(path) != "PQ":
+            return entry
+        모두 = list(entry.get("docs") or
+                    [d for kind in ("DQ", "IQ", "OQ", "PQ") for d in entry.get(kind, [])])
+        return dict(entry, DQ=[], IQ=[], OQ=[], PQ=모두,
+                    why=dict(entry.get("why") or {}, PQ=[""] * len(모두)))
+
+    for kind, 제파일 in (("DQ", "IQOQ"), ("IQ", "IQOQ"), ("OQ", "IQOQ"), ("PQ", "PQ")):
+        차례 = ([p for p in support_files if _kind_of_file(p) == 제파일]
+                + [p for p in support_files if _kind_of_file(p) == ""]
+                + [p for p in support_files if _kind_of_file(p) not in (제파일, "")])
+        for p in 차례:
+            for key in 읽음.get(p, {}):
+                entry = _entry(p, key)
+                have = data.support.setdefault(
+                    key, {"name": entry.get("name", ""), "system": entry.get("system", ""),
+                          "raw_id": entry.get("raw_id", key), "why": {}})
+                if not have.get(kind) and entry.get(kind):
+                    have[kind] = entry[kind]
+                    have.setdefault("why", {})[kind] = (entry.get("why") or {}).get(kind, [])
+                for 칸 in ("name", "system"):
+                    if not have.get(칸):
+                        have[칸] = entry.get(칸, "")
     # 11 · 12
     for p in got.get("11", []):
         if p.lower().endswith(".pdf"):

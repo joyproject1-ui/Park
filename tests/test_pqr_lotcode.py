@@ -63,5 +63,23 @@ class 보고서_이름(unittest.TestCase):
         self.assertIn("디겐타안연고 제품품질평가", docx_report.report_filename(self.제품, {}))
 
 
+class 평가_기간_연도(unittest.TestCase):
+    """화면은 '2025-12-31' 을, 자료는 2025 를 준다 — 둘 다 연도로 읽혀야 한다.
+
+    (2026-09 담당자 PC: 기간이 날짜 문자열이라 13항에서 넘어져 첨부 엑셀이
+     만들어지지 않고 전년도 복제본만 제품 폴더에 남았다.)
+    """
+
+    def test_날짜_문자열에서_연도를_읽는다(self):
+        self.assertEqual(lotcode.year_of("2025-12-31"), 2025)
+        self.assertEqual(lotcode.year_of("2025.12.31"), 2025)
+        self.assertEqual(lotcode.year_of("2025"), 2025)
+        self.assertEqual(lotcode.year_of(2025), 2025)
+
+    def test_연도가_없으면_None(self):
+        for 값 in ("", None, 0, "기간 미정"):
+            self.assertIsNone(lotcode.year_of(값))
+
+
 if __name__ == "__main__":
     unittest.main()

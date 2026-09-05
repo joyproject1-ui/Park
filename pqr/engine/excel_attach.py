@@ -14,6 +14,7 @@ import zipfile
 from openpyxl import load_workbook
 
 from . import convert
+from . import lotcode
 from . import stability_xlsx
 from .readers import trend as trend_reader
 from . import xls_fill
@@ -263,7 +264,7 @@ def _write_trend(form, folder, data, product, today, report_path):
     """
     seed = list(getattr(data, "stability_trend", None) or [])
     logs = list(getattr(data, "stability_logs", None) or [])
-    year_to = int((getattr(data, "period", None) or {}).get("to") or 0) or None
+    year_to = lotcode.year_of((getattr(data, "period", None) or {}).get("to"))
     limits = _assay_limits(data)
 
     def points_of(one, part):

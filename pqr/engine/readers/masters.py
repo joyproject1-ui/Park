@@ -97,19 +97,50 @@ def latest_by_kind(docs):
     return by
 
 
+# 마스터파일의 '사유' 칸은 그 적격성평가가 어디에 적용되는지를 적어 둔다.
+OTHER_LINE = re.compile(r"액제|점안|내용액|주사|캡슐|정제|패취|좌제")
+PLACE = re.compile(r"\d+\s*[층실]|[가-힣]+[실층]")
+
+
+def applies(why, line="연고"):
+    """이 사유의 적격성평가를 이 제품 보고서에 실어도 되는가.
+
+    '액제 라인 리모델링에만 적용 (23)' 이나 '3층 예비실, 입고대기실 리모델링 (21)' 처럼
+    다른 라인·다른 방의 공사는 싣지 않는다(담당자 2026-09: "액제라인만 23년도에 공사한
+    경우는 표시했으니 잘 참고해서 작성해"). 사유가 비었거나 우리 라인을 짚었으면 싣는다.
+    """
+    text = (why or "").strip()
+    if not text:
+        return True
+    if line and line in text:
+        return True
+    return not (OTHER_LINE.search(text) or PLACE.search(text))
+
+
 def support_docs(path, sheet="제조지원 설비 & IT 시스템"):
     """{관리번호(앞 토큰): {"name": 설비명, "system": 시스템, "IQ": [(doc, date)], "OQ": …, "PQ": …, "DQ": …}}"""
-    rows = header = col = None
+    rows = header = col = head = None
     for _name, sheet_rows in _sheets(path, sheet):
         header, cells = _header(sheet_rows, _is_support_header)
         if header is not None:
             rows = sheet_rows
+            head = cells
             col = {name: j for j, name in enumerate(cells) if name}
             break
     if header is None:
         # 개정된 마스터파일은 제조지원설비도 제조설비와 같은 꼴이다(관리번호·보고서 문서번호·승인일자).
         # 읽지 못했다고 물러나면 10.3~10.5 가 통째로 빈다 — 같은 값을 그 꼴에서 읽어 온다.
         return _support_from_equipment(path)
+    # 종류마다 '사유' 칸이 하나씩 있고 이름이 모두 같다 — 이름 사전으로는 하나로 겹치므로
+    # 머리행에서 바로 짚는다. 승인일 칸 다음에 오는 '사유' 가 그 종류의 것이다.
+    why_col = {}
+    for kind in ("DQ", "IQ", "OQ", "PQ"):
+        acol = next((col[k] for k in col if k.startswith(kind + " 승인")), None)
+        if acol is None:
+            continue
+        after = next((j for j in range(acol + 1, len(head)) if head[j]), None)
+        if after is not None and head[after].startswith("사유"):
+            why_col[kind] = after
     out = {}
     system = ""
     for row in rows[header + 1:]:
@@ -121,14 +152,20 @@ def support_docs(path, sheet="제조지원 설비 & IT 시스템"):
         if not raw_id:
             continue
         key = raw_id.split()[0]
-        entry = {"name": _cell(cells[col.get("설비명", 0)]), "system": system, "raw_id": raw_id}
+        entry = {"name": _cell(cells[col.get("설비명", 0)]), "system": system, "raw_id": raw_id,
+                 "why": {}}
         for kind in ("DQ", "IQ", "OQ", "PQ"):
             dcol = next((col[k] for k in col if k.startswith(kind + " 문서")), None)
             acol = next((col[k] for k in col if k.startswith(kind + " 승인")), None)
             docs = [d for d in re.split(r"\s+", _cell(cells[dcol])) if d] if dcol is not None else []
             dates = DATE.findall(_cell(cells[acol])) if acol is not None else []
+            # 사유는 줄바꿈으로 나뉘어 문서번호와 차례가 맞는다 ('최초 제정 (20)' / '액제 라인 …에만 적용 (23)').
+            wcol = why_col.get(kind)
+            whys = [w.strip() for w in str(row[wcol] or "").split("\n")] if (
+                wcol is not None and wcol < len(row)) else []
             entry[kind] = [(docs[i] if i < len(docs) else "", dates[i] if i < len(dates) else "")
                            for i in range(max(len(docs), len(dates)))]
+            entry["why"][kind] = [whys[i] if i < len(whys) else "" for i in range(len(entry[kind]))]
         out[key] = entry
     return out
 
@@ -138,9 +175,12 @@ def _support_from_equipment(path):
     out = {}
     for key, entry in equipment_docs(path, sheet=None).items():
         by = latest_by_kind(entry["docs"])
-        row = {"name": entry.get("name", ""), "system": entry.get("line", ""), "raw_id": key}
+        # 원본 문서 목록도 남긴다 — PQ 마스터의 보고서는 QM… 으로 적혀 종류로 갈리지 않는다.
+        row = {"name": entry.get("name", ""), "system": entry.get("line", ""), "raw_id": key,
+               "why": {}, "docs": list(entry["docs"])}
         for kind in ("DQ", "IQ", "OQ", "PQ"):
             row[kind] = by.get(kind, [])
+            row["why"][kind] = [""] * len(row[kind])
         out[key.split()[0] if key.split() else key] = row
     return out
 

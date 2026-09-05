@@ -16,6 +16,7 @@ from . import carry as CARRY
 from . import detail92 as D
 from . import docedit as E
 from . import lotcode, qc
+from .readers import masters as masters_mod
 from .locate import find_tables, find_para, _text
 from .ooxml_order import get_or_add
 
@@ -188,6 +189,71 @@ def _small(para_el):
             get_or_add(rpr, tag).set(qn("w:val"), "18")
 
 
+def _spans(cell):
+    """이 칸이 덮는 그리드 열 수 — 1 이면 저 혼자, 2 이상이면 옆 칸과 합쳐져 있다."""
+    pr = cell._tc.find(qn("w:tcPr"))
+    el = pr.find(qn("w:gridSpan")) if pr is not None else None
+    return int(el.get(qn("w:val"))) if el is not None else 1
+
+
+def update_qualification(table, lookup):
+    """관리번호 행마다 IQ·OQ·PQ 열의 (문서번호 행 · 완료일 행) 을 마스터 값으로 채운다.
+
+    빈 서식(공양식)의 IQ·OQ 칸은 사선만 그어져 있고 비어 있다 — 마스터파일에서 읽어
+    채우고 사선을 지운다(담당자 2026-09). 이미 값이 있으면 마스터가 더 최근일 때만 바꾼다.
+    """
+    rows = table.rows
+    width = E.grid_width(table)
+    kind_col = {}
+    for row in rows[:4]:
+        for ci, cell in E.grid_cells(row, width).items():
+            head = E.cell_text(cell).strip().upper()
+            if head in ("IQ", "OQ", "PQ"):
+                kind_col[head] = ci
+        if kind_col:
+            break
+    if not kind_col:
+        return 0
+    n = 0
+    for ri, row in enumerate(rows):
+        cells = E.raw_cells(row)
+        mid = E.cell_text(cells[1]).strip() if len(cells) > 1 else ""
+        if not re.match(r"^[A-Z]{3}\d{4}", mid) or mid not in lookup:
+            continue
+        if ri + 1 >= len(rows):
+            continue
+        # 열 번호는 그리드 기준이다 — IQ·OQ 를 한 칸에 합쳐 적은 줄(IOQ…)이 있으면
+        # 자리로 세었을 때 옆 칸(PQ)을 덮어쓴다.
+        doc_grid, date_grid = E.grid_cells(rows[ri], width), E.grid_cells(rows[ri + 1], width)
+        for kind, col in kind_col.items():
+            got = [(d, dt) for d, dt in lookup[mid].get(kind, []) if dt and d]
+            if not got:
+                continue
+            latest = max(got, key=lambda x: re.sub(r"\D", "", x[1])[:8])
+            doc_cells, date_cells = doc_grid, date_grid
+            if col not in doc_cells or col not in date_cells:
+                continue                    # 그 줄에서는 옆 칸과 합쳐져 있다 — 건드리지 않는다
+            if _spans(doc_cells[col]) > 1 or _spans(date_cells[col]) > 1:
+                continue                    # IQ·OQ 를 한 칸에 합쳐 적은 줄(IOQ…) — 그대로 둔다
+            old_doc = E.cell_text(doc_cells[col]).strip()
+            old_date = E.cell_text(date_cells[col]).strip()
+            doc = latest[0].split("(")[0].strip()
+            new_date = latest[1].replace(". ", ".").replace(" ", "")[:10]
+            blank = not old_doc and not old_date
+            newer = (re.sub(r"\D", "", new_date) > re.sub(r"\D", "", old_date)
+                     and doc != old_doc.split("(")[0].strip())
+            if not (blank or newer):
+                continue
+            E.set_cell(doc_cells[col], doc)
+            E.set_cell(date_cells[col], new_date)
+            E.clear_diag(doc_cells[col]); E.clear_diag(date_cells[col])
+            n += 1
+    return n
+
+
+LINE = "연고"          # 이 조리법은 연고·안연고 라인 전용이다
+
+
 def fill(document, data, product, period, today=None, log=None):
     log = log or (lambda *a: None)
     issues = []
@@ -200,7 +266,7 @@ def fill(document, data, product, period, today=None, log=None):
     # (OGY301 → 2025년 제조 → 2026년 PQR). 화면에서 넘어온 기간보다 자료가 앞선다.
     year_from, _pqr_year = lotcode.years(dom + exp, today)
     if year_from is None:
-        year_from = int(str(period.get("from"))[:4])
+        year_from = lotcode.year_of(period.get("from"))
     else:
         odd = lotcode.odd_lots(dom + exp, year_from, today)
         if odd:
@@ -1072,36 +1138,6 @@ def fill(document, data, product, period, today=None, log=None):
             E.note_after(document, tb, notes[0])
 
     # ---------- 10항 ----------
-    def update_pq(table, lookup):
-        """관리번호 행마다 PQ 열의 (문서번호 행 · 완료일 행) 을 마스터의 최신 PQ 로 바꾼다."""
-        rows = table.rows
-        pq_col = None
-        for row in rows[:4]:
-            cells = E.raw_cells(row)
-            for ci, cell in enumerate(cells):
-                if E.cell_text(cell).strip() == "PQ":
-                    pq_col = ci
-            if pq_col is not None:
-                break
-        if pq_col is None:
-            return 0
-        n = 0
-        for ri, row in enumerate(rows):
-            cells = E.raw_cells(row)
-            mid = E.cell_text(cells[1]).strip() if len(cells) > 1 else ""
-            if not re.match(r"^[A-Z]{3}\d{4}", mid) or mid not in lookup:
-                continue
-            pq = [(d, dt) for d, dt in lookup[mid].get("PQ", []) if dt and d]
-            if not pq or ri + 1 >= len(rows):
-                continue
-            latest = max(pq, key=lambda x: re.sub(r"\D", "", x[1])[:8])
-            doc_cells, date_cells = E.raw_cells(rows[ri]), E.raw_cells(rows[ri + 1])
-            col = min(pq_col, len(doc_cells) - 2, len(date_cells) - 2)
-            old_doc = E.cell_text(doc_cells[col]).strip(); old_date = E.cell_text(date_cells[col]).strip()
-            new_date = latest[1].replace(". ", ".").replace(" ", "")[:10]
-            if re.sub(r"\D", "", new_date) > re.sub(r"\D", "", old_date) and latest[0].split("(")[0].strip() != old_doc.split("(")[0].strip():
-                E.set_cell(doc_cells[col], latest[0].split("(")[0].strip()); E.set_cell(date_cells[col], new_date); n += 1
-        return n
     # 10.1 공정밸리데이션: 평가 년도에 보고서가 난 PV 를 채운다 (마스터파일)
     def fill_pv(table):
         """표의 기존 보고서 번호(PV24-2-QUIO3-R …)에서 코드를 알아내 마스터에서 평가 년도 보고서를 찾는다."""
@@ -1153,8 +1189,13 @@ def fill(document, data, product, period, today=None, log=None):
         pv_n += fill_pv(tb)
     log("10.1 PV 행: %d" % pv_n)
 
-    eq_lookup = {k: {"PQ": [(d, dt) for d, dt in v["docs"] if d.startswith("PQ")]} for k, v in data.equipment.items()}
+    본문 = _text(document.element.body)          # 보고서에 실제로 실린 설비만 문의 목록에 올린다
+    # IQ·OQ·PQ 를 모두 넘긴다 — 빈 서식으로 만들 때 IQ·OQ 칸이 사선인 채로 남지 않게.
+    eq_lookup = {k: {kind: [(d, dt) for d, dt in v["docs"] if d.startswith(kind)]
+                     for kind in ("IQ", "OQ", "PQ")}
+                 for k, v in data.equipment.items()}
     sp_lookup = {}
+    빠진것 = {}                                  # 다른 라인·다른 방 공사라 빼 둔 적격성평가
     for k, v in data.support.items():
         pq = [(d.split(" (")[0].strip(), dt.split("/")[0].strip()) for d, dt in v.get("PQ", []) if d and dt]
         if not pq:
@@ -1172,18 +1213,44 @@ def fill(document, data, product, period, today=None, log=None):
                 if same or like:
                     pq = [(d.split(" (")[0].strip(), dt.split("/")[0].strip()) for d, dt in v2["PQ"] if d and dt]
                     break
-        sp_lookup[k] = {"PQ": pq}
+        # IQ·OQ 는 마스터파일의 '사유' 를 보고 이 라인에 해당하는 것만 싣는다 — 액제 라인
+        # 리모델링(23)이나 다른 방 공사는 안연고 보고서에 넣지 않는다(담당자 2026-09).
+        # IQ·OQ 를 한 칸에 합쳐 적은 줄(IOQ21-WS-…)은 표를 채울 때 그대로 둔다.
+        def 우리것(kind):
+            got = v.get(kind) or []
+            why = (v.get("why") or {}).get(kind) or [""] * len(got)
+            keep = [(d.split(" (")[0].strip(), dt.split("/")[0].strip())
+                    for (d, dt), w in zip(got, why)
+                    if d and dt and masters_mod.applies(w, LINE)]
+            for (d, dt), w in zip(got, why):
+                if d and dt and not masters_mod.applies(w, LINE):
+                    빠진것.setdefault(k, []).append(d)
+            return keep
+
+        sp_lookup[k] = {"PQ": pq, "IQ": 우리것("IQ"), "OQ": 우리것("OQ")}
+    for k, docs in 빠진것.items():
+        보이는 = [d for d in dict.fromkeys(docs)]
+        if 보이는 and k in 본문:
+            issues.append(("10.3~10.5", k, "다른 라인·다른 방 공사라 빼 둠: %s — 확인 필요"
+                           % ", ".join(보이는)))
     upd = 0
     for prefix in ("10.2",):
         for t in _tables(document, prefix):
             gone = drop_equipment(t, DRY_HEAT, keep=("디겐타",), name=name)
             if gone:
                 log("10.2: 이 제품에 쓰지 않는 설비 %d대를 뺌" % gone)
-            upd += update_pq(t, eq_lookup)
+            upd += update_qualification(t, eq_lookup)
     for prefix in ("10.3", "10.4", "10.5"):
         for t in _tables(document, prefix):
-            upd += update_pq(t, sp_lookup)
-    log("10항 PQ 갱신: %d" % upd)
+            upd += update_qualification(t, sp_lookup)
+    log("10항 IQ·OQ·PQ 갱신: %d" % upd)
+    # 마스터파일에 IQ·OQ 가 아예 없는 설비는 비워 둔다(값을 지어내지 않는다) — 대신 문의
+    # 목록에 남겨 담당자가 마스터파일을 보완할지 판단하게 한다.
+    for mid, kinds in sorted(eq_lookup.items()):
+        빈 = [k for k in ("IQ", "OQ") if not kinds.get(k)]
+        if 빈 and re.match(r"^[A-Z]{3}\d{4}", mid) and mid in 본문:
+            issues.append(("10.2", mid, "마스터파일에 %s 가 없어 비워 둠 — 확인 필요"
+                           % "·".join(빈)))
     if not pv_n:
         issues.append(("10.1", "", "평가 년도의 PV 보고서를 마스터파일에서 찾지 못해 결재본 값을 유지함 — 확인 필요"))
 
@@ -1436,7 +1503,7 @@ def _fill_stability26(document, logs, period, spec, log, issues, why_of=None):
     평가 기간 안에 끝난 시점만 13.1 에 적고, 경향(13.3)도 그 시점까지의 값으로 낸다 —
     아직 하지 않은 뒤 시점을 넣으면 그 해의 경향이 아니다(한림 2026 결재본도 그렇게 쓴다).
     """
-    year_to = int((period or {}).get("to") or 0) or None
+    year_to = lotcode.year_of((period or {}).get("to"))
     _trim = lambda v: ("%%.%df" % _decimals_of(logs)) % v
 
     def done_year(point):
