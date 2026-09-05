@@ -70,8 +70,18 @@ def extract_bundle(archive_path, folder, limit=None):
             raise UploadError("압축 안에 파일이 없습니다: %s" % os.path.basename(archive_path))
         if sum(info.file_size for info, _ in members) > limit:
             raise UploadError("압축을 푼 용량이 너무 큽니다 (최대 %d MB)." % (limit // 1024 // 1024))
-        tops = {parts[0] for _, parts in members}
-        strip = 1 if len(tops) == 1 and all(len(parts) > 1 for _, parts in members) else 0
+        # 겉을 싼 폴더는 몇 겹이든 벗긴다 — '필요 자료/디겐타안연고 TEST/3. 허가증.pdf' 처럼
+        # 담당자 폴더 구조가 통째로 들어온다. 단, 항 번호가 붙은 폴더('9.2.1 조제 완료 후/')는
+        # 자료의 일부이므로 벗기지 않는다.
+        matcher = build_module.item_matcher(build_module.load_config()["items"])
+        strip = 0
+        while True:
+            tops = {parts[strip] for _, parts in members if len(parts) > strip + 1}
+            if len(tops) != 1 or any(len(parts) <= strip + 1 for _, parts in members):
+                break
+            if matcher(next(iter(tops))):
+                break
+            strip += 1
         written = []
         for info, parts in members:
             parts = [_UNSAFE.sub("_", part) for part in parts[strip:]]
@@ -585,9 +595,21 @@ class Workspace(object):
                   "folder": os.path.abspath(folder),
                   "name": base, "item": matcher(base) or ""}
         if extracted:
+            # 풀린 파일마다 어느 항인지 — 화면이 그 항에 녹색불을 켜고, 번호가 없어 못 알아본
+            # 파일은 따로 보여 준다(담당자 2026-09: "파일마다 번호가 있잖아 … 파악한 뒤에").
+            found, unmatched = {}, []
+            for path in extracted:
+                item = next((matcher(part) for part in path.split("/") if matcher(part)), None)
+                if item:
+                    found.setdefault(item, []).append(path)
+                else:
+                    unmatched.append(path)
             result["extracted"] = extracted
-            result["items"] = sorted({matcher(part) for path in extracted
-                                      for part in path.split("/") if matcher(part)})
+            result["items"] = sorted(found)
+            result["by_item"] = found
+            result["unmatched"] = unmatched
+        elif not result["item"]:
+            result["unmatched"] = [base]
         return result
 
     def save_upload(self, dataset, code, filename, payload, replace=True):

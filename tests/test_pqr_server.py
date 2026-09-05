@@ -729,3 +729,41 @@ class FolderWatchTest(ServerTest):
         first = json.loads(self.get("/api/data")[1])["revision"]
         second = json.loads(self.get("/api/data")[1])["revision"]
         self.assertEqual(first, second)
+
+
+class BulkZipTest(BulkUploadTest):
+    """압축을 올리면 풀어서 항마다 알아보고, 못 알아본 파일은 따로 알려 준다 (담당자 2026-09)."""
+
+    def _zip(self, names):
+        import io as _io
+        import zipfile
+        buf = _io.BytesIO()
+        with zipfile.ZipFile(buf, "w") as z:
+            for name in names:
+                z.writestr(name, b"x" * 20)
+        return buf.getvalue()
+
+    def test_겹겹이_싼_폴더를_벗기고_항마다_알아본다(self):
+        payload = self._zip(["필요 자료/디겐타 TEST/3. 허가증.pdf",
+                             "필요 자료/디겐타 TEST/7. 수율현황표.xlsx",
+                             "필요 자료/디겐타 TEST/9.2.1 조제 완료 후/OGY301.pdf",
+                             "필요 자료/디겐타 TEST/메모.txt"])
+        result = self.upload_bulk("HP-110", "필요 자료.zip", payload=payload)
+        self.assertTrue(result["ok"], result.get("error"))
+        self.assertEqual(result["items"], ["3", "7", "9.2.1"])
+        self.assertEqual(result["unmatched"], ["메모.txt"])
+        self.assertIn("3. 허가증.pdf", result["by_item"]["3"])
+        folder = os.path.join(self.dir, self.folder)
+        self.assertTrue(os.path.isfile(os.path.join(folder, "3. 허가증.pdf")))
+        self.assertTrue(os.path.isfile(os.path.join(folder, "9.2.1 조제 완료 후", "OGY301.pdf")))
+        product = next(p for p in result["data"]["products"] if p["code"] == "HP-110")
+        ids = [item[0] for item in result["data"]["items"]]
+        checks = dict(zip(ids, product["checks"]))
+        self.assertEqual(checks["3"], "y")
+        self.assertEqual(checks["7"], "y")
+        self.assertEqual(checks["9.2.1"], "y")
+
+    def test_번호_없는_파일_하나도_알려_준다(self):
+        result = self.upload_bulk("HP-110", "메모.pdf")
+        self.assertEqual(result["unmatched"], ["메모.pdf"])
+

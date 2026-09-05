@@ -370,6 +370,16 @@ td.wrap{white-space:normal;min-width:220px}
   font-family:"IBM Plex Mono",monospace;word-break:break-all}
 .up-note{font-size:12.5px;color:var(--ink-2);line-height:1.6}
 .up-note code{background:var(--surface-3);border-radius:5px;padding:1px 6px;font-size:12px}
+.bk-row{display:grid;grid-template-columns:1fr auto;gap:4px 10px;align-items:center;padding:6px 10px;
+  border:1px solid var(--line);border-radius:9px;background:var(--surface-2)}
+.bk-row .name{font-size:12.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.bk-row .state{font-size:11.5px;color:var(--ink-3);white-space:nowrap}
+.bk-row .state.ok{color:var(--ok)} .bk-row .state.bad{color:var(--crit)}
+.bk-row .bar{grid-column:1/-1;height:4px;border-radius:2px;background:var(--line);overflow:hidden}
+.bk-row .bar i{display:block;height:100%;width:0;background:var(--accent);transition:width .2s}
+.bk-chips{display:flex;flex-wrap:wrap;gap:6px}
+.bk-chip{font-size:11.5px;padding:3px 9px;border-radius:999px;border:1px solid var(--ok);color:var(--ok);background:transparent}
+.bk-chip.miss{border-color:var(--line);color:var(--ink-3)}
 .up-result{font-size:12.5px;display:flex;flex-direction:column;gap:6px}
 .up-result.ok{color:var(--ok)} .up-result.bad{color:var(--crit)}
 .up-result ul{margin:0;padding-left:18px;color:var(--ink-2)}
@@ -892,7 +902,6 @@ tbody tr:hover{background:var(--accent-soft)}
     <div class="drop" id="up-drop" tabindex="0" role="button"
          aria-label="파일 선택 — 끌어다 놓거나 눌러서 고르세요">
       <input type="file" id="up-file" accept=".csv,.tsv,.txt,.xlsx,.xlsm" hidden>
-      <input type="file" id="bulk-file" multiple hidden>
       <input type="file" id="ref-file" multiple hidden>
       <b>파일을 끌어다 놓거나 눌러서 고르세요</b>
       <small>pdf · xlsx · xls · csv · 문서 파일 (최대 64 MB)</small>
@@ -908,6 +917,35 @@ tbody tr:hover{background:var(--accent-soft)}
     <span class="spacer"></span>
     <button class="btn ghost" id="up-cancel">닫기</button>
     <button class="btn" id="up-submit" disabled>올리기</button>
+  </div>
+</div>
+<div class="modal" id="bulk-modal" role="dialog" aria-modal="true" aria-labelledby="bk-title">
+  <div class="modal-head">
+    <div>
+      <div class="mono" style="font-size:12px;color:var(--ink-3)" id="bk-product"></div>
+      <h2 id="bk-title">파일 한번에 올리기</h2>
+    </div>
+    <button class="icon-btn" id="bk-close" style="margin-left:auto" aria-label="닫기">✕</button>
+  </div>
+  <div class="modal-body">
+    <div class="up-note">폴더째 묶은 <b>압축(zip)</b>이나 파일 여러 개를 올리세요. 압축은 이 자리에서 풀어
+      제품 폴더에 두고, 이름이 항 번호(<code>3. 허가증</code>, <code>6. 제조내역</code> …)로 시작하는 파일은
+      그 항목에 바로 표시됩니다.</div>
+    <div class="drop" id="bk-drop" tabindex="0" role="button"
+         aria-label="파일 선택 — 끌어다 놓거나 눌러서 고르세요">
+      <input type="file" id="bulk-file" multiple hidden>
+      <b>파일이나 압축을 끌어다 놓거나 눌러서 고르세요</b>
+      <small>zip · pdf · xlsx · xls · csv · 문서 파일 (파일 하나당 최대 64 MB)</small>
+      <span class="picked" id="bk-picked"></span>
+    </div>
+    <div class="up-path" id="bk-path"></div>
+    <div class="up-files" id="bk-files"></div>
+    <div class="up-result" id="bk-result"></div>
+  </div>
+  <div class="modal-foot">
+    <span class="spacer"></span>
+    <button class="btn ghost" id="bk-cancel">닫기</button>
+    <button class="btn" id="bk-submit" disabled>올리기</button>
   </div>
 </div>
 <div class="tip" id="tip" role="status" aria-live="polite"></div>
@@ -1350,36 +1388,139 @@ async function bundleProduct(code, button){
   button.textContent = original; button.disabled = false;
 }
 
-/* 파일 한번에 올리기 — 골라 준 파일들을 원본 이름 그대로 제품 폴더에 저장합니다.
-   이름이 항 번호(7., 8.1.1 …)로 시작하면 해당 평가항목으로 자동 인식됩니다. */
-let bulkCode = null;
-async function bulkUpload(files){
-  if (!bulkCode || !files.length) return;
-  const code = bulkCode; bulkCode = null;
-  showToast(`⏳ ${files.length}개 파일을 올리는 중…`);
-  const failures = [];
+/* ---- 파일 한번에 올리기 ----
+   골라 준 파일들을 원본 이름 그대로 제품 폴더에 저장합니다. 압축(zip)은 서버가 풀어 두고,
+   풀린 파일마다 항 번호(3. 허가증, 6. 제조내역 …)를 알아봐 그 항목에 녹색불을 켭니다.
+   예전에는 파일 고르기 창만 뜨고 진행 상황이 안 보여 "반응이 없네"(담당자 2026-09) —
+   항목 창과 같은 창에서 끌어다 놓고, 파일마다 진행률·결과를 그 자리에서 보여 줍니다. */
+const bulkModal = $("#bulk-modal");
+let bulkCode = null, bulkFiles = [], bulkBusy = false, bulkLastFocus = null;
+
+function openBulk(code){
+  const product = DATA.find(d=>d.code===code);
+  if (!product) return;
+  bulkCode = code; bulkFiles = []; bulkBusy = false;
+  $("#bk-product").textContent = `${product.code} · ${product.name}`;
+  $("#bk-picked").textContent = "";
+  $("#bk-files").innerHTML = "";
+  $("#bk-result").innerHTML = ""; $("#bk-result").className = "up-result";
+  $("#bk-submit").disabled = true; $("#bk-submit").textContent = "올리기";
+  const dir = uploadConfig().input_dir;
+  const folder = product.folder || `${product.code} ${product.name}`;
+  $("#bk-path").innerHTML = `저장 위치: <code>${esc(dir ? dir + "\\" : "")}${esc(folder)}\\</code> `
+    + `(압축은 풀어서 두고, 압축 파일 자체는 남기지 않습니다)`;
+  bulkLastFocus = document.activeElement;
+  scrim.classList.add("open"); bulkModal.classList.add("open");
+  $("#bk-drop").focus();
+}
+function closeBulk(){
+  if (bulkBusy) return;                       // 올리는 중에는 닫지 않는다
+  bulkModal.classList.remove("open");
+  if (!drawer.classList.contains("open") && !modal.classList.contains("open")) scrim.classList.remove("open");
+  bulkCode = null; bulkFiles = [];
+  if (bulkLastFocus && bulkLastFocus.focus) bulkLastFocus.focus();
+}
+function pickBulk(list){
+  const files = Array.from(list || []).filter(f=>f && f.size >= 0);
+  if (!files.length) return;
+  bulkFiles = files;
+  const total = files.reduce((a,f)=>a+f.size, 0);
+  $("#bk-picked").textContent = files.length === 1
+    ? `${files[0].name} · ${(files[0].size/1024/1024).toFixed(1)} MB`
+    : `${files.length}개 파일 · ${(total/1024/1024).toFixed(1)} MB`;
+  $("#bk-files").innerHTML = files.map((f,i)=>
+    `<div class="bk-row" id="bk-row-${i}"><span class="name" title="${esc(f.name)}">${esc(f.name)}</span>`
+    + `<span class="state">대기</span><span class="bar"><i></i></span></div>`).join("");
+  $("#bk-result").innerHTML = ""; $("#bk-result").className = "up-result";
+  $("#bk-submit").disabled = false;
+}
+function bulkRow(i, state, cls, pct){
+  const row = $(`#bk-row-${i}`); if (!row) return;
+  const el = row.querySelector(".state"); el.textContent = state; el.className = "state " + (cls||"");
+  if (pct != null) row.querySelector(".bar i").style.width = `${Math.round(pct)}%`;
+}
+/* XMLHttpRequest — fetch 에는 올리기 진행률이 없다. 큰 압축(30 MB)은 몇십 초가 걸린다. */
+function postBulk(code, file, last, onProgress){
+  return new Promise((resolve, reject)=>{
+    const form = new FormData();
+    form.append("product", code); form.append("bulk", "1");
+    form.append("last", last ? "1" : "0");            // 마지막에만 다시 집계
+    form.append("file", file, file.name);
+    const xhr = new XMLHttpRequest();
+    xhr.open("POST", "api/upload");
+    xhr.upload.onprogress = e=>{ if (e.lengthComputable) onProgress(e.loaded / e.total * 100); };
+    xhr.onload = ()=>{
+      let payload = null;
+      try { payload = JSON.parse(xhr.responseText); } catch (e) { /* 아래에서 처리 */ }
+      if (!payload) return reject(new Error(`서버 응답을 읽지 못했습니다 (HTTP ${xhr.status})`));
+      if (xhr.status >= 400 || !payload.ok) return reject(new Error(payload.error || "업로드 실패"));
+      resolve(payload);
+    };
+    xhr.onerror = ()=>reject(new Error("서버에 연결하지 못했습니다 — 대시보드 창(검은 창)이 켜져 있는지 보세요"));
+    xhr.send(form);
+  });
+}
+function itemChip(id){
+  const idx = ITEMS.findIndex(row=>row[0]===id);
+  const item = ITEMS[idx];
+  return `<span class="bk-chip">(${itemLetter(idx)}) ${esc(id)}. ${esc(item ? item[1] : "")}</span>`;
+}
+async function bulkUpload(){
+  if (!bulkCode || !bulkFiles.length || bulkBusy) return;
+  const code = bulkCode, files = bulkFiles;
+  bulkBusy = true;
+  const button = $("#bk-submit"); button.disabled = true; button.textContent = "올리는 중…";
+  $("#bk-close").disabled = true; $("#bk-cancel").disabled = true;
+  const failures = [], found = {}, unmatched = [];
   let last = null;
   for (let i = 0; i < files.length; i++){
-    const form = new FormData();
-    form.append("product", code);
-    form.append("bulk", "1");
-    form.append("last", i === files.length - 1 ? "1" : "0"); // 마지막에만 다시 집계
-    form.append("file", files[i], files[i].name);
+    const isZip = /\.zip$/i.test(files[i].name);
+    bulkRow(i, "올리는 중 0%", "", 0);
     try {
-      const response = await fetch("api/upload", { method:"POST", body: form });
-      const payload = await response.json();
-      if (!response.ok || !payload.ok) throw new Error(payload.error || "업로드 실패");
+      const payload = await postBulk(code, files[i], i === files.length - 1, pct=>{
+        bulkRow(i, pct >= 99.5 ? (isZip ? "압축 푸는 중 · 항 알아보는 중…" : "저장하는 중…") : `올리는 중 ${Math.round(pct)}%`, "", pct);
+      });
       last = payload;
-    } catch (error) { failures.push(`${files[i].name} — ${error.message}`); }
+      const items = payload.items || (payload.item ? [payload.item] : []);
+      items.forEach(id=>{ found[id] = (found[id]||0) + ((payload.by_item||{})[id]||[1]).length; });
+      (payload.unmatched || []).forEach(n=>unmatched.push(n));
+      const n = payload.extracted ? payload.extracted.length : 0;
+      bulkRow(i, n ? `완료 · ${n}개 파일을 풀었습니다 (항 ${items.join(", ") || "없음"})`
+                   : (payload.item ? `완료 · 항 ${payload.item}` : "완료 · 항 번호 없음"), "ok", 100);
+    } catch (error) {
+      failures.push(`${files[i].name} — ${error.message}`);
+      bulkRow(i, `실패 · ${error.message}`, "bad", 0);
+    }
   }
-  if (last && last.data){ adopt(last.data); render(); }
-  const ok = files.length - failures.length;
-  const unpacked = last && last.extracted ? last.extracted.length : 0;
-  showToast(`📥 ${ok}개 파일을 올렸습니다.`
-    + (unpacked ? `<br>압축을 풀어 ${unpacked}개 파일을 제품 폴더에 두었습니다`
-        + (last.items && last.items.length ? ` — 항 ${last.items.join(", ")}` : "") : "")
-    + (failures.length ? `<br>실패 ${failures.length}건:<br>${failures.map(esc).join("<br>")}` : ""));
+  bulkBusy = false;
+  $("#bk-close").disabled = false; $("#bk-cancel").disabled = false;
+  button.textContent = "올리기"; button.disabled = true; bulkFiles = [];
+  if (last && last.data){ adopt(last.data); render(); renderSourceNote(); }
+  const ids = ITEMS.map(row=>row[0]).filter(id=>found[id]);
+  const result = $("#bk-result");
+  result.className = "up-result " + (failures.length ? "bad" : "ok");
+  result.innerHTML =
+    (ids.length ? `<div><b>자료를 알아본 항목 ${ids.length}개</b> — 표에 녹색으로 표시했습니다.</div>`
+                  + `<div class="bk-chips">${ids.map(itemChip).join("")}</div>` : "")
+    + (unmatched.length ? `<div style="margin-top:6px"><b>항 번호가 없어 어느 항목인지 모르는 파일 ${unmatched.length}개</b> — `
+        + `이름 앞에 항 번호(예: <code>3. 허가증.pdf</code>)를 붙여 다시 올리거나, 그 항목 칸을 눌러 올리세요.</div>`
+        + `<ul>${unmatched.slice(0, 30).map(n=>`<li>${esc(n)}</li>`).join("")}${unmatched.length > 30 ? "<li>…</li>" : ""}</ul>` : "")
+    + (failures.length ? `<div style="margin-top:6px"><b>실패 ${failures.length}건</b></div><ul>${failures.map(f=>`<li>${esc(f)}</li>`).join("")}</ul>` : "")
+    + (!ids.length && !unmatched.length && !failures.length ? "<div>올린 파일이 없습니다.</div>" : "");
 }
+$("#bk-drop").addEventListener("click", ()=>{ const picker = $("#bulk-file"); picker.value = ""; picker.click(); });
+$("#bk-drop").addEventListener("keydown", e=>{ if (e.key === "Enter" || e.key === " "){ e.preventDefault(); $("#bk-drop").click(); } });
+["dragenter","dragover"].forEach(type=>$("#bk-drop").addEventListener(type, e=>{
+  e.preventDefault(); $("#bk-drop").classList.add("over");
+}));
+["dragleave","drop"].forEach(type=>$("#bk-drop").addEventListener(type, e=>{
+  e.preventDefault(); $("#bk-drop").classList.remove("over");
+}));
+$("#bk-drop").addEventListener("drop", e=>pickBulk(e.dataTransfer.files));
+$("#bulk-file").addEventListener("change", e=>pickBulk(e.target.files));
+$("#bk-submit").addEventListener("click", bulkUpload);
+$("#bk-close").addEventListener("click", closeBulk);
+$("#bk-cancel").addEventListener("click", closeBulk);
 /* 완성본 단추 — 제품 폴더의 제출용 보고서 파일을 바로 엽니다. */
 /* 완성본 옆의 첨부 엑셀(경향분석 Sheet 등)을 엽니다. */
 async function openProductFile(code, name){
@@ -1978,11 +2119,12 @@ function openDrawer(code){
   scrim.classList.add("open"); drawer.classList.add("open"); drawer.focus();
 }
 function closeDrawer(){ scrim.classList.remove("open"); drawer.classList.remove("open"); if(lastFocus) lastFocus.focus(); }
-scrim.addEventListener("click", ()=>{ closeUpload(); closeDrawer(); });
+scrim.addEventListener("click", ()=>{ closeUpload(); closeBulk(); closeDrawer(); });
 $("#dr-close").addEventListener("click", closeDrawer);
 document.addEventListener("keydown", e=>{
   if (e.key !== "Escape") return;
-  if (modal.classList.contains("open")) closeUpload(); else closeDrawer();
+  if (bulkModal.classList.contains("open")) closeBulk();
+  else if (modal.classList.contains("open")) closeUpload(); else closeDrawer();
 });
 document.addEventListener("click", e=>{
   const uploader = e.target.closest("[data-upload]");
@@ -2003,12 +2145,7 @@ document.addEventListener("click", e=>{
   const bundle = e.target.closest(".bundle-btn");
   if (bundle && !bundle.disabled){ bundleProduct(bundle.dataset.bundle, bundle); return; }
   const bulk = e.target.closest(".bulk-btn");
-  if (bulk && !bulk.disabled){
-    bulkCode = bulk.dataset.bulk;
-    const picker = $("#bulk-file");
-    picker.value = ""; picker.click();
-    return;
-  }
+  if (bulk && !bulk.disabled){ openBulk(bulk.dataset.bulk); return; }
   const report = e.target.closest(".report-btn");
   if (report && !report.disabled){ makeReport(report.dataset.report, report); return; }
   const final = e.target.closest(".final-btn");
@@ -2045,7 +2182,6 @@ $("#up-cancel").addEventListener("click", closeUpload);
 $("#up-submit").addEventListener("click", submitUpload);
 $("#up-dataset").addEventListener("change", updatePathHint);
 $("#up-file").addEventListener("change", e=>pickFile(e.target.files[0]));
-$("#bulk-file").addEventListener("change", e=>bulkUpload(Array.from(e.target.files)));
 $("#ref-file").addEventListener("change", e=>uploadReference(Array.from(e.target.files)));
 $("#ref-add").addEventListener("click", ()=>{ const p=$("#ref-file"); p.value=""; p.click(); });
 $("#ref-folder").addEventListener("click", ()=>openReference(""));
