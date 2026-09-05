@@ -948,6 +948,29 @@ tbody tr:hover{background:var(--accent-soft)}
     <button class="btn" id="bk-submit" disabled>올리기</button>
   </div>
 </div>
+<!-- 보고서 완료 단추를 누르면 뜹니다 (담당자 2026-09: "보고서 완료 버튼을 누르면 재작성 or 취소").
+     완성본을 지우지 않고 같은 이름으로 다시 만듭니다 — 재작성 뒤 이전 파일은 덮어쓰입니다. -->
+<div class="modal" id="redo-modal" role="dialog" aria-modal="true" aria-labelledby="rd-title">
+  <div class="modal-head">
+    <div>
+      <div class="mono" style="font-size:12px;color:var(--ink-3)" id="rd-product"></div>
+      <h2 id="rd-title">보고서를 다시 만들까요?</h2>
+    </div>
+    <button class="icon-btn" id="rd-close" style="margin-left:auto" aria-label="닫기">✕</button>
+  </div>
+  <div class="modal-body">
+    <div class="up-note">이 제품의 보고서는 이미 만들어져 있습니다.<br>
+      <b>재작성</b>을 누르면 제품 폴더의 자료로 워드·첨부 엑셀을 <b>다시 만들어 덮어씁니다</b>
+      (전년도 결재본과 최신 자료를 다시 읽습니다). 이전 작성본을 남기려면 먼저 다른 이름으로 복사해 두세요.</div>
+    <div class="up-path" id="rd-file"></div>
+  </div>
+  <div class="modal-foot">
+    <button class="btn ghost" id="rd-open">완성본 열기</button>
+    <span class="spacer"></span>
+    <button class="btn ghost" id="rd-cancel">취소</button>
+    <button class="btn" id="rd-submit">보고서 재작성</button>
+  </div>
+</div>
 <div class="tip" id="tip" role="status" aria-live="polite"></div>
 
 <!-- `python -m pqr build` 가 만든 data.js 를 이 파일 옆에 두면 실제 데이터로 채워집니다.
@@ -1354,12 +1377,12 @@ async function openFolder(code){
 function reportButton(d){
   const off = uploadEnabled() ? "" : `disabled title="python -m pqr serve 로 실행한 경우에만 동작합니다"`;
   // 버튼은 두 개: 자료를 한꺼번에 올리는 버튼과 보고서 버튼.
-  // 보고서가 만들어지면 '보고서 작성' 이 '보고서 완료' 로 바뀌고, 누르면 완성본이 열립니다.
+  // 보고서가 만들어지면 '보고서 작성' 이 '보고서 완료' 로 바뀌고, 누르면 재작성·완성본 열기·취소를 고릅니다.
   let html = `<button class="mini bulk-btn" data-bulk="${d.code}" ${off}>파일 한번에 올리기</button> `
     ;   /* '자료 묶기' 단추는 자동 완성 엔진이 들어오며 뺐다 — 보고서는 폴더의 자료로 프로그램이 바로 만든다. */
   if (d.final_report){
     html += `<button class="mini final-btn" data-final="${d.code}"
-      ${off || `title="${esc(d.final_report)} 열기"`}>보고서 완료 📄</button>`;
+      ${off || `title="${esc(d.final_report)} — 누르면 재작성·완성본 열기·취소를 고릅니다"`}>보고서 완료 📄</button>`;
   } else {
     const ready = d.pct >= 100;
     const gate = ready ? off
@@ -1551,6 +1574,35 @@ async function openFinal(code){
       + (payload.hint ? "<br>" + esc(payload.hint) : ""));
   } catch (error) { showToast("완성본 열기 실패: " + esc(error.message)); }
 }
+/* ---- 보고서 완료 → 재작성 / 취소 ----
+   담당자 2026-09: "보고서 완료 버튼을 누르면 재작성 버튼이 뜨게 해서 재작성 or 취소".
+   완성본을 바로 열지 않고 작은 창을 띄워 재작성·완성본 열기·취소를 고르게 합니다. */
+const redoModal = $("#redo-modal");
+let redoCode = null, redoButton = null, redoLastFocus = null;
+function openRedo(code, button){
+  const product = DATA.find(d=>d.code===code);
+  if (!product) return;
+  redoCode = code; redoButton = button;
+  $("#rd-product").textContent = `${product.code} · ${product.name}`;
+  $("#rd-file").innerHTML = `현재 작성본: <code>${esc(product.final_report || "")}</code>`;
+  redoLastFocus = document.activeElement;
+  scrim.classList.add("open"); redoModal.classList.add("open");
+  $("#rd-cancel").focus();
+}
+function closeRedo(){
+  redoModal.classList.remove("open");
+  if (!drawer.classList.contains("open") && !modal.classList.contains("open")
+      && !bulkModal.classList.contains("open")) scrim.classList.remove("open");
+  redoCode = null; redoButton = null;
+  if (redoLastFocus && redoLastFocus.focus) redoLastFocus.focus();
+}
+$("#rd-close").addEventListener("click", closeRedo);
+$("#rd-cancel").addEventListener("click", closeRedo);
+$("#rd-open").addEventListener("click", ()=>{ const code = redoCode; closeRedo(); if (code) openFinal(code); });
+$("#rd-submit").addEventListener("click", ()=>{
+  const code = redoCode, button = redoButton; closeRedo();
+  if (code && button) makeReport(code, button);
+});
 async function makeReport(code, button){
   const original = button.textContent;
   button.textContent = "작성 중…"; button.disabled = true;
@@ -2123,11 +2175,12 @@ function openDrawer(code){
   scrim.classList.add("open"); drawer.classList.add("open"); drawer.focus();
 }
 function closeDrawer(){ scrim.classList.remove("open"); drawer.classList.remove("open"); if(lastFocus) lastFocus.focus(); }
-scrim.addEventListener("click", ()=>{ closeUpload(); closeBulk(); closeDrawer(); });
+scrim.addEventListener("click", ()=>{ closeUpload(); closeBulk(); closeRedo(); closeDrawer(); });
 $("#dr-close").addEventListener("click", closeDrawer);
 document.addEventListener("keydown", e=>{
   if (e.key !== "Escape") return;
-  if (bulkModal.classList.contains("open")) closeBulk();
+  if (redoModal.classList.contains("open")) closeRedo();
+  else if (bulkModal.classList.contains("open")) closeBulk();
   else if (modal.classList.contains("open")) closeUpload(); else closeDrawer();
 });
 document.addEventListener("click", e=>{
@@ -2153,7 +2206,7 @@ document.addEventListener("click", e=>{
   const report = e.target.closest(".report-btn");
   if (report && !report.disabled){ makeReport(report.dataset.report, report); return; }
   const final = e.target.closest(".final-btn");
-  if (final && !final.disabled){ openFinal(final.dataset.final); return; }
+  if (final && !final.disabled){ openRedo(final.dataset.final, final); return; }
   const code = e.target.closest(".code-btn");
   if (code) openDrawer(code.dataset.code);
 });
