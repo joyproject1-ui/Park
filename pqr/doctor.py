@@ -166,7 +166,7 @@ def report():
                        "켜짐 — 시험일지 PDF 를 정확히 읽습니다" if key_on else "없음 — 오프라인 판독기로 대신합니다"))
     lines.append(_line(offline, "오프라인 판독기 (RapidOCR)",
                        "설치됨 — 깨끗이 읽힌 값만 쓰고 애매한 칸은 노랑/주황으로 표시합니다" if offline
-                       else "없음 — %s / PQR-업데이트.bat 을 다시 실행하고 '설치 기록.txt' 를 보내 주세요"
+                       else "없음 — %s / PQR-업데이트.bat 을 다시 실행하고 'install-log.txt' 를 보내 주세요"
                             % (handwriting.why() if offline is False else "")))
     lines.append("")
 

@@ -37,11 +37,12 @@ if not defined PY (
 )
 
 rem Install or refresh the libraries the auto-report engine needs.
-rem Output goes to "설치 기록.txt" so a failed install (e.g. the handwriting reader) can be diagnosed.
-%PY% -m pip install -q -r requirements.txt --disable-pip-version-check > "설치 기록.txt" 2>&1
+rem Output goes to install-log.txt so a failed install (e.g. the handwriting reader) can be diagnosed.
+rem (ASCII only in this file: cmd.exe reads .bat files in the OEM code page and breaks on Korean.)
+%PY% -m pip install -q -r requirements.txt --disable-pip-version-check > install-log.txt 2>&1
 if errorlevel 1 (
   echo.
-  echo   [!] Some libraries failed to install. See "설치 기록.txt" and send it to the maintainer.
+  echo   [!] Some libraries failed to install. See install-log.txt and send it to the maintainer.
   echo       The report still works; the handwriting reader for item 13 may be off.
   echo.
 )
