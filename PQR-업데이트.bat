@@ -39,5 +39,7 @@ if errorlevel 1 (
   echo       The report still works; the handwriting reader for item 13 may be off.
   echo.
 )
-%PY% -m pqr update
-pause
+rem The updater overwrites this very file. cmd.exe keeps reading a running .bat by byte
+rem offset, so anything after the update on later lines would be read from the NEW file at
+rem the OLD offset ('pdater', 'y' errors). Keep update, pause and exit on ONE line.
+%PY% -m pqr update & pause & exit /b 0
