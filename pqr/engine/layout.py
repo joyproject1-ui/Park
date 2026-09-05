@@ -199,7 +199,11 @@ def apply(document, log=None, product_title=None, edms=None):
     log("빈 칸 사선: %d" % E.diag_all_empty(document, skip=no_diag | set(fixed_tables) | {toc}))
 
     # ---- 담당자가 화면을 보며 짚어 준 손질 (2026-09) ----
-    log("4항 본문 줄간격 1.5: %d" % E.set_section_line_spacing(document, 4, 1.5))
+    for 항 in (4, 16, 17, 18):                          # 제목 포함 1.5
+        log("%d항 줄간격 1.5: %d" % (항, E.set_section_line_spacing(document, 항, 1.5)))
+    for 항 in (4, 16):                                  # 본문 왼쪽 2글자
+        log("%d항 들여쓰기 2글자: %d" % (항, E.set_section_indent(document, 항, 2)))
+    log("특이사항 칸 빈 줄 정리: %d" % E.tidy_comment_cells(document))
     빈줄 = 0
     for ti in _tables_under(document, ("8.1.1", "8.1.2")):
         빈줄 += E.tidy_cell_lines(T[ti], ("제조원", "제조업체"), align="center")
@@ -238,7 +242,8 @@ def apply(document, log=None, product_title=None, edms=None):
             E.keep_tail_together(tbl, 6)
     protect = ("개 정 내 역", "제품품질평가 보고서") + ((product_title,) if product_title else ())
     log("빈 문단 뭉치 정리: %d" % E.collapse_blank_runs(document, keep=1, min_run=2, protect_before=protect))
-    log("각주 뒤 빈 줄 정리: %d" % E.drop_blank_after_note(document))
+    # 각주·표 다음의 작은 제목 앞에는 빈 줄 한 줄 (담당자 2026-09 — 앞서의 "각주 뒤 엔터 삭제" 를 뒤집음)
+    log("작은 제목 앞 빈 줄: %d" % E.blank_before_subheadings(document))
     log("사선 칸의 N/A 삭제: %d" % E.drop_na_in_diag_cells(document))
     log("항 제목 줄맞춤: %d" % E.align_section_titles(document))
     log("‘확인 필요’ 노랑 표시: %d" % E.highlight(document, "확인 필요"))

@@ -1637,7 +1637,11 @@ def draw_block_line(table, first, last, weight="0.5pt"):
     """
     from docx.table import _Cell
     trs = table._tbl.findall(qn("w:tr"))[first:last + 1]
-    width = sum(_width(tc) for tc in trs[0].findall(qn("w:tc")))
+    # 폭은 표 격자(tblGrid)에서 잰다 — 칸 폭(tcW)의 합은 '창에 자동으로 맞춤' 뒤의 실제
+    # 폭과 어긋나 선이 양 끝에서 테두리를 넘었다 (담당자 2026-09: "8.2.3 사선도 수정이 안됐고").
+    grid = table._tbl.find(qn("w:tblGrid"))
+    width = (sum(int(g.get(qn("w:w")) or 0) for g in grid.findall(qn("w:gridCol")))
+             if grid is not None else 0) or sum(_width(tc) for tc in trs[0].findall(qn("w:tc")))
     # 행 높이를 '정확히' 로 못 박는다 — 그래야 선의 아래 끝이 행 아래 모서리에 딱 맞는다.
     # 어림한 높이로 그리면 Word 와 LibreOffice 에서 줄이 표 밖으로 나가거나 모자란다
     # (담당자 2026-09: "8.2.3 표안의 선이 표 밖으로 안 나가게", "이렇게 진행해줘" — 모서리끼리).
@@ -1658,7 +1662,11 @@ def draw_block_line(table, first, last, weight="0.5pt"):
         height += hv
     w_pt, h_pt = width / 20.0, height / 20.0
     margin = 99 / 20.0                                   # 칸 왼쪽 여백(dxa 99)
-    drop, rise = h_pt, 0.0
+    # 가로 원점이 Word 는 칸 글자 영역, LibreOffice 는 테두리 근처라 서로 다르다. 왼쪽 여백만큼
+    # 빼서 모서리에 맞추면 한쪽에서는 테두리 밖으로 나간다 — 시작점을 원점(+1pt) 에 두어
+    # 어느 쪽에서 열어도 테두리 안에 있게 한다 (담당자 2026-09: 사선이 표 밖으로 나가지 않게).
+    inset = 1.0
+    drop, rise = h_pt - inset, inset
     _VML_ID[0] += 1
     sid = _VML_ID[0]
     xml = (
@@ -1671,7 +1679,7 @@ def draw_block_line(table, first, last, weight="0.5pt"):
         'mso-position-horizontal:absolute;mso-position-horizontal-relative:text;'
         'mso-position-vertical:absolute;mso-position-vertical-relative:text;'
         'mso-wrap-style:square" '
-        f'from="{-margin:.2f}pt,{drop:.2f}pt" to="{w_pt - margin:.2f}pt,{rise:.2f}pt" '
+        f'from="{inset:.2f}pt,{drop:.2f}pt" to="{w_pt - margin - inset:.2f}pt,{rise:.2f}pt" '
         f'o:allowincell="t" strokecolor="black" strokeweight="{weight}">'
         '<w10:wrap type="none"/><w10:anchorlock/>'
         '</v:line></w:pict></w:r>'
@@ -1686,6 +1694,15 @@ def draw_block_line(table, first, last, weight="0.5pt"):
             for t in tc.iter(qn("w:t")):
                 t.text = ""
             clear_diag(_Cell(tc, table))
+            pr = _tcpr(tc)                                 # 위아래 여백 0 · 세로 가운데 —
+            mar = get_or_add(pr, "tcMar")                  # Word 에서 선의 원점이 행 위에 붙는다
+            for side in ("top", "bottom"):
+                el = mar.find(qn("w:" + side))
+                if el is None:
+                    el = mar.makeelement(qn("w:" + side), {})
+                    mar.append(el)
+                el.set(qn("w:w"), "0"); el.set(qn("w:type"), "dxa")
+            set_cell_valign(_Cell(tc, table), "center")
     return 1
 
 
@@ -1725,26 +1742,113 @@ def _keep_next_para(para):
     get_or_add(pr, "keepNext")
 
 
-def set_section_line_spacing(document, number, line=1.5):
-    """한 항의 본문 문단에만 줄간격을 준다 (담당자 2026-09: "4항 … 줄간격은 1.5").
-
-    항 제목부터 다음 항 제목 전까지의 글 문단이 대상이다. 표 안은 건드리지 않는다.
-    바꾼 문단 수를 돌려준다.
-    """
+def _section_paras(document, number):
+    """항 제목 문단과 그 항의 본문 문단들 — (제목, [본문…]). 표 안은 들어가지 않는다."""
     head = re.compile(r"^\s*%s[.\s]" % re.escape(str(number)))
     other = re.compile(r"^\s*\d{1,2}[.\s]")
-    n, inside = 0, False
+    title, body, inside = None, [], False
     for para in document.paragraphs:
         text = para.text.strip()
-        if head.match(text):
-            inside = True
+        if not inside and head.match(text) and len(text) < 80:
+            title, inside = para, True
             continue
-        if inside and other.match(text):
+        if inside and other.match(text) and len(text) < 80:
             break
         if inside and text:
-            # w:line 은 240 이 한 줄이다 — 1.5 줄이면 360
-            set_line_spacing(para, int(round(240 * line)), rule="auto")
-            n += 1
+            body.append(para)
+    return title, body
+
+
+def set_section_line_spacing(document, number, line=1.5, include_heading=True):
+    """한 항의 줄간격을 준다 (담당자 2026-09: "4항·16항·17항·18항 줄간격은 제목 포함 1.5").
+
+    표 안은 건드리지 않는다. 바꾼 문단 수를 돌려준다. w:line 은 240 이 한 줄이다.
+    """
+    title, body = _section_paras(document, number)
+    targets = ([title] if (include_heading and title is not None) else []) + body
+    for para in targets:
+        set_line_spacing(para, int(round(240 * line)), rule="auto")
+    return len(targets)
+
+
+def set_section_indent(document, number, chars=2):
+    """한 항의 본문 문단을 왼쪽에서 chars 글자만큼 들여쓴다 (제목은 그대로).
+
+    담당자 2026-09: "4항과 16항의 들여쓰기는 왼쪽 2글자". 서식에 남아 있던 내어쓰기·
+    첫 줄 들여쓰기는 지운다 — 함께 두면 들여쓰기가 어긋난다.
+    """
+    _title, body = _section_paras(document, number)
+    for para in body:
+        pr = get_or_add(para._p, "pPr")
+        ind = pr.find(qn("w:ind"))
+        if ind is None:
+            ind = pr.makeelement(qn("w:ind"), {})
+            pr.append(ind)
+        for k in list(ind.attrib):
+            del ind.attrib[k]
+        ind.set(qn("w:leftChars"), str(chars * 100))
+        ind.set(qn("w:left"), str(chars * 210))
+    return len(body)
+
+
+SUB_TITLE = re.compile(r"^[ \u00a0]*\d{1,2}\.\d+(?:\.\d+)*[.\s]")
+
+
+def blank_before_subheadings(document):
+    """표나 각주 다음에 오는 작은 제목(8.1.2 · 8.2.2 · 10.2 …) 앞에 빈 줄을 한 줄 둔다.
+
+    담당자 2026-09: "8.1.2 공급망 추적성 검토(주원료) 항은 엔터 눌러서 한 칸 띄워주고"
+    — 스샷에 8.2.2·8.2.3 앞에도 한 줄이 있다. 제목이 제목 바로 뒤에 오는 자리(8.2 → 8.2.1)
+    에는 넣지 않는다. 이미 빈 줄이 있으면 그대로 둔다. 넣은 수를 돌려준다.
+    """
+    body = document.element.body
+    kids = list(body)
+
+    def txt(el):
+        return "".join(t.text or "" for t in el.iter(qn("w:t"))).strip()
+
+    def any_title(el):
+        t = txt(el)
+        return el.tag == qn("w:p") and len(t) < 80 and bool(SECTION_TITLE.match(t) or SUB_TITLE.match(t))
+
+    sample = next((el for i, el in enumerate(kids[:-1])
+                   if el.tag == qn("w:p") and is_blank_para(el) and any_title(kids[i + 1])), None)
+    added = 0
+    for i, el in enumerate(kids):
+        if i == 0 or el.tag != qn("w:p"):
+            continue
+        t = txt(el)
+        if not (SUB_TITLE.match(t) and len(t) < 80):
+            continue
+        prev = kids[i - 1]
+        if prev.tag == qn("w:p") and (is_blank_para(prev) or any_title(prev)):
+            continue
+        pr = el.find(qn("w:pPr"))
+        if pr is not None and pr.find(qn("w:pageBreakBefore")) is not None:
+            continue
+        el.addprevious(copy.deepcopy(sample) if sample is not None else el.makeelement(qn("w:p"), {}))
+        added += 1
+    return added
+
+
+def tidy_comment_cells(document):
+    """'특이사항 (Comment)' 칸에서 제목 줄과 글 사이의 빈 문단을 없앤다.
+
+    담당자 2026-09: "15항 특이사항 아래 글은 특이사항 바로 아래 줄에". 지운 수를 돌려준다.
+    """
+    n = 0
+    for tbl in document.tables:
+        for row in tbl.rows:
+            for cell in raw_cells(row):
+                paras = cell._tc.findall(qn("w:p"))
+                if not paras or not cell_text(cell).lstrip().startswith("특이사항"):
+                    continue
+                for p in paras[1:]:
+                    if not "".join(t.text or "" for t in p.iter(qn("w:t"))).strip():
+                        cell._tc.remove(p)
+                        n += 1
+                    else:
+                        break                      # 첫 글줄까지만 본다
     return n
 
 

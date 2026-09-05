@@ -65,7 +65,7 @@
 | 내용이 없으면 **1행만 남기고 사선** | 빈 블록을 한 줄로 줄이고 가로지르는 선 | `docedit.collapse_empty_block` |
 | **'확인 필요' 는 노랑 형광펜** | 그 글자에 형광을 칠한다 | `docedit.highlight` |
 | 비고에 사선이 그어졌으면 **N/A 삭제** | 사선 칸의 N/A 를 지운다 | `docedit.drop_na_in_diag_cells` |
-| 쓸데없는 엔터는 지운다 (각주 줄과 다음 작은 제목 사이) | 각주 뒤 빈 줄을 지운다 | `docedit.drop_blank_after_note` |
+| **표·각주 다음에 오는 작은 제목(8.1.2·8.2.2·10.2 …) 앞에는 빈 줄 한 줄** | 이미 있으면 그대로, 없으면 넣는다. 제목이 제목 바로 뒤에 오는 자리(8.2 → 8.2.1)는 붙인다. (앞서 "각주 뒤 엔터 삭제" 지시를 2026-09 에 뒤집음) | `docedit.blank_before_subheadings` |
 | 표 안 간격 조정 — '같은 스타일의 단락 사이에 공백 삽입 안 함' | `contextualSpacing` 을 켠다 | `docedit.zero_cell_spacing` |
 | **1·3항 제목 줄맞춤** (번호 뒤 빈칸 통일) | 글자 자리로 찾아 그 런만 고친다 | `docedit.align_section_titles` |
 | **16항 아래와 17항 시작부분은 한 칸 띄운다 — 모든 항이 마찬가지** | 항 제목 앞에 빈 줄 한 줄 | `docedit.space_before_sections` |
@@ -76,7 +76,9 @@
 | 7항 **비고의 사선은 한 칸으로 합친다** | 자료 줄·요약 줄의 비고를 세로 병합하고 사선 하나 | `docedit.merge_remark_column` |
 | 8.1.1·8.1.2 **제조원·제조업체의 빈 줄(엔터)을 지우고 가운데 맞춤** | 줄 끝 빈 문단을 없애고 가운데로 | `docedit.tidy_cell_lines` |
 | **빈 표(8.2.3·11.2·14·15항)의 가로지르는 선은 행의 왼쪽 아래 모서리에서 오른쪽 위 모서리까지** — 표 밖으로 나가지 않게 | 행 높이를 '정확히' 로 못 박고 모서리끼리 잇는다. 칸 사이 세로선은 그대로 둔다 | `docedit.draw_block_line` |
-| **4항 본문은 제목 아래 들여쓰고 줄간격 1.5** | 담당자가 보여 준 모양 그대로 | `docedit.set_section_line_spacing` |
+| **4·16·17·18항 줄간격은 제목 포함 1.5** | 항 제목과 본문 문단 모두 | `docedit.set_section_line_spacing` |
+| **4항·16항 본문은 왼쪽 2글자 들여쓰기** | 서식의 내어쓰기·첫줄 들여쓰기를 지우고 `leftChars=200` | `docedit.set_section_indent` |
+| **'특이사항 (Comment)' 글은 제목 바로 아래 줄에** | 제목과 글 사이 빈 문단을 없앤다 | `docedit.tidy_comment_cells` |
 | 10.2~10.5 **IQ·OQ·PQ 칸 너비는 같게** | 세 열을 같은 폭으로 나눈다 | `layout.py` |
 | 10.4·10.5 **설비명은 표 안에서 나뉘지 않고 가운데** ('현재 단락을 나누지 않음') | 그 칸 문단에 `keepLines` 를 켜고 세로 가운데 | `docedit.keep_lines` |
 | **전체 줄에 사선이 그어졌으면 칸마다의 사선은 지운다** (11.2 등) | 가로지르는 선이 있는 표에서는 낱칸 사선을 빼낸다 | `docedit.diag_all_empty` |
