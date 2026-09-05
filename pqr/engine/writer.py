@@ -372,7 +372,10 @@ def write_report(folder, product, period, out_path, today=None, recipe=None, log
             product_dir=folder)
         log_("첨부 엑셀: %s" % ", ".join(n for n, _ in attachments))
     except Exception as error:
+        import traceback
         data.issues.append(("첨부", "", "첨부 엑셀 생성 실패: %s" % error))
+        for line in traceback.format_exc().splitlines():        # 작성 기록에 멈춘 자리를 남긴다
+            log_("    " + line)
     shutil.rmtree(work, ignore_errors=True)
     return {"path": out_path, "issues": data.issues + list((ctx or {}).get("issues", [])), "log": lines,
             "data": data, "attachments": attachments, "blank_sections": blank}

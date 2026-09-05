@@ -1671,7 +1671,9 @@ async function makeReport(code, button){
       + (made.length ? `<br>📊 함께 만든 첨부 ${made.length}개<ul class="issue-list">`
           + made.map(n=>`<li>${esc(n)}</li>`).join("") + `</ul>` : "")
       + (payload.engine && !made.length
-          ? `<br><b style="color:#b91c1c">⚠ 첨부 엑셀이 만들어지지 않았습니다</b> — 문의 목록의 '첨부' 줄을 보세요.` : ``)
+          ? `<br><b style="color:#b91c1c">⚠ 첨부 엑셀이 만들어지지 않았습니다</b>`
+            + (issues.filter(i=>i[0]==="첨부").map(i=>`<br>${esc(i[2])}`).join("") || ` — 문의 목록의 '첨부' 줄을 보세요.`)
+            + `<br><span class="muted">제품 폴더의 <code>PQR 작성 기록</code> 파일을 보내 주시면 원인을 알 수 있습니다.</span>` : ``)
       + (listing.length ? `<br><span class="muted">작성본 폴더에 지금 있는 파일:</span><ul class="issue-list">`
           + listing.map(f=>`<li>${esc(f.name)} <span class="muted">(${esc(f.modified)})</span></li>`).join("") + `</ul>` : ``)
       + `<br>${esc(payload.made_dir || payload.folder || "")}`
