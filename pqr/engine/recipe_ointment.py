@@ -1718,8 +1718,14 @@ def _fill_stability26(document, logs, period, spec, log, issues, why_of=None):
     rows, trend = [], []
     for one in logs:
         for p in one.get("points", []):
-            shaky = p.get("unsure") or []
-            if shaky and upto(p):
+            shaky = list(p.get("unsure") or [])
+            # 문의 목록에는 보고서에 실제로 실리는 것만: 완료 일자는 평가 연도 시점(13.1)일 때,
+            # 함량은 평가 연도까지의 시점(13.3·경향 엑셀)일 때
+            if "done" in shaky and not during(p):
+                shaky.remove("done")
+            if not upto(p):
+                shaky = []
+            if shaky:
                 what = ", ".join("완료 일자" if u == "done" else "함량(%s)" % u for u in shaky)
                 issues.append(("13", one.get("lot", ""), "%s 시점 손글씨 판독이 애매함 — %s (노랑/주황 표시) 시험일지와 대조하세요"
                                % (p.get("period"), what)))

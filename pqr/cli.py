@@ -428,9 +428,22 @@ def _copy_program(source, target):
         if not os.path.isdir(destination):
             os.makedirs(destination)
         for name in files:
-            shutil.copy2(os.path.join(base, name), os.path.join(destination, name))
+            src, dst = os.path.join(base, name), os.path.join(destination, name)
+            if _same_file(src, dst):
+                continue                      # 같은 내용이면 건드리지 않는다 — 실행 중인 .bat 를
+            shutil.copy2(src, dst)            # 덮어쓰면 cmd 가 다음 줄을 엉뚱한 자리에서 읽는다
             changed += 1
     return changed
+
+
+def _same_file(a, b):
+    try:
+        if not os.path.isfile(b) or os.path.getsize(a) != os.path.getsize(b):
+            return False
+        with open(a, "rb") as fa, open(b, "rb") as fb:
+            return fa.read() == fb.read()
+    except OSError:
+        return False
 
 
 def cmd_launch(args):
