@@ -267,9 +267,25 @@ def write_report(folder, product, period, out_path, today=None, recipe=None, log
         # 최신 양식을 바탕으로 쓸 때 전년도 결재본은 참고 자료다 — 해마다 바뀌지 않는 값
         # (원료 규격·제조단위·포장단위·제조원)만 빈 칸에 먼저 이어받고, 그 위에 올해 자료를 덮는다.
         from . import carry as carry_module
+        import time
         try:
             prev_docx = os.path.join(work, "prev.docx")
-            convert.to_docx(previous, prev_docx)
+            last = None
+            for attempt in range(3):              # LibreOffice 가 다른 일로 바쁘면 한 번에 안 될 때가 있다
+                try:
+                    convert.to_docx(previous, prev_docx)
+                    if os.path.isfile(prev_docx) and os.path.getsize(prev_docx) > 0:
+                        break
+                    last = "빈 파일"
+                except Exception as error:
+                    last = error
+                time.sleep(3)
+            else:
+                # 여기서 그냥 넘어가면 규격·제조단위·포장단위·실시 사유가 빈 채로 사선만 그어진
+                # 보고서가 나간다 (담당자 2026-09: "6항 제조단위, 포장단위 작성된 것이 지워졌네").
+                # GMP 문서에 빈 값을 내보내느니 멈추고 다시 만들게 한다.
+                raise EngineError("전년도 결재본(%s)을 .docx 로 바꾸지 못해 이어받기를 할 수 없습니다 — "
+                                  "잠시 뒤 다시 만드세요 (%s)" % (os.path.basename(previous), last))
             old_document = docx.Document(prev_docx)
             carry_module.carry(document, old_document, log_)
             data.pv_reasons = carry_module.pv_reasons(old_document)
@@ -280,6 +296,8 @@ def write_report(folder, product, period, out_path, today=None, recipe=None, log
             data.prev_sections = carry_module.section_grids(old_document, "10.1")
             if data.pv_reasons:
                 log_("전년도 10.1 에서 밸리데이션 사유 %d Lot" % len(data.pv_reasons))
+        except EngineError:
+            raise
         except Exception as error:
             log_("전년도 결재본을 참고하지 못했습니다 — %s" % error)
             data.issues.append(("16", os.path.basename(previous),

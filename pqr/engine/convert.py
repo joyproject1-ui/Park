@@ -174,13 +174,27 @@ def _soffice():
     return None
 
 
+def _soffice_run(exe, fmt, outdir, src, timeout):
+    """LibreOffice 변환 한 번 — 호출마다 제 프로필 폴더를 쓴다.
+
+    같은 프로필을 두 프로세스가 쓰면(보고서 작성과 시험이 함께 돌 때) 뒤의 것이 조용히
+    아무것도 만들지 않는다. 그 빈손이 이어받기 실패로 이어져 빈 보고서가 나갔다(2026-09).
+    """
+    profile = tempfile.mkdtemp(prefix="pqr-lo-")
+    try:
+        subprocess.run([exe, "--headless", "-env:UserInstallation=file://" + profile,
+                        "--convert-to", fmt, "--outdir", outdir, os.path.abspath(src)],
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=timeout)
+    finally:
+        shutil.rmtree(profile, ignore_errors=True)
+
+
 def _with_soffice(src, dst):
     exe = _soffice()
     if not exe:
         return False
     outdir = os.path.dirname(os.path.abspath(dst))
-    subprocess.run([exe, "--headless", "--convert-to", "docx", "--outdir", outdir, os.path.abspath(src)],
-                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=300)
+    _soffice_run(exe, "docx", outdir, src, 300)
     made = os.path.join(outdir, os.path.splitext(os.path.basename(src))[0] + ".docx")
     if os.path.isfile(made) and os.path.abspath(made) != os.path.abspath(dst):
         shutil.move(made, dst)
@@ -269,8 +283,7 @@ def _xls_with_soffice(src, dst):
     if not exe:
         return False
     outdir = os.path.dirname(os.path.abspath(dst))
-    subprocess.run([exe, "--headless", "--convert-to", "xlsx", "--outdir", outdir, os.path.abspath(src)],
-                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=300)
+    _soffice_run(exe, "xlsx", outdir, src, 300)
     made = os.path.join(outdir, os.path.splitext(os.path.basename(src))[0] + ".xlsx")
     if os.path.isfile(made) and os.path.abspath(made) != os.path.abspath(dst):
         shutil.move(made, dst)
@@ -310,8 +323,7 @@ def _pdf_with_soffice(src, dst):
     if not exe:
         return False
     outdir = os.path.dirname(os.path.abspath(dst))
-    subprocess.run([exe, "--headless", "--convert-to", "pdf", "--outdir", outdir, os.path.abspath(src)],
-                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=600)
+    _soffice_run(exe, "pdf", outdir, src, 600)
     made = os.path.join(outdir, os.path.splitext(os.path.basename(src))[0] + ".pdf")
     if os.path.isfile(made) and os.path.abspath(made) != os.path.abspath(dst):
         shutil.move(made, dst)

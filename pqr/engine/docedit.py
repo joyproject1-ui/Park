@@ -900,9 +900,11 @@ def zero_cell_spacing(document, skip=()):
                 sp.set(qn("w:after"), "0")
                 sp.set(qn("w:line"), "240")            # 1줄 — 칸마다 다르던 줄 높이를 맞춘다
                 sp.set(qn("w:lineRule"), "auto")
+                # 지우기만 하면 스타일(Normal (Web): beforeAutospacing="1")이 물려준 값이 살아남아
+                # Word 에서만 문단 사이에 한 줄이 벌어진다(LibreOffice 는 이 속성을 모른다).
+                # 담당자 2026-09: "15항 특이사항 아래 글이 바로 위치하도록" — 0 을 분명히 적는다.
                 for k in ("w:beforeLines", "w:afterLines", "w:beforeAutospacing", "w:afterAutospacing"):
-                    if sp.get(qn(k)) is not None:
-                        del sp.attrib[qn(k)]
+                    sp.set(qn(k), "0")
                 ind = pr.find(qn("w:ind"))             # 첫 줄·내어쓰기 들여쓰기는 칸마다 달라 지운다
                 if ind is not None:
                     pr.remove(ind)
