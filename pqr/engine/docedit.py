@@ -787,7 +787,7 @@ def fit_to_window(table, width):
 UNIT = 92           # 반각 한 자의 폭(twip) — 굴림 10pt 를 Word 로 재어 맞춤. 한글·전각은 2 단위
 CELL_MARGIN = 220   # 칸 좌우 여백(108×2) + 여유
 KEY_HEADS = ("연번", "no.", "lot no", "lot", "구분")
-NOWRAP_HEADS = ("번호", "no.", "lot")     # 제조 번호·문서 번호 — 줄을 넘기면 읽을 수 없다
+NOWRAP_HEADS = ("번호", "no.", "lot", "연도")     # 제조 번호·문서 번호·해당 연도 — 줄을 넘기면 읽을 수 없다
 
 
 def text_units(text):
@@ -851,7 +851,8 @@ def balance_columns(table, fixed_heads=KEY_HEADS, unit=UNIT, margin=CELL_MARGIN)
     floor = {i: 0.6 * cols[i] for i in free}          # 원래 폭의 60% 밑으로는 좁히지 않는다
     for i in free:                                    # 번호 칸은 줄을 넘기지 않는다 (OGW701 → OGW / 701)
         if any(k in heads[i] for k in NOWRAP_HEADS) and need[i]:
-            floor[i] = max(floor[i], need[i] * unit + margin)
+            # 서식이 정한 폭보다 좁히지 않고, 글꼴 폭 차이 여유도 둔다 — '2024'·'OEWN01' 이 두 줄로 갈렸다
+            floor[i] = max(floor[i], cols[i], need[i] * unit * 1.2 + margin)
     chosen = best = None
     for lines in range(1, 40):
         want = [max(need[i] * unit / float(lines) + margin, floor[i]) for i in free]
@@ -2174,3 +2175,53 @@ def bold_first_line_only(cell):
                 b.set(qn("w:val"), "0")
                 n += 1
     return n
+
+
+# ---------- 이어진 표 · 특이사항 줄 ----------
+def _row_text(tr):
+    return re.sub(r"\s+", "", "".join(t.text or "" for t in tr.iter(qn("w:t"))))
+
+
+def join_continuations(tables):
+    """한 제목 아래 표가 여럿인데 뒤 표가 앞 표와 같은 머리행으로 시작하면 — 쪽을 나누려고 갈라 둔
+    '이어진 표'(퀴노비드 공양식 11.1: 1~3번 표 / 4~5번·특이사항 표) — 뒤 표의 머리행을 뺀 줄을 앞 표 끝에
+    옮기고 뒤 표와 사이의 빈 문단(쪽 나눔)을 지운다. 남은 표 목록을 돌려준다.
+
+    담당자 2026-09: "일탈 마지막 줄 작성이 잘못됐고" — 앞 표만 보고 마지막 줄(데이터 줄)에 특이사항을
+    적어 칸이 갈라진 채 CAPA 칸·사선이 남았다.
+    """
+    if not tables:
+        return []
+    first = tables[0]
+    head = _row_text(first._tbl.findall(qn("w:tr"))[0]) if first._tbl.findall(qn("w:tr")) else ""
+    kept = [first]
+    for other in tables[1:]:
+        trs = other._tbl.findall(qn("w:tr"))
+        between, el = [], kept[-1]._tbl.getnext()
+        while el is not None and el is not other._tbl:
+            between.append(el)
+            el = el.getnext()
+        # 사이에 글이 있는 문단(제목 등)이 있으면 다른 표다
+        if (not head or not trs or _row_text(trs[0]) != head or el is None
+                or any(e.tag != qn("w:p") or "".join(t.text or "" for t in e.iter(qn("w:t"))).strip() for e in between)):
+            kept.append(other)
+            continue
+        for e in between:                       # 사이의 빈 문단(쪽 나눔 br 포함)을 지운다
+            e.getparent().remove(e)
+        for tr in trs[1:]:
+            first._tbl.append(tr)
+        other._tbl.getparent().remove(other._tbl)
+    return kept
+
+
+def comment_cell(table):
+    """표 맨 아래 '특이사항 (Comment)' 줄의 칸. 줄이 여러 칸으로 갈라져 있으면 한 칸으로 합친다
+    (가로 병합 · 사선 제거 · 세로 병합 해제) — 특이사항 줄에 CAPA 칸이나 사선이 남지 않게."""
+    cells = raw_cells(table.rows[-1])
+    first = cells[0]
+    for other in cells[1:]:
+        merge_right(first, other)
+    if len(cells) > 1:
+        clear_diag(first)
+        set_vmerge(first, False)
+    return first

@@ -328,3 +328,143 @@ def equipment_rows(old_document):
             if rows:
                 out.setdefault(section, []).extend(rows)
     return out
+
+
+_PERIOD = re.compile(r"^(\d{1,3})\s*M$", re.I)
+
+
+def _months(period):
+    m = _PERIOD.match(squeeze(period or ""))
+    return int(m.group(1)) if m else None
+
+
+def stability_entries(old_document):
+    """전년도 결재본 13항 실시 내역 — Lot 마다 하나.
+
+    [{"kind": "장기"|"시판후", "market": "내수"|"수출", "lot", "lot_text", "year", "pack", "store",
+      "periods": [...], "dones": [...], "last": 실시 사유|비고, "ongoing": bool, "range": {열 이름: "최소 ~ 최대"}}]
+    'ongoing' 은 올해도 이어지는 시험 — 장기는 마지막 시점이 36M 미만, 시판 후는 비고가 '완료' 가 아닐 때.
+    'range' 는 같은 시장 13.3 경향 표의 그 Lot 줄(해마다 Lot 차례가 같다)의 값이다.
+
+    담당자 2026-09: "안정성 자료가 모두 입력이 안됐네 — 잘 모르겠으면 작년 PQR 에서 정보를 가져오고
+    첨부된 안정성 자료로 값을 입력". 올해 시험일지를 읽지 못한 Lot 은 여기서 옮기고 확인을 남긴다.
+    """
+    entries, trends = [], {}
+    kind, market = None, "내수"
+    for what, value, _ in outline(old_document):
+        if what == "h":
+            got = _section(value)
+            if not got:
+                continue
+            if not got.startswith("13"):
+                kind = None
+                continue
+            t = squeeze(value)
+            if got.count(".") <= 1:
+                kind = "시판후" if "시판" in t else ("경향" if "경향" in t else ("장기" if "장기" in t else None))
+                market = "내수"
+            if "수출" in t:
+                market = "수출"
+            elif "내수" in t:
+                market = "내수"
+            continue
+        if not kind:
+            continue
+        table = old_document.tables[value]
+        if kind == "경향":
+            trends.setdefault(market, []).extend(_trend_rows(table))
+            continue
+        heads = _headers(table)
+        col = lambda *words: next((k for k, h in enumerate(heads) if any(w in h for w in words)), None)
+        c_lot, c_year, c_period = col("제조번호"), col("해당연도", "연도"), col("시험기간")
+        c_pack, c_store, c_done = col("포장"), col("보관"), col("완료")
+        c_last = col("실시사유", "비고")
+        if c_lot is None:
+            continue
+        for row in _grid_vmerged(table)[1:]:
+            text = lambda c: (row[c] if c is not None and c < len(row) else "").strip()
+            lot_text = text(c_lot)
+            codes = LOT.findall(squeeze(lot_text))
+            if not codes:
+                continue
+            periods = [p for p in text(c_period).split("\n") if p.strip()]
+            dones = [d for d in text(c_done).split("\n") if d.strip()]
+            prev = entries[-1] if entries else None
+            if prev and prev["kind"] == kind and prev["market"] == market and prev["lot"] == codes[0]:
+                prev["periods"] += periods                      # 시점마다 한 줄인 표(2025 결재본)
+                prev["dones"] += dones
+                for k in ("year", "pack", "store", "last"):
+                    prev[k] = prev[k] or text({"year": c_year, "pack": c_pack, "store": c_store, "last": c_last}[k])
+                continue
+            entries.append({"kind": kind, "market": market, "lot": codes[0], "lot_text": lot_text,
+                            "year": text(c_year), "pack": text(c_pack), "store": text(c_store),
+                            "periods": periods, "dones": dones, "last": text(c_last), "range": {}})
+    for e in entries:
+        months = [m for m in (_months(p) for p in e["periods"]) if m is not None]
+        if e["kind"] == "시판후":
+            e["ongoing"] = "완료" not in squeeze(e["last"])
+        else:
+            e["ongoing"] = not months or max(months) < 36
+    # 13.3 경향 줄 ↔ Lot: 같은 시장·같은 구분·같은 해 안에서 차례가 같다
+    for market, rows in trends.items():
+        for label, year, values in rows:
+            kind_ = "시판후" if "시판" in label else "장기"
+            same = [e for e in entries if e["market"] == market and e["kind"] == kind_ and e["year"] == year]
+            taken = [e for e in same if e["range"]]
+            if len(taken) < len(same):
+                same[len(taken)]["range"] = values
+    return entries
+
+
+def _grid_vmerged(table):
+    """_grid_text 와 같되 세로 병합으로 이어진 칸(vMerge 계속)에는 위 칸의 글을 넣는다 —
+    시점마다 한 줄인 13항 표에서 제조번호·연도·실시 사유가 첫 줄에만 있는 것을 줄마다 되살린다."""
+    grid = table._tbl.find(qn("w:tblGrid"))
+    width = len(grid.findall(qn("w:gridCol"))) if grid is not None else 0
+    out = []
+    for row in table.rows:
+        line, col = [""] * width, 0
+        for cell in E.raw_cells(row):
+            pr = cell._tc.find(qn("w:tcPr"))
+            span_el = pr.find(qn("w:gridSpan")) if pr is not None else None
+            span = int(span_el.get(qn("w:val"))) if span_el is not None else 1
+            vm = pr.find(qn("w:vMerge")) if pr is not None else None
+            text = E.cell_text(cell)
+            if vm is not None and vm.get(qn("w:val")) != "restart" and out and not text.strip():
+                text = out[-1][col] if col < width else ""
+            for k in range(col, min(col + span, width)):
+                line[k] = text
+            col += span
+        out.append(line)
+    return out
+
+
+def _trend_rows(table):
+    """13.3 경향 표의 연도 줄 — [(줄 이름 '장기'|'시판후', 연도, {열 이름: 값 글})]."""
+    grid = _grid_text(table)
+    first = next((i for i, row in enumerate(grid) if squeeze(row[0]) in ("장기", "시판후")), None)
+    if first is None:
+        return []
+    names = grid[first - 1] if first >= 1 else []
+    if not any(squeeze(n) and "시험항목" not in n for n in names[2:]) and first >= 2:
+        names = grid[first - 2]
+    out, label = [], ""
+    for row in grid[first:]:
+        head = squeeze(row[0])
+        if head in ("장기", "시판후"):
+            label = head
+        elif head:
+            break
+        year = re.match(r"(\d{4})", squeeze(row[1]) if len(row) > 1 else "")
+        if not year:
+            continue
+        values = {}
+        for k in range(2, len(row)):
+            name = squeeze(names[k]) if k < len(names) else ""
+            if "시험항목" in name or not (row[k] or "").strip():
+                continue
+            if name in values:
+                continue
+            values[name or "함량"] = row[k].strip()
+        out.append((label, year.group(1), values))
+    return out

@@ -305,6 +305,7 @@ def write_report(folder, product, period, out_path, today=None, recipe=None, log
                 data.prev_sections_all = {sec: carry_module.section_grids_all(old_document, sec)
                                           for sec in ("10.1", "6", "8.1.1", "8.1.2", "8.1.3", "9.1")}
                 data.prev_packs = carry_module.stability_packs(old_document)
+                data.prev_entries = carry_module.stability_entries(old_document)
                 data.prev_equipment = carry_module.equipment_rows(old_document)
                 if data.pv_reasons:
                     log_("전년도 10.1 에서 밸리데이션 사유 %d Lot" % len(data.pv_reasons))

@@ -1729,7 +1729,7 @@ def fill(document, data, product, period, today=None, log=None):
 
     # ---------- 11항 ----------
     devs = [d for d in data.deviations if (d.get("lot") in dom + exp) or (name and name[:4] in (d.get("title") or ""))]
-    t11 = _tables(document, "11.1")
+    t11 = E.join_continuations(_tables(document, "11.1"))   # 쪽 나눔으로 갈라 둔 표는 하나로 잇는다
     if t11:
         tbl = t11[0]
         if devs:
@@ -1759,18 +1759,18 @@ def fill(document, data, product, period, today=None, log=None):
                     E.set_cell_flow(c[i_act], action)
                 if i_capa is not None and i_capa < len(c):
                     E.set_cell(c[i_capa], "☐ Yes", "■ No")
-            E.set_cell_plain(E.raw_cells(tbl.rows[-1])[0], "특이사항 (Comment)",
+            E.set_cell_plain(E.comment_cell(tbl), "특이사항 (Comment)",
                              "- 평가 년도 내 %d건의 일탈 있었으나, 모두 적합하게 조치되었으며 특이사항 없음."
                              % len(devs))
         else:
-            E.set_cell_plain(E.raw_cells(tbl.rows[-1])[0], "특이사항 (Comment)", "평가 년도 내 중요 일탈 및 기준 일탈 이력 없음.")
+            E.set_cell_plain(E.comment_cell(tbl), "특이사항 (Comment)", "평가 년도 내 중요 일탈 및 기준 일탈 이력 없음.")
         for tb in t11[1:]:
-            E.set_cell_plain(E.raw_cells(tb.rows[-1])[0], "특이사항 (Comment)", "평가 년도 내 중요 일탈 및 기준 일탈 이력 없음.")
-    for tb in _tables(document, "11.2"):
-        E.set_cell_plain(E.raw_cells(tb.rows[-1])[0], "특이사항 (Comment)", "평가 년도 내 경향 일탈 이력 없음.")
+            E.set_cell_plain(E.comment_cell(tb), "특이사항 (Comment)", "평가 년도 내 중요 일탈 및 기준 일탈 이력 없음.")
+    for tb in E.join_continuations(_tables(document, "11.2")):
+        E.set_cell_plain(E.comment_cell(tb), "특이사항 (Comment)", "평가 년도 내 경향 일탈 이력 없음.")
 
     # ---------- 12항 ----------
-    t12 = _tables(document, "12.")
+    t12 = E.join_continuations(_tables(document, "12."))
     # 주성분 이름 — 주성분을 건드리는 변경은 대상 제품에 이름이 없어도 이 제품에 해당한다
     주성분 = sorted({r["part"] for r in rules if r.get("part") and "함량" in r.get("item", "")})
     if t12:
@@ -1812,9 +1812,9 @@ def fill(document, data, product, period, today=None, log=None):
             if 간추림:                       # 같은 안내를 건마다 되풀이하지 않는다
                 issues.append(("12", "", "조치사항은 변경 실행 계획을 간추린 것입니다 — "
                                          "이 제품에 해당하지 않는 줄은 지우세요"))
-            E.set_cell_plain(E.raw_cells(tbl.rows[-1])[0], "특이사항 (Comment)", "N/A")
+            E.set_cell_plain(E.comment_cell(tbl), "특이사항 (Comment)", "N/A")
         else:
-            E.set_cell_plain(E.raw_cells(tbl.rows[-1])[0], "특이사항 (Comment)", "평가 년도 내 변경관리 이력 없음.")
+            E.set_cell_plain(E.comment_cell(tbl), "특이사항 (Comment)", "평가 년도 내 변경관리 이력 없음.")
 
     # ---------- 13항 ----------
     stab = getattr(data, "stability", None)
@@ -1827,7 +1827,8 @@ def fill(document, data, product, period, today=None, log=None):
         # 실시 사유는 그 Lot 의 공정밸리데이션 사유 — 올해 10.1 을 먼저, 없으면 전년도 것을 쓴다
         why = dict(getattr(data, "pv_reasons", None) or {})
         why.update(CARRY.pv_reasons(document))
-        _fill_stability26(document, logs, period, spec, log, issues, why, getattr(data, "prev_packs", None))
+        _fill_stability26(document, logs, period, spec, log, issues, why, getattr(data, "prev_packs", None),
+                          getattr(data, "prev_entries", None), getattr(data, "previous_name", ""))
     elif stab:
         _fill_stability(document, stab, log, limits["assay"])
     elif _carry_stability(document, getattr(data, "prev_stability", None) or {},
@@ -1845,7 +1846,7 @@ def fill(document, data, product, period, today=None, log=None):
                     E.set_cell(c, ""); E.set_vmerge(c, False)
                 cells = E.raw_cells(tb.rows[f])
                 E.set_cell(cells[0], "1"); E.set_cell(cells[min(3, len(cells) - 1)], "확인 필요")
-                E.set_cell_plain(E.raw_cells(tb.rows[-1])[0], "특이사항 (Comment)", "* 안정성 시험일지 판독 필요 — 담당자 확인 후 기재")
+                E.set_cell_plain(E.comment_cell(tb), "특이사항 (Comment)", "* 안정성 시험일지 판독 필요 — 담당자 확인 후 기재")
         for tb in _tables(document, "13.3"):
             firsts = [i for i, r in enumerate(tb.rows) if E.cell_text(E.raw_cells(r)[0]).strip().startswith("관리")]
             last = (firsts[0] - 1) if firsts else len(tb.rows) - 6
@@ -1854,7 +1855,7 @@ def fill(document, data, product, period, today=None, log=None):
             for c in cells:
                 E.set_cell(c, ""); E.set_vmerge(c, False)
             E.set_cell(cells[0], "확인 필요")
-            E.set_cell_plain(E.raw_cells(tb.rows[-1])[0], "특이사항 (Comment)", "* 안정성 시험일지 판독 필요 — 담당자 확인 후 기재")
+            E.set_cell_plain(E.comment_cell(tb), "특이사항 (Comment)", "* 안정성 시험일지 판독 필요 — 담당자 확인 후 기재")
         issues.append(("13", "", "안정성 시험(13.1~13.3) 값을 읽지 못해 '확인 필요' 로 두었음 — 시험일지 판독 필요"))
 
     # 13.2 — 양식은 '* 시판 후 안정성 시험 이력 없음.' 한 줄뿐이라 13.2 항이 비어 보인다
@@ -1870,7 +1871,7 @@ def fill(document, data, product, period, today=None, log=None):
     for prefix, msg in (("14.1", returns),
                         ("14.2", "평가 년도 내 불만 이력 없음."), ("14.3", "평가 년도 내 회수 이력 없음."),
                         ("15.", "평가 년도 내 시정조치사항 이력 없음.")):
-        for tb in _tables(document, prefix):
+        for tb in E.join_continuations(_tables(document, prefix)):
             last = E.raw_cells(tb.rows[-1])[0]
             if E.cell_text(last).lstrip().startswith("특이사항"):
                 E.set_cell_plain(last, "특이사항 (Comment)", msg)
@@ -2099,9 +2100,11 @@ def _fill_131_table(table, rows, why_of, issues, post=False):
             last = "완료" if _post_completed(one, taken) else "진행중"
         else:
             last = one.get("why") or (why_of or {}).get(one["lot"]) or ""
-        put = [str(i + 1), one.get("year") or "", [p["period"] for p in taken], one["lot"],
-               one.get("pack") or "", one.get("store") or "",
-               [p["done"] or "확인 필요" for p in taken], last]
+        carried = bool(one.get("carried"))                  # 전년도 결재본에서 옮긴 Lot — 올해 시점·완료 일자는 모른다
+        periods = ["확인 필요"] if carried else [p["period"] for p in taken]
+        dones = ["확인 필요"] if carried else [p["done"] or "확인 필요" for p in taken]
+        put = [str(i + 1), one.get("year") or "", periods, one.get("lot_text") or one["lot"],
+               one.get("pack") or "", one.get("store") or "", dones, last]
         for k, value in enumerate(put):
             if k >= len(cells):
                 break
@@ -2111,12 +2114,23 @@ def _fill_131_table(table, rows, why_of, issues, post=False):
         # 손글씨 판독이 애매한 완료 일자는 노랑 (담당자 2026-09: "애매한 것만 노랑마크로")
         if any("done" in (p.get("unsure") or []) for p in taken) and len(cells) > 6:
             E.highlight_cell(cells[6])                      # 시점마다 한 줄('확인 필요' 도 줄마다) — 시험 기간 줄과 맞춘다
+        if carried:
+            for k in (2, 6, 7):
+                if k < len(cells):
+                    E.highlight_cell(cells[k])
     if not post and not any(one.get("why") or (why_of or {}).get(one["lot"]) for one, _ in rows):
         issues.append(("13.1", "", "장기 안정성 시험의 ‘실시 사유’ 는 시험일지에 없습니다 — "
                                    "변경관리·PV 내용을 보고 직접 적으세요"))
+    moved = [one["lot"] for one, _ in rows if one.get("carried")]
+    if moved:
+        cell = E.comment_cell(table)
+        kept = [l for l in E.cell_text(cell).split("\n")[1:] if l.strip() and l.strip() != "N/A"]   # 서식의 글은 남긴다
+        kept.append("* %s 줄은 전년도 결재본·서식 각주에서 옮긴 것입니다 — 올해 안정성 시험일지로 시험 기간·완료 일자를 채우세요."
+                    % ", ".join(moved))
+        E.set_cell_plain(cell, "특이사항 (Comment)", *kept)
 
 
-def _fill_133_table(table, groups, spec, _trim):
+def _fill_133_table(table, groups, spec, _trim, marks=None):
     """13.3 경향 분석 — groups: [(줄 이름 '시판 후'|'장기', log, 평가 연도까지의 시점들)]. 성분마다 최솟값 ~ 최댓값."""
     labels = D.labels(table)
     parts = []
@@ -2135,6 +2149,10 @@ def _fill_133_table(table, groups, spec, _trim):
              if D.squeeze(_text(tr.findall(qn("w:tc"))[0])).startswith(("관리규격", "최소", "최대", "경향"))]
     first = next((i for i, r in enumerate(table.rows)
                   if D.squeeze(E.cell_text(E.raw_cells(r)[0])) in ("장기", "시판후")), 2)
+    # 줄 차례는 서식을 따른다 — EDMS 공양식은 '장기' 를 먼저, 2025 결재본은 '시판 후' 를 먼저 적었다
+    lead = D.squeeze(E.cell_text(E.raw_cells(table.rows[first])[0])) if first < len(table.rows) else ""
+    if lead == "장기":
+        groups = [g for g in groups if g[0] == "장기"] + [g for g in groups if g[0] != "장기"]
     last = heads[0] - 1 if heads else len(table.rows) - 1
     f, l = E.fit_rows(table, first, last, len(groups))
     heads = [i for i, tr in enumerate(table._tbl.findall(qn("w:tr")))          # 줄 수를 맞춘 뒤 다시 찾는다 — 번호가 밀린다
@@ -2151,7 +2169,9 @@ def _fill_133_table(table, groups, spec, _trim):
         prev_label = label
         same = [g for g in groups if g[0] == label and g[1]["year"] == one["year"]]
         mark = ""
-        if len(same) > 1:
+        if marks:                                          # 서식 각주('1) OEX101 …')의 번호를 그대로
+            mark = marks.get(one["lot"], "")
+        elif len(same) > 1:
             mark = "%d)" % (sum(1 for g in groups[:i] if g[0] == label and g[1]["year"] == one["year"]) + 1)
         if cells.get(1) is not None:
             E.set_cell(cells[1], "%s%s" % (one.get("year") or "", mark))
@@ -2163,6 +2183,16 @@ def _fill_133_table(table, groups, spec, _trim):
             got = [p["assays"].get(part) for p in taken]
             got = [float(x) for x in got if x is not None]
             E.clear_diag(cells[k])
+            if not got and not shaky and one.get("carried"):
+                # 전년도 결재본 13.3 의 그 Lot 줄 — 올해 시점 값이 더해져야 하니 노랑으로 남긴다
+                prior = one.get("prev_range") or {}
+                text = prior.get(part) or (next(iter(prior.values())) if len(prior) == 1 else "")
+                nums = [float(x) for x in re.findall(r"\d+(?:\.\d+)?", text or "")]
+                E.set_cell(cells[k], text or "확인 필요")
+                E.highlight_cell(cells[k])
+                values[k] += nums
+                guessed[k].update(nums)
+                continue
             if not got and not shaky:
                 E.set_cell(cells[k], "")
                 continue
@@ -2202,7 +2232,34 @@ def _fill_133_table(table, groups, spec, _trim):
     return len(groups)
 
 
-def _fill_stability26(document, logs, period, spec, log, issues, why_of=None, prev_packs=None):
+def _declared_lots(table):
+    """13.3 경향 표에 담당자가 미리 적어 둔 Lot — 특이사항의 '1) OEX101 2) OEX102 …' 각주와
+    연도 칸의 '2025 4)' 표시를 맞춘다. {"lots": [(표시, Lot)], "year": {표시: 연도}, "label": {표시: '장기'|'시판후'}}.
+    빈 공양식이라도 이 각주는 담당자가 적은 것이라 올해 시험한 Lot 으로 본다(퀴노비드 2026: OEY301·OEY302)."""
+    out = {"lots": [], "year": {}, "label": {}}
+    if not table.rows:
+        return out
+    comment = E.cell_text(E.raw_cells(table.rows[-1])[0])
+    if not comment.lstrip().startswith("특이사항"):
+        return out
+    out["lots"] = [(m + ")", lot) for m, lot in re.findall(r"(\d)\)\s*([A-Z]{2}[A-Z0-9]{4})", comment)]
+    label = ""
+    for row in table.rows[1:-1]:
+        cells = E.raw_cells(row)
+        head = D.squeeze(E.cell_text(cells[0]))
+        if head in ("장기", "시판후"):
+            label = head
+        if len(cells) < 2 or not label:
+            continue
+        m = re.match(r"^(\d{4})\s*(\d)\)$", D.squeeze(E.cell_text(cells[1])))
+        if m:
+            out["year"][m.group(2) + ")"] = m.group(1)
+            out["label"][m.group(2) + ")"] = label
+    return out
+
+
+def _fill_stability26(document, logs, period, spec, log, issues, why_of=None, prev_packs=None,
+                      prev_entries=None, previous_name=""):
     """2026 양식의 13항 — 장기(13.1)·시판 후(13.2) 실시 내역 · 경향 분석(13.3).
 
     logs: [{"lot", "year", "pack", "store", "kind", "market", "mfg", "expiry", "why",
@@ -2274,8 +2331,38 @@ def _fill_stability26(document, logs, period, spec, log, issues, why_of=None, pr
             got = (packs.get("market_by_lot") or {}).get(lot) or (packs.get("market_by_prefix") or {}).get(lot[:2])
             if got:
                 one["market"] = got
+    # 전년도 결재본에서 올해도 이어지는 시험(장기 36M 전 · 시판 후 '진행중')인데 올해 시험일지를 읽지
+    # 못한 Lot 은 옮겨 놓고 '확인 필요' 노랑으로 남긴다 — 빈 표로 두지 않는다 (담당자 2026-09).
+    carried = []
+    read = {(one.get("kind") or "장기", one.get("market") or "내수", one["lot"]) for one in logs}
+    for e in prev_entries or []:
+        if not e.get("ongoing") or (e["kind"], e["market"], e["lot"]) in read:
+            continue
+        carried.append({"lot": e["lot"], "lot_text": e.get("lot_text") or e["lot"], "year": e.get("year") or "",
+                        "pack": e.get("pack") or "", "store": e.get("store") or "", "why": e.get("last") or "",
+                        "kind": e["kind"], "market": e["market"], "points": [], "carried": True,
+                        "prev_range": dict(e.get("range") or {})})
+    # 서식 13.3 각주에 적힌 Lot 가운데 시험일지에도 전년도 결재본에도 없는 것(올해 새로 시작한 장기 시험)
+    # 도 줄을 세운다 — 값은 '확인 필요' 노랑. 시험일지가 올라오면 그 값으로 바뀐다.
+    marks = {}
+    for kind_, market_, table_ in tabs:
+        if kind_ != "경향":
+            continue
+        got = _declared_lots(table_)
+        marks[market_] = {lot: mark for mark, lot in got["lots"]}
+        known = {one["lot"] for one in logs + carried}
+        for mark, lot in got["lots"]:
+            if lot in known:
+                continue
+            same = [e for e in prev_entries or [] if e["market"] == (market_ or "내수")]
+            carried.append({"lot": lot, "lot_text": lot, "year": got["year"].get(mark, ""),
+                            "pack": (packs.get("by_market") or {}).get(market_ or "내수", ""),
+                            "store": next((e["store"] for e in same if e.get("store")), ""),
+                            "why": "", "kind": got["label"].get(mark, "장기"), "market": market_ or "내수",
+                            "points": [], "carried": True, "declared": True, "prev_range": {}})
+            known.add(lot)
     markets = []
-    for one in logs:
+    for one in logs + carried:
         m = one.get("market") or "내수"
         if m not in markets:
             markets.append(m)
@@ -2283,6 +2370,7 @@ def _fill_stability26(document, logs, period, spec, log, issues, why_of=None, pr
     wrote = []
     for market in markets:
         mlogs = [one for one in logs if (one.get("market") or "내수") == market]
+        mcarry = [one for one in carried if one["market"] == market]
         for one in mlogs:
             # 포장 형태 — 전년도 결재본의 표기('5g tube/갑'·'4.0g/Tube')를 따른다: 그 Lot 이 있으면 그 글, 없으면
             # 같은 시장의 글(용량 숫자가 시험일지와 같을 때). 둘 다 없으면 시험일지에서 읽은 것.
@@ -2296,6 +2384,22 @@ def _fill_stability26(document, logs, period, spec, log, issues, why_of=None, pr
         post_logs = [one for one in mlogs if (one.get("kind") or "장기") == "시판후"]
         rows_l, trend_l = split(long_logs)
         rows_p, trend_p = split(post_logs)
+        for one in mcarry:
+            target = (rows_l, trend_l) if one["kind"] == "장기" else (rows_p, trend_p)
+            target[0].append((one, [])); target[1].append((one, []))
+        if mcarry:
+            moved = [one["lot"] for one in mcarry if not one.get("declared")]
+            new = [one["lot"] for one in mcarry if one.get("declared")]
+            what = []
+            if moved:
+                what.append("전년도 결재본%s의 이어지는 Lot(%s)을 옮겼고"
+                            % (("(%s)" % os.path.basename(previous_name)) if previous_name else "", ", ".join(moved)))
+            if new:
+                what.append("서식 13.3 각주의 Lot(%s)은 줄만 세웠습니다" % ", ".join(new))
+            issues.append(("13", ", ".join(one["lot"] for one in mcarry),
+                           "올해 시험일지를 읽지 못해 %s(노랑) — 13 폴더에 올해 안정성 시험일지(%s)를 올려 다시 만들거나 "
+                           "시험 기간·완료 일자·실시 사유·13.3 값을 직접 채우세요"
+                           % (" ".join(what), "·".join(sorted({"%s %s" % (one["kind"], market) for one in mcarry})))))
         t = pick("장기", market)
         if t is not None and rows_l:
             _fill_131_table(t, rows_l, why_of, issues, post=False)
@@ -2310,7 +2414,7 @@ def _fill_stability26(document, logs, period, spec, log, issues, why_of=None, pr
         t = pick("경향", market)
         groups = [("시판 후", one, seen) for one, seen in trend_p] + [("장기", one, seen) for one, seen in trend_l]
         if t is not None and groups:
-            n = _fill_133_table(t, groups, spec, _trim)
+            n = _fill_133_table(t, groups, spec, _trim, marks.get(market) or marks.get(""))
             wrote.append("경향·%s %d줄" % (market, n))
     log("13항: %s" % (", ".join(wrote) if wrote else "평가 기간에 든 시점이 없음"))
 
@@ -2385,17 +2489,17 @@ def _fill_stability(document, stab, log, assay_limits=None):
         highs = [float(r[2].split("~")[1]) for r in rows if "~" in r[2]]
         for ri, v in ((l + 1, "%.1f~%.1f" % tuple(lo_hi)), (l + 2, "%.1f" % min(lows) if lows else ""), (l + 3, "%.1f" % max(highs) if highs else ""), (l + 4, "적합")):
             E.set_cell(E.raw_cells(table.rows[ri])[1], v)
-        E.set_cell_plain(E.raw_cells(table.rows[-1])[0], "특이사항 (Comment)", note, comment)
+        E.set_cell_plain(E.comment_cell(table), "특이사항 (Comment)", note, comment)
 
     t131 = _tables(document, "13.1"); t132 = _tables(document, "13.2"); t133 = _tables(document, "13.3")
     if t131:
-        fill_post(t131[0], stab.get("post_dom", [])); E.set_cell_plain(E.raw_cells(t131[0].rows[-1])[0], "특이사항 (Comment)", stab.get("post_dom_note") or "N/A")
+        fill_post(t131[0], stab.get("post_dom", [])); E.set_cell_plain(E.comment_cell(t131[0]), "특이사항 (Comment)", stab.get("post_dom_note") or "N/A")
         if len(t131) > 1:
-            fill_post(t131[1], stab.get("post_exp", [])); E.set_cell_plain(E.raw_cells(t131[1].rows[-1])[0], "특이사항 (Comment)", stab.get("post_exp_note") or "N/A")
+            fill_post(t131[1], stab.get("post_exp", [])); E.set_cell_plain(E.comment_cell(t131[1]), "특이사항 (Comment)", stab.get("post_exp_note") or "N/A")
     if t132:
-        fill_long(t132[0], stab.get("long_dom", [])); E.set_cell_plain(E.raw_cells(t132[0].rows[-1])[0], "특이사항 (Comment)", stab.get("long_dom_note") or "N/A")
+        fill_long(t132[0], stab.get("long_dom", [])); E.set_cell_plain(E.comment_cell(t132[0]), "특이사항 (Comment)", stab.get("long_dom_note") or "N/A")
         if len(t132) > 1:
-            fill_long(t132[1], stab.get("long_exp", [])); E.set_cell_plain(E.raw_cells(t132[1].rows[-1])[0], "특이사항 (Comment)", stab.get("long_exp_note") or "N/A")
+            fill_long(t132[1], stab.get("long_exp", [])); E.set_cell_plain(E.comment_cell(t132[1]), "특이사항 (Comment)", stab.get("long_exp_note") or "N/A")
     if t133:
         fill_trend(t133[0], stab.get("trend_dom", []), stab.get("trend_dom_lots", ""), stab.get("trend_dom_comment", ""))
         if len(t133) > 1:
