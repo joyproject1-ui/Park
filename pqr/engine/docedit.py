@@ -569,7 +569,14 @@ def merge_empty_runs(table, header="비고"):
         cells.append(tc)
     groups, run = [], []
     for tc in cells:
-        empty = tc is not None and not "".join(t.text or "" for t in tc.iter(qn("w:t"))).strip()
+        text = "".join(t.text or "" for t in tc.iter(qn("w:t"))).strip() if tc is not None else None
+        # 'N/A'·'-' 만 적힌 칸도 빈 칸으로 본다 — 지우고 옆 빈 줄과 합쳐 사선 하나
+        # (담당자 2026-09-06: "3항 표의 N/A 는 삭제해 주고 아래 칸 사선으로 셀 병합해 줘, 모든 PQR 작성 시 동일하게")
+        if tc is not None and squeeze(text).upper() in ("N/A", "NA", "-", "－"):
+            for p in cell_paras(tc):
+                set_para_text(p, "")
+            text = ""
+        empty = tc is not None and not text
         if empty:
             run.append(tc)
         else:

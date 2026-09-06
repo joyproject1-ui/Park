@@ -98,3 +98,20 @@ class 시험일지_여러_쪽(unittest.TestCase):
         finally:
             handwriting.read_pages = old
         self.assertEqual([o["lot"] for o in out], ["OEV301", "OEW101"])
+
+
+class 삼항_비고_NA(unittest.TestCase):
+    def test_NA_칸은_지우고_빈_줄과_합쳐_사선_하나(self):
+        d = docx.Document()
+        t = d.add_table(rows=6, cols=3)
+        for i, row in enumerate([["No.", "점검 항목", "비 고"], ["1", "제형", "N/A"], ["2", "제품분류", ""],
+                                 ["3", "제품명", "<주성분>"], ["4", "허가번호", "N/A"], ["5", "허가일자", ""]]):
+            for j, v in enumerate(row):
+                E.set_cell(t.rows[i].cells[j], v)
+        groups, rows = E.merge_empty_runs(t, "비고")
+        self.assertEqual((groups, rows), (2, 4))
+        self.assertEqual(E.cell_text(t.rows[1].cells[2]).strip(), "")
+        self.assertEqual(E.cell_text(t.rows[4].cells[2]).strip(), "")
+        self.assertTrue(E.has_diag(t.rows[1].cells[2]) and E.has_diag(t.rows[4].cells[2]))
+        self.assertFalse(E.has_diag(E.raw_cells(t.rows[2])[2]))
+        self.assertEqual(E.cell_text(t.rows[3].cells[2]).strip(), "<주성분>")

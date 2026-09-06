@@ -302,7 +302,8 @@ def write_report(folder, product, period, out_path, today=None, recipe=None, log
                 data.previous_name = os.path.basename(previous)
                 # 자료에서 못 읽은 항은 전년도 결재본에서 옮긴다 (10.1 PV · 13 안정성)
                 data.prev_sections = carry_module.section_grids(old_document, "10.1")
-                data.prev_sections_all = {"10.1": carry_module.section_grids_all(old_document, "10.1")}
+                data.prev_sections_all = {"10.1": carry_module.section_grids_all(old_document, "10.1"),
+                                          "6": carry_module.section_grids_all(old_document, "6")}
                 data.prev_packs = carry_module.stability_packs(old_document)
                 data.prev_equipment = carry_module.equipment_rows(old_document)
                 if data.pv_reasons:

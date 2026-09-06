@@ -519,10 +519,24 @@ def fill(document, data, product, period, today=None, log=None):
         E.set_para_text(p, text)
 
     # ---------- 6항 제조내역 ----------
-    def fill_mfg(table, lots):
+    olds6 = (getattr(data, "prev_sections_all", None) or {}).get("6") or []
+
+    def fill_mfg(table, lots, old_grid=None):
         if len(table.rows) < 2:
             return
         keep = [E.cell_text(c) for c in E.raw_cells(table.rows[1])]      # 배치 크기·포장 단위는 결재본 값
+        # 빈 공양식이면 제조단위·포장단위 칸이 비어 있다 — 전년도 결재본 같은 표(6.1 내수 / 6.2 수출)에서 가장
+        # 많이 적힌 값을 쓴다. 해마다 같은 값이다(담당자 2026-09-06: "제조단위와 포장단위가 공란인 이유가 있나?")
+        for k in (3, 4):
+            if k < len(keep) and not keep[k].strip() and old_grid:
+                seen = {}
+                for row in old_grid[1:]:
+                    v = (row[k] if k < len(row) else "").strip()
+                    if v and not v.startswith("특이사항"):
+                        seen[v] = seen.get(v, 0) + 1
+                if seen:
+                    keep[k] = max(seen.items(), key=lambda kv: kv[1])[0]
+                    log("6항: %s 를 전년도 결재본 값(%s)으로 채움" % ("제조단위" if k == 3 else "포장단위", keep[k]))
         f, l = E.fit_rows(table, 1, len(table.rows) - 1, max(1, len(lots)))
         for i, lot in enumerate(lots):
             c = E.raw_cells(table.rows[f + i])
@@ -531,11 +545,13 @@ def fill(document, data, product, period, today=None, log=None):
                 E.set_cell(c[k], keep[k] if k < len(keep) else "")
             if len(c) > 5:
                 E.set_cell(c[5], "■ 적합 □ 부적합")
+            if len(c) > 6:
+                E.set_cell(c[6], "")                  # 비고는 비워 사선 하나로 합친다 — 공양식의 'N/A' 를 줄마다 옮기지 않는다
     t6 = _tables(document, "6.")
     if t6:
-        fill_mfg(t6[0], dom)
+        fill_mfg(t6[0], dom, olds6[0] if olds6 else None)
         if len(t6) > 1:
-            fill_mfg(t6[1], exp)
+            fill_mfg(t6[1], exp, olds6[1] if len(olds6) > 1 else None)
 
     # ---------- 7항 수율 ----------
     def yield_specs(table):
