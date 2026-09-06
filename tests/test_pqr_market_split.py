@@ -115,3 +115,18 @@ class 삼항_비고_NA(unittest.TestCase):
         self.assertTrue(E.has_diag(t.rows[1].cells[2]) and E.has_diag(t.rows[4].cells[2]))
         self.assertFalse(E.has_diag(E.raw_cells(t.rows[2])[2]))
         self.assertEqual(E.cell_text(t.rows[3].cells[2]).strip(), "<주성분>")
+
+
+class 구이_요약줄(unittest.TestCase):
+    def test_값이_모두_같아도_최댓값_최솟값_평균을_적는다(self):
+        from pqr.engine import detail92 as D
+        d = docx.Document()
+        t = d.add_table(rows=8, cols=4)
+        heads = [["연번", "Lot No.", "금속성이물 합계", "금속성이물 개개"], ["1", "", "", ""], ["2", "", "", ""],
+                 ["최댓값", "", "", ""], ["최솟값", "", "", ""], ["평균", "", "", ""], ["공정능력지수(Cpk)", "", "", ""], ["Cpk 판정 결과", "", "", ""]]
+        for i, row in enumerate(heads):
+            for j, v in enumerate(row):
+                E.set_cell(t.rows[i].cells[j], v)
+        D.fill(t, ["A1", "A2"], lambda lab, lot, i: "0" if "금속" in lab else None)
+        got = {E.cell_text(r.cells[0]).strip(): E.cell_text(r.cells[2]).strip() for r in t.rows[3:6]}
+        self.assertEqual(got, {"최댓값": "0", "최솟값": "0", "평균": "0"})

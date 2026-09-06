@@ -1424,11 +1424,18 @@ def fill(document, data, product, period, today=None, log=None):
             texts = [E.cell_text(c) for c in cells]
             ci = next((i for i, t in enumerate(texts) if D.PREFIX.search(t or "")), None)
             if ci is None:
-                # 허용기준 칸이 위 줄과 병합된 줄(금속성이물 ‘개개’) — 위 줄의 기준을 이어 쓴다
+                # 허용기준 칸이 위 줄과 병합된 줄(금속성이물 ‘개개’) — 위 줄의 기준을 이어 쓴다.
+                # 구분 글('개개')이 없는 빈 줄이라도 바로 위가 금속성이물(합계)이면 '개개' 줄로 본다
+                # (담당자 PC 공양식 2026-09-06: 금속성이물 결과 칸이 두 줄로 갈라져 아래 줄이 사선으로 남았다)
                 sub = "".join(D.squeeze(t) for t in texts[1:-1])
-                if not follow or not sub or len(cells) < 2:
+                if not follow or len(cells) < 2:
                     continue
                 prev, crit_text = follow[-1]
+                if not sub:
+                    if "금속성이물" in prev["item"] and "개개" not in prev["sub"]:
+                        sub = "개개"
+                    else:
+                        continue
                 hit = dict(prev, sub=sub)
                 ci = None
             elif ci >= len(cells) - 1:
@@ -1459,7 +1466,8 @@ def fill(document, data, product, period, today=None, log=None):
             if out:
                 target = cells[-1]
                 # 결과 칸 왼쪽에 글 없는 쪽칸이 붙어 있으면(기준 칸이 아니면) 합쳐서 사선이 생기지 않게 한다
-                if len(cells) >= 2 and ci is not None and len(cells) - 2 > ci and not E.cell_text(cells[-2]).strip():
+                left_ok = (ci is None and len(cells) >= 2) or (ci is not None and len(cells) - 2 > ci)
+                if left_ok and not E.cell_text(cells[-2]).strip() and not D.PREFIX.search(E.cell_text(cells[-2])):
                     E.clear_diag(cells[-2])
                     E.merge_right(cells[-2], cells[-1])
                     target = cells[-2]
@@ -1484,6 +1492,34 @@ def fill(document, data, product, period, today=None, log=None):
             if len(t91) > 1:
                 log("9.1항(수출): 결과 칸 %d줄을 판독값으로 채움" % fill_91_labelled(t91[1], rules_e, exp, n_exp, lambda pr: maker_of(pr, 1), 1))
         log("9.2항: 머리글로 짚어 표 %d개 채움 (%s)" % (len(triples), ", ".join((mk + " " if mk else "") + st for _, st, mk in triples)))
+        # 공양식의 각주 '1) 모든 시험 결과값이 0매로 동일하여 별도 계산하지 않음.' — 최댓값·최솟값·평균을 적으므로
+        # 앞뒤가 맞지 않아 지운다(담당자 2026-09-06: "최댓값, 최솟값 기재가 안 됐네")
+        gone = 0
+        for para in document.paragraphs:
+            if "동일하여" in para.text and ("별도 계산" in para.text or "별도로 작성" in para.text):
+                E.set_para_text(para._p, "")
+                gone += 1
+        if gone:
+            log("9.2항: '동일하여 별도 계산하지 않음' 각주 %d줄 지움 — 최댓값·최솟값·평균을 적는다" % gone)
+            # 그 각주를 가리키던 머리칸의 윗첨자 '1)' (디겐타 공양식 '금속성이물1)') 도 지운다
+            marks = 0
+            for t, _ in D.tables_92(document):
+                for row in t.rows[:3]:
+                    for cell in E.raw_cells(row):
+                        if "금속성이물" not in E.cell_text(cell):
+                            continue
+                        # '1)' 이 '1'·')' 두 윗첨자 조각으로 나뉘어 있기도 하다 — 이어진 윗첨자 조각을 합쳐 본다
+                        for p_ in cell._tc.iter(qn("w:p")):
+                            runs = list(p_.findall(qn("w:r")))
+                            sup = [r_ for r_ in runs if r_.find(qn("w:rPr")) is not None
+                                   and r_.find(qn("w:rPr")).find(qn("w:vertAlign")) is not None]
+                            txt = "".join(x.text or "" for r_ in sup for x in r_.findall(qn("w:t")))
+                            if sup and re.fullmatch(r"\s*\d\)\s*", txt):
+                                for r_ in sup:
+                                    p_.remove(r_)
+                                marks += 1
+            if marks:
+                log("9.2항: 머리칸의 각주 번호 %d개 지움" % marks)
     else:
         cpk_dom = fill_92("9.2.1", dom, n_dom, True) or {}
         cpk_exp = fill_92("9.2.2", exp, n_exp, False) if exp else {}

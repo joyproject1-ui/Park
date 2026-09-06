@@ -177,8 +177,12 @@ def _stats(label, texts):
             plain.append(got[0]); lows.append(got[0]); highs.append(got[0])
     fmt = "%%.%df" % _decimals(texts)
     ranged = len(plain) != len(texts)
-    only_low = ("이상" in label) or any("이상" in t for t in texts)
-    only_high = ("이하" in label) or any("이하" in t for t in texts)
+    # 한계 표시는 열 이름 끝('입자도(㎛이하)')이나 결과 글('4.78 g 이상')에서만 본다 — 열 이름 가운데의
+    # '금속성이물 50㎛ 이상 이물 총합계(개)' 는 이물 크기 조건이지 결과 한계가 아니다(2026-09-06: 합계 열의
+    # 최댓값·평균이 비었다)
+    tail = re.search(r"(이상|이하)\)?$", squeeze(label))
+    only_low = (tail is not None and tail.group(1) == "이상") or any(re.search(r"이상\s*$", t.strip()) for t in texts)
+    only_high = (tail is not None and tail.group(1) == "이하") or any(re.search(r"이하\s*$", t.strip()) for t in texts)
     top = fmt % max(highs) if not only_low else None
     bottom = fmt % min(lows) if not only_high else None
     mean = None
@@ -237,8 +241,8 @@ def fill(table, lots, value, cpk=None):
         lab = labs[k]
         if "연번" in lab or lab.lower().startswith("lotno"):
             continue
-        if "금속성이물" in lab and len(set(texts)) == 1:
-            continue                       # 모두 같은 값이면 적지 않는다 — 표 아래 각주가 그렇게 밝힌다
+        # 모두 같은 값(금속성이물 0·0·0)이어도 최댓값·최솟값·평균을 적는다 — 전년도 결재본(퀴노비드 2025:
+        # 1/0/1, 0/0/0)이 그렇고 담당자 지시(2026-09-06: "최댓값, 최솟값 기재가 안 됐네")
         stats[k] = _stats(lab, texts)
     for ri in summary:
         cells = _grid_cells(table.rows[ri], len(labs))
@@ -250,6 +254,7 @@ def fill(table, lots, value, cpk=None):
                 continue
             if which is not None:
                 if three[which] is not None:
+                    E.clear_diag(cell)                       # 공양식이 그어 둔 사선을 지우고 값을 적는다
                     E.set_cell(cell, three[which])
             elif cpk is not None:
                 pair = cpk(labs[k], got[k])
