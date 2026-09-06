@@ -235,3 +235,96 @@ def stability_tables(old_document):
     내용을 옮겨 놓고 '갱신 필요' 로 알린다. 서식은 해가 바뀌며 13.2 가 13.3 이 되었다.
     """
     return section_grids(old_document, "13.1", ("13.3", "13.2"))
+
+
+def section_grids_all(old_document, section):
+    """전년도 결재본에서 section(예: '10.1') 아래의 표를 모두 글자 그대로 — [[[칸 글자]], …].
+    내수용·수출용처럼 하위 항(10.1.1·10.1.2)이 있으면 그 차례대로 담긴다."""
+    out, here = [], False
+    for kind, value, _ in outline(old_document):
+        if kind == "h":
+            got = _section(value)
+            if got:
+                here = got == section or got.startswith(section + ".")
+        elif here:
+            out.append(_grid_text(old_document.tables[value]))
+    return out
+
+
+def stability_packs(old_document):
+    """전년도 결재본 13항 표의 '포장 형태' — {"by_lot": {제조번호: 포장}, "by_market": {"내수"|"수출": 포장}}.
+    올해 시험일지에서 포장을 못 읽은 Lot(퀴노비드 '1Tube/Gab')은 여기서 채운다."""
+    by_lot, counts, market = {}, {}, None
+    market_by_lot, prefix_markets = {}, {}
+    for kind, value, _ in outline(old_document):
+        if kind == "h":
+            got = _section(value)
+            if not got:
+                continue
+            if not got.startswith("13"):
+                market = None
+            elif "수출" in value:
+                market = "수출"
+            elif "내수" in value or re.match(r"^13(\.\d+)?[.\s]*$|^13(\.\d+)?[.\s]", value):
+                market = "내수"
+            continue
+        if market is None:
+            continue
+        table = old_document.tables[value]
+        heads = _headers(table)
+        lot_col = next((k for k, h in enumerate(heads) if "제조번호" in h.replace(" ", "")), None)
+        pack_col = next((k for k, h in enumerate(heads) if "포장" in h), None)
+        if lot_col is None or pack_col is None:
+            continue
+        for cells in _rows(table):
+            lot = squeeze(E.cell_text(cells[lot_col])) if lot_col in cells else ""
+            pack = E.cell_text(cells[pack_col]).strip() if pack_col in cells else ""
+            for code in LOT.findall(lot):
+                market_by_lot.setdefault(code, market)
+                prefix_markets.setdefault(code[:2], set()).add(market)
+            if pack:
+                for code in LOT.findall(lot):
+                    by_lot.setdefault(code, pack)
+                counts.setdefault(market, {}).setdefault(pack, 0)
+                counts[market][pack] += 1
+    by_market = {m: max(c.items(), key=lambda kv: kv[1])[0] for m, c in counts.items()}
+    # 제조번호 앞 두 글자가 한 시장에만 쓰였으면(내수 OE…, 수출 OA…·OZ…) 새 Lot 의 시장도 그것으로 본다
+    market_by_prefix = {pf: next(iter(ms)) for pf, ms in prefix_markets.items() if len(ms) == 1}
+    return {"by_lot": by_lot, "by_market": by_market,
+            "market_by_lot": market_by_lot, "market_by_prefix": market_by_prefix}
+
+
+EQUIP = re.compile(r"^[A-Z]{3}\d{4}")
+
+
+def equipment_rows(old_document):
+    """전년도 결재본 10.2~10.5 설비 표 — {"10.3": [{"mid", "name", "docs": {"IQ": (문서, 완료일), …}}, …], …}.
+    빈 공양식의 10.3~10.5 는 관리번호·설비명이 없어, 여기서 줄을 세우고 마스터파일로 문서를 채운다."""
+    out = {}
+    for section, tables in _tables_by_section(old_document).items():
+        if section not in ("10.2", "10.3", "10.4", "10.5"):
+            continue
+        for table in tables:
+            grid = _grid_text(table)
+            if not grid or len(grid[0]) < 5:
+                continue
+            kind_col = {}
+            for row in grid[:4]:
+                for ci, t in enumerate(row):
+                    if squeeze(t).upper() in ("IQ", "OQ", "PQ") and squeeze(t).upper() not in kind_col:
+                        kind_col[squeeze(t).upper()] = ci
+            rows = []
+            for i, row in enumerate(grid):
+                mid = squeeze(row[1]) if len(row) > 1 else ""
+                if not EQUIP.match(mid) or i + 1 >= len(grid):
+                    continue
+                docs = {}
+                for kind, ci in kind_col.items():
+                    doc = (row[ci] if ci < len(row) else "").strip()
+                    day = (grid[i + 1][ci] if ci < len(grid[i + 1]) else "").strip()
+                    if doc:
+                        docs[kind] = (doc, day)
+                rows.append({"mid": mid, "name": (row[2] if len(row) > 2 else "").strip(), "docs": docs})
+            if rows:
+                out.setdefault(section, []).extend(rows)
+    return out

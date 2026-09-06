@@ -38,7 +38,7 @@ def test_progress_endpoint_reports_running_and_idle(tmp_path):
 
 def test_read_folder_logs_each_page(monkeypatch):
     lines = []
-    monkeypatch.setattr(handwriting, "read_log", lambda p, specs, log: {"lot": os.path.basename(p), "year": "2025", "points": []})
+    monkeypatch.setattr(handwriting, "read_log", lambda p, specs, log, page_no=0: {"lot": os.path.basename(p), "year": "2025", "points": []})
     handwriting.read_folder(["/x/b.pdf", "/x/a.pdf"], None, lines.append)
     assert [l.strip() for l in lines] == ["시험일지 판독 중 1/2: b.pdf", "시험일지 판독 중 2/2: a.pdf"]
 

@@ -316,6 +316,27 @@ def _same_part(a, b):
 
 
 def _write_trend(form, folder, data, product, today, report_path):
+    """안정성 경향 분석(HLF-QC-126-06) — 내수용·수출용 시험일지가 섞여 있으면 시장마다 한 파일(2026-09,
+    퀴노비드: '… - 퀴노비드안연고(내수용).xlsx' / '(수출용).xlsx'). 지난 경향표 시트는 제품명에 '수출' 이
+    들어 있으면 수출용 파일로, 아니면 내수용 파일로 간다."""
+    seed = list(getattr(data, "stability_trend", None) or [])
+    logs = list(getattr(data, "stability_logs", None) or [])
+    markets = []
+    for one in logs:
+        m = one.get("market") or "내수"
+        if m not in markets:
+            markets.append(m)
+    if len(markets) <= 1:
+        return _trend_file(form, folder, data, product, today, report_path, seed, logs, "")
+    files = []
+    for market in sorted(markets, key=lambda m: m != "내수"):
+        mseed = [sh for sh in seed if ("수출" in (sh.get("product") or "")) == (market == "수출")]
+        mlogs = [one for one in logs if (one.get("market") or "내수") == market]
+        files += _trend_file(form, folder, data, product, today, report_path, mseed, mlogs, "(%s용)" % market)
+    return files
+
+
+def _trend_file(form, folder, data, product, today, report_path, seed, logs, suffix):
     """안정성 경향 분석(HLF-QC-126-06)을 새로 만든다 — 지난 경향표 + 올해 시험일지.
 
     담당자 지시(2026-09): "16. 안정성시험 경향표를 13항 안정성 시험 자료를 참고해서 최신
@@ -323,8 +344,6 @@ def _write_trend(form, folder, data, product, today, report_path):
     올해 시험일지에서 읽은 시점만 덧붙인다. 평가 기간을 넘어선 시점(다음 해에 끝난 시험)은
     넣지 않는다 — 보고서 13.3 의 경향 범위와 같은 값이어야 한 벌의 자료로 읽힌다.
     """
-    seed = list(getattr(data, "stability_trend", None) or [])
-    logs = list(getattr(data, "stability_logs", None) or [])
     year_to = lotcode.year_of((getattr(data, "period", None) or {}).get("to"))
     limits = _assay_limits(data)
 
@@ -404,8 +423,8 @@ def _write_trend(form, folder, data, product, today, report_path):
         data.issues.append(("첨부", "", "13항 시험일지에서 새 시점을 읽지 못해 지난 경향표 값만 "
                                         "옮겼습니다 — 올해 시점을 직접 채우세요"))
 
-    name = "HLF-QC-126-06 안정성 시험 경향 분석 결과 - %s.xlsx" % (product.get("name") or "")
+    name = "HLF-QC-126-06 안정성 시험 경향 분석 결과 - %s%s.xlsx" % (product.get("name") or "", suffix)
     dst = os.path.join(folder, name)
-    stability_xlsx.build_multi(form, dst, product.get("name") or "", sheets,
+    stability_xlsx.build_multi(form, dst, (product.get("name") or "") + suffix, sheets,
                                prepared_by=written_by(report_path), prepared_on=today)
     return [(name, dst)]

@@ -17,6 +17,7 @@
 """
 from __future__ import unicode_literals
 
+import datetime as _dt
 import os
 import re
 
@@ -66,11 +67,16 @@ def _engine():
     return _OCR
 
 
-def render(pdf_path, dpi=DPI):
+def render(pdf_path, dpi=DPI, page_no=0):
     import pypdfium2 as pdfium
     pdf = pdfium.PdfDocument(pdf_path)
-    page = pdf[0]
+    page = pdf[page_no]
     return page.render(scale=dpi / 72.0).to_pil().convert("RGB")
+
+
+def page_count(pdf_path):
+    import pypdfium2 as pdfium
+    return len(pdfium.PdfDocument(pdf_path))
 
 
 def ocr_image(image):
@@ -170,7 +176,7 @@ def _row_of(boxes, pattern, prefer=None):
 
 
 # ---------- 값 읽기 ----------
-_FIX = {"O": "0", "o": "0", "D": "0", "Q": "0", "l": "1", "I": "1", "|": "1", "[": "1", "(": "1",
+_FIX = {"O": "0", "o": "0", "D": "0", "Q": "0", "l": "1", "L": "1", "I": "1", "|": "1", "[": "1", "(": "1",
         "S": "5", "s": "5", "q": "9", "g": "9", "b": "6", "B": "8", "Z": "2", "z": "2", "T": "7",
         "，": ",", "。": ".", "·": ".", "'": "."}
 
@@ -318,34 +324,66 @@ def _crop_ocr_variants(image, x0, x1, y0, y1, pad=6):
     return out
 
 
-def read_log(pdf_path, specs=None, log=None):
-    """시험일지 한 장 → 판독 결과 dict (실패하면 None).
+def read_pages(pdf_path, specs=None, log=None):
+    """시험일지 PDF → 쪽마다 판독 결과 [dict, …] — 한 PDF 에 여러 Lot 이 한 쪽씩 든다(퀴노비드 시판 후)."""
+    out = []
+    try:
+        n = page_count(pdf_path)
+    except Exception:
+        n = 1
+    for k in range(n):
+        try:
+            rec = read_log(pdf_path, specs, log, page_no=k)
+        except Exception as error:
+            if log:
+                log("    판독 실패 %s %d쪽 — %s" % (os.path.basename(pdf_path), k + 1, error))
+            rec = None
+        if rec:
+            rec["page"] = k + 1
+            out.append(rec)
+    return out
+
+
+def read_log(pdf_path, specs=None, log=None, page_no=0):
+    """시험일지 한 장(한 쪽) → 판독 결과 dict (실패하면 None).
 
     specs: {성분 이름: (하한, 상한)} — 값의 그럴듯함을 따질 때 쓴다. 없으면 시험일지의 인쇄된
     규격('90.0 ~ 110.0%')에서 읽는다.
+
+    두 가지 양식을 읽는다 — HLF-QC-104-01 Rev.5-1(디겐타: 인쇄 시점 3M·6M…, 완료 일자는 맨 아래
+    확인자 줄)과 Rev.4/Rev.005(퀴노비드: '초기 / 12 M / 24 M' 시점 숫자를 손으로 적고, 시험일자
+    줄에 완료 일자를 적는다). 시험구분('시판 후 안정성' / '장기') 과 제품명의 '(수출용)' 도 읽는다.
     """
     def say(msg):
         if log:
             log("    " + msg)
-    image = render(pdf_path)
+    image = render(pdf_path, page_no=page_no)
     boxes = ocr_image(image)
     notes = []
     W, H = image.size
     s = DPI / 200.0                                                 # 200 dpi 기준 치수
+    top = [b for b in boxes if b[1] < H * 0.35]
+    top_text = " ".join(b[4] for b in top)
 
     lot_box = next((b for b in boxes if LOT.match(b[4].strip().upper()) and b[1] < H * 0.2), None)
     lot = lot_box[4].strip().upper() if lot_box else None
-    if not lot:
-        m = re.search(r"_([A-Z]{3}[A-Z0-9]{3})_", os.path.basename(pdf_path))
+    if not lot and page_no == 0:
+        m = re.search(r"_([A-Z]{2}[A-Z0-9]{4})_", os.path.basename(pdf_path))
         lot = m.group(1) if m else None
     if not lot:
-        say("제조번호를 찾지 못함: %s" % os.path.basename(pdf_path))
+        say("제조번호를 찾지 못함: %s %d쪽" % (os.path.basename(pdf_path), page_no + 1))
         return None
+    fname = os.path.basename(pdf_path)
+    market_hint = ("수출" in top_text) or ("수출" in fname) or ("내수" in fname)
+    market = "수출" if ("수출" in top_text or "수출" in fname) else "내수"
     dates_printed = [b for b in boxes if DATE.search(b[4]) and b[5] >= 0.95 and b[1] < H * 0.3]
-    mfg = None
+    mfg = expiry = None
     for b in sorted(dates_printed, key=lambda b: b[1]):
-        if b[0] > W * 0.75:                                        # 오른쪽 위 '제조일자'
-            mfg = DATE.search(b[4]); break
+        if b[0] > W * 0.75:                                        # 오른쪽 위 '제조일자', 그 아래 '사용기한'
+            if mfg is None:
+                mfg = DATE.search(b[4])
+            elif expiry is None:
+                expiry = DATE.search(b[4])
     mfg_year = int(mfg.group(1)) if mfg else None
 
     # 규격 줄(인쇄) — 함량 행의 자리와 성분 차례
@@ -368,23 +406,68 @@ def read_log(pdf_path, specs=None, log=None):
         # 값은 규격 글 바로 위에 쓰인다 (규격 줄 위 60px ~ 아래 15px, 200dpi 기준)
         rows.append((name, lo, hi, b[1] - 62 * s, b[3] + 8 * s))
 
-    # 초기(인쇄) 일자 → 열 0, 세로 표선으로 열 나누기
+    # 시점 머리줄 찾기 — 'M' 머리칸들('초기 | 3M | 6M | … | M'): 시점 숫자는 손으로 적고 'M' 은 인쇄돼 있다.
+    # 디겐타·퀴노비드 시험일지(HLF-QC-104-01 Rev.4·5·5-1)가 모두 이 짜임이다. 초기 시험일자는 머리줄
+    # 바로 아래 '시험일자' 줄에 있다(인쇄 또는 손글씨). 한글 머리말('초기'·'시험일자')은 판독기가 못 읽는다.
+    m_boxes = [b for b in top if re.match(r"^\s*\d{0,2}\s*M\s*$", b[4].strip().upper()) and b[0] > W * 0.3]
     init = next((b for b in dates_printed if W * 0.25 < b[0] < W * 0.45 and b[1] < H * 0.32), None)
-    if init is None:
-        say("초기 시험일자를 찾지 못함 — %s" % os.path.basename(pdf_path))
+    first_m_x = None
+    if len(m_boxes) >= 2:
+        header_y = sorted(_center(b)[1] for b in m_boxes)[len(m_boxes) // 2]
+        first_m_x = min(_center(b)[0] for b in m_boxes if abs(_center(b)[1] - header_y) < 30 * s)
+        anchor_x = first_m_x - 90 * s                               # 첫 시점 칸 바로 왼쪽이 초기 칸
+    elif init is not None:
+        header_y = _center(init)[1] - 50 * s                       # 인쇄된 초기 일자 한 줄 위가 머리줄
+        anchor_x = _center(init)[0]
+    else:
+        say("시점 머리줄을 찾지 못함 — %s %d쪽" % (os.path.basename(pdf_path), page_no + 1))
         return None
-    header_y = _center(init)[1]
-    lines = [x for x in table_columns(image, header_y - 20 * s, H * 0.9) if x > init[0] - 40 * s]
+    lines = [x for x in table_columns(image, header_y - 20 * s, H * 0.9) if x > W * 0.15]
     cols = []
     for a, b in zip(lines, lines[1:]):
         if b - a > 60 * s:
             cols.append((a, b))
     if not cols:
-        say("표의 세로선을 찾지 못함 — %s" % os.path.basename(pdf_path))
+        say("표의 세로선을 찾지 못함 — %s %d쪽" % (os.path.basename(pdf_path), page_no + 1))
         return None
-    # 열 0 = 초기 일자가 든 칸
-    k0 = next((i for i, (a, b) in enumerate(cols) if a <= _center(init)[0] <= b), 0)
+    # 열 0 = 초기 칸
+    j = next((i for i, (a, b) in enumerate(cols) if first_m_x is not None and a <= first_m_x <= b), None)
+    if j is not None and j > 0:
+        k0 = j - 1
+    else:
+        k0 = next((i for i, (a, b) in enumerate(cols) if a <= anchor_x <= b), 0)
     cols = cols[k0:]
+    head_band = (header_y - 28 * s, header_y + 28 * s)
+    date_band = (header_y + 20 * s, header_y + 95 * s)             # 시험일자 줄
+
+    # 시점 — 머리칸에 손으로 적은 숫자('12 M'·'24M'·'3M')로 짜임새를 가른다. 숫자가 칸 차례(3·6·9·12·18·24…)와
+    # 맞으면 장기 짜임, 12·24·36 처럼 해마다 한 번이면 시판 후 짜임. 숫자를 못 읽은 칸은 그 짜임을 따른다.
+    # 시험 일자로 개월을 어림해 시점을 정하지는 않는다 — 시험이 늦어져(9M 을 12.7개월에) 엉뚱한 시점이 된다.
+    STD = [3, 6, 9, 12, 18, 24, 36, 48, 60]
+    heads, has_date = {}, {}
+    this_year = _dt.date.today().year
+    for k, (x0, x1) in enumerate(cols):
+        if k == 0:
+            continue
+        texts = " ".join(b[4] for b in _in_cell(boxes, x0, x1, head_band[0], head_band[1], strict=False))
+        m = re.search(r"(\d{1,2})\s*M", texts.upper()) or re.search(r"(?<!\d)(\d{1,2})(?!\d)", texts)
+        if m and int(m.group(1)) in STD:
+            heads[k] = int(m.group(1))
+        for b in _in_cell(boxes, x0 - 10 * s, x1 + 10 * s, date_band[0], date_band[1]):
+            d, clean_d = parse_date(b[4], mfg_year, (mfg_year + 5) if mfg_year else None)
+            if d and clean_d and int(d[:4]) <= this_year + 1:
+                has_date[k] = True
+                break
+    seq = lambda k: PERIODS[k - 1] if k - 1 < len(PERIODS) else "%dM" % (12 * k)
+    seq_score = sum(1 for k, a in heads.items() if seq(k) == "%dM" % a)
+    annual_score = sum(1 for k, a in heads.items() if a == 12 * k)
+    annual = annual_score > seq_score
+    periods, trace, used = ["Initial"], [], [True]
+    for k in range(1, len(cols)):
+        periods.append(("%dM" % (12 * k)) if annual else seq(k))
+        used.append(k in heads or k in has_date)
+        trace.append("%s(머리 %s%s)" % (periods[-1], heads.get(k, "-"), "·일자" if k in has_date else ""))
+    trace.insert(0, "해마다 한 번 짜임" if annual else "장기 짜임")
 
     # 확인자 줄(맨 아래 결재) — 완료 일자. 인쇄 날짜 아래 2/3 지점부터의 날짜 박스들
     sign_boxes = [b for b in boxes if b[1] > H * 0.72]
@@ -392,7 +475,9 @@ def read_log(pdf_path, specs=None, log=None):
 
     points = []
     for k, (x0, x1) in enumerate(cols):
-        period = "Initial" if k == 0 else (PERIODS[k - 1] if k - 1 < len(PERIODS) else "%dM" % (12 * k))
+        period = periods[k]
+        if not period:
+            continue                                                 # 시점 숫자가 없는 빈 칸
         assays, unsure, seen = {}, [], False
         for name, lo, hi, y0, y1 in rows:
             cell = _in_cell(boxes, x0, x1, y0, y1)
@@ -411,6 +496,8 @@ def read_log(pdf_path, specs=None, log=None):
                             break
             if value is None and not text.strip() and not _spilled(boxes, x0, x1, y0, y1):
                 continue                                         # 빈 칸(사선) — 시험 안 함
+            if value is None and not used[k]:
+                continue                                         # 시점 숫자도 시험 일자도 없는 칸 — 값이 읽혀야만 시험한 칸으로 친다(빗금·메모 무시)
             seen = True
             if value is None:                                    # 글자가 섞여 못 읽은 칸 — 예상값이라도 낸다
                 for t in [text] + [cb[4] for cb in crops]:
@@ -430,7 +517,8 @@ def read_log(pdf_path, specs=None, log=None):
                 unsure.append(name)                              # 담당자 2026-09-06: "판독 후 예상하는 값을
                                                                  # 우선 적어 주고 주황색으로 표시" — 값이 있으면
                                                                  # 그대로 두고 '애매' 로 표시해 노랑(워드)·주황(엑셀)
-        # 완료 일자: 이 열의 맨 아래(확인자) 날짜, 없으면 담당자 날짜
+        # 완료 일자: 맨 아래 결재 줄(확인자·담당자)의 날짜 — 결재본은 이 날짜를 쓴다(퀴노비드 2025:
+        # 시험일자 2024.04.29 가 아니라 담당자 2024.05.07). 없으면 시험일자 줄의 날짜.
         done, done_clean = None, False
         col_dates = sorted(_in_cell(sign_boxes, x0 - 10 * s, x1 + 10 * s, H * 0.72, H), key=lambda b: -b[1])
         for b in col_dates:
@@ -439,6 +527,13 @@ def read_log(pdf_path, specs=None, log=None):
                 done, done_clean = d, c and b == col_dates[0]
                 break
         if done is None:
+            row_dates = sorted(_in_cell(boxes, x0 - 10 * s, x1 + 10 * s, date_band[0], date_band[1]), key=lambda b: b[1])
+            for b in row_dates:
+                d, c = parse_date(b[4], year_lo, year_hi)
+                if d:
+                    done, done_clean = d, False                      # 시험일자는 완료일과 며칠 다를 수 있다
+                    break
+        if done is None:
             for cb in _crop_ocr(image, x0, x1, H * 0.80, H * 0.92):
                 d, c = parse_date(cb[4], year_lo, year_hi)
                 if d:
@@ -446,8 +541,8 @@ def read_log(pdf_path, specs=None, log=None):
                     break
         if k == 0 and done is None and init is not None:
             done, done_clean = ".".join(DATE.search(init[4]).groups()), False  # 초기 인쇄 일자로 대신 — 확인자 일자와 다를 수 있다
-        if not seen and done is None:
-            continue
+        if not seen and not (done and used[k]):
+            continue                                                 # 값도 없고 시점 표시도 없는 칸 — 결재 줄 메모의 날짜만으로 시점을 만들지 않는다
         expected = None
         due = None
         if mfg:
@@ -483,9 +578,9 @@ def read_log(pdf_path, specs=None, log=None):
         m = PACK.search(b[4])
         if m:
             unit = {"ML": "mL", "G": "g", "MG": "mg", "L": "L"}.get(m.group(2).upper(), m.group(2))
-            kind = {"병": "Bottle", "튜브": "Tube", "바이알": "Vial", "BTL": "Bottle"}.get(m.group(3).upper(), m.group(3))
-            kind = kind[0].upper() + kind[1:]
-            pack = "%s%s/%s" % (m.group(1), unit, kind)
+            ctype = {"병": "Bottle", "튜브": "Tube", "바이알": "Vial", "BTL": "Bottle"}.get(m.group(3).upper(), m.group(3))
+            ctype = ctype[0].upper() + ctype[1:]
+            pack = "%s%s/%s" % (m.group(1), unit, ctype)
             break
     store = ""                                                     # 보관 조건 — 25±2°C 60±5%RH, 30±2°C 65±5%RH …
     temp = next((TEMP.search(b[4]) for b in boxes if TEMP.search(b[4])), None)
@@ -494,8 +589,20 @@ def read_log(pdf_path, specs=None, log=None):
         store = "%s±%s°C," % (temp.group(1), temp.group(2))
         if humid:
             store += "\n%s±%s%%RH" % (humid.group(1), humid.group(2))
-    say("%s: 시점 %d개 판독 (애매 %d칸)" % (lot, len(points), sum(len(p["unsure"]) for p in points)))
+    # 시험구분 — 판독기가 한글('시판 후 안정성시험')을 못 읽으므로 파일 이름, 그다음 시점 짜임새로 가른다:
+    # 손으로 시점을 적는 양식에서 시점이 모두 12개월 단위(12M·24M·36M)면 시판 후 안정성, 3M·6M·9M 이 있으면 장기
+    if re.search(r"시판\s*후|시판후", top_text + " " + fname):
+        kind = "시판후"
+    elif "장기" in fname:
+        kind = "장기"
+    else:
+        months = [int(p[:-1]) for p in periods[1:] if p]
+        kind = "시판후" if annual else "장기"
+    say("%s: %s·%s 시점 %d개 판독 (애매 %d칸) — 시점 어림: %s" % (lot, kind, market, len(points), sum(len(p["unsure"]) for p in points), ", ".join(trace)))
     return {"lot": lot, "year": str(mfg_year) if mfg_year else "", "pack": pack, "store": store,
+            "kind": kind, "market": market, "market_hint": market_hint,
+            "mfg": ".".join(mfg.groups()) if mfg else "",
+            "expiry": ".".join(expiry.groups()) if expiry else "",
             "why": "", "points": points, "notes": notes, "source": os.path.basename(pdf_path)}
 
 
@@ -505,13 +612,12 @@ def read_folder(paths, specs=None, log=None):
         if log:                                                    # 대시보드 진행 표시에 그대로 보인다
             log("    시험일지 판독 중 %d/%d: %s" % (i + 1, len(paths), os.path.basename(p)))
         try:
-            rec = read_log(p, specs, log)
+            recs = read_pages(p, specs, log)
         except Exception as error:                                 # 한 장이 막혀도 나머지는 읽는다
             if log:
                 log("    판독 실패 %s — %s" % (os.path.basename(p), error))
-            rec = None
-        if rec:
-            out.append(rec)
+            recs = []
+        out.extend(recs)
     out.sort(key=lambda r: (r.get("year") or "", r.get("lot") or ""))   # 13.1 차례: 제조 연도 → 제조번호
     return out
 
