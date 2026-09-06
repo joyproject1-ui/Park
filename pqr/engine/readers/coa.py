@@ -84,6 +84,12 @@ def read_ipc(path):
         out["tube_print"] = "인쇄상태가 양호하며 제조번호 및 사용기한의 압인상태가 명확히 식별 가능함"
     if "메틸렌블루시액 침투 없음" in text:
         out["leak"] = "메틸렌블루시액 침투 없음"
+    # 튜브개봉(변경관리로 더해진 항목 — 퀴노비드 OEY401 부터): '튜브개봉  기준  결과' 처럼 같은 글이 두 번 온다
+    m = re.search(r"튜브\s*개봉\s+(\S[^\n]*?)\s+\1(?:\s|$)", text)
+    if m:
+        out["tube_open"] = m.group(1).strip()
+    elif "튜브 막힘이 없음" in text:
+        out["tube_open"] = "튜브개봉 시 튜브 막힘이 없음"
     return out
 
 
@@ -184,6 +190,23 @@ def read_fp(path):
     m = re.search(r"(\d{2,3})\s*nm\s*,\s*(\d{2,3})\s*nm\s*에서\s*흡수극대", text)
     if m:
         out["uv_max"] = "%snm, %snm에서 흡수극대를 나타냄" % (m.group(1), m.group(2))
+    # 확인시험 — '확인시험 적합' 줄의 수와 판정. 결과 글(주피크 유지시간·UV spectrum)은 제품마다 달라
+    # 보고서에는 전년도 결재본의 문안이나 기준 문장을 결과형으로 옮겨 쓰고, 여기서는 판정만 본다(2026-09-06).
+    # 글 뽑기에 따라 '확인시험 적합 오플록사신' 또는 '확인시험  검액은 … 나타낸다. 박소은  적합' 꼴이다 —
+    # '확인시험' 줄(과 그 아래 두 줄)에서 적합/부적합을 찾는다
+    lines = text.splitlines()
+    idents = []
+    for i, line in enumerate(lines):
+        if not re.search(r"확인\s*시험", line):
+            continue
+        window = " ".join(lines[i:i + 3])
+        if "부적합" in window:
+            idents.append("부적합")
+        elif "적합" in window:
+            idents.append("적합")
+    if idents:
+        out["ident_ok"] = all(x == "적합" for x in idents)
+        out["ident_n"] = len(idents)
     m = re.search(r"합격\s+(\d{4}\.\d{2}\.\d{2})\s+\S+\s*\S*\s+(\d{4}\.\d{2}\.\d{2})", text)
     if m:
         out["checked"], out["judged"] = m.group(1), m.group(2)

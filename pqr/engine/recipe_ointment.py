@@ -295,6 +295,88 @@ def blank_qualification_cells(table, lookup):
     return out
 
 
+def _crit_key(text):
+    """9.1 기준 글을 견주기 위한 열쇠 — '허가)/자가)' 머리, '1)' 번호, 띄어쓰기, 끝 마침표를 뺀다."""
+    t = D.PREFIX.sub("", text or "")
+    t = re.sub(r"^\s*\d\)\s*", "", t)
+    return re.sub(r"[^0-9A-Za-z가-힣]", "", t)          # 띄어쓰기·기호('~'·'-'·괄호) 차이는 무시한다
+
+
+def _as_result(crit):
+    """기준 문장을 결과형으로 — '…을 나타낸다.' → '…을 나타냄', '…동일해야 한다.' → '…동일함'."""
+    t = re.sub(r"^\s*\d\)\s*", "", D.PREFIX.sub("", crit or "")).strip().rstrip(".")
+    t = re.sub(r"나타낸다$", "나타냄", t)
+    t = re.sub(r"(이어야|해야)\s*한다$", "함", t)
+    t = re.sub(r"(생긴다|된다)$", lambda m: {"생긴다": "생김", "된다": "됨"}[m.group(1)], t)
+    return t
+
+
+def _prior_91(data, idx=0):
+    """전년도 결재본 9.1 표(idx: 0 내수 / 1 수출)의 {기준 열쇠: 결과 글}."""
+    olds = (getattr(data, "prev_sections_all", None) or {}).get("9.1") or []
+    grid = olds[idx] if len(olds) > idx else None
+    prior = {}
+    for row_ in (grid or [])[1:]:
+        crit_ = next((t for t in row_ if D.PREFIX.search(t or "")), None)
+        res_ = next((t for t in reversed(row_) if (t or "").strip()), "")
+        if crit_ and res_ and res_ != crit_:
+            prior[_crit_key(crit_)] = res_.strip()
+    return prior
+
+
+def _ident_result(lots, rec, prior, crit_text):
+    """확인 시험 결과 — 올해 성적서가 모두 '확인시험 적합' 이면 전년도 결재본 문안(같은 기준 줄) 또는 기준 문장의
+    결과형을 쓴다. 성적서에 확인시험 판정이 없거나 부적합이 있으면 None."""
+    oks = [rec(l, "924").get("ident_ok") for l in lots]
+    if not lots or any(v is not True for v in oks):
+        return None
+    old = prior.get(_crit_key(crit_text))
+    if old and not re.search(r"\d", old):
+        return old
+    return _as_result(crit_text)
+
+
+CODE = re.compile(r"^[A-Z]{1,3}\d{3,5}")           # 관리번호: RBO101 · EPP116 · P17039
+
+
+def _has_codes(table):
+    return any(CODE.match(E.cell_text(E.raw_cells(r)[1]).strip())
+               for r in table.rows[1:] if len(E.raw_cells(r)) > 1)
+
+
+def _seed_rows_by_header(table, old_grid):
+    """머리행 이름이 같은 열끼리 전년도 결재본의 자료 줄(관리번호가 있는 줄)을 옮겨 세운다. 연번은 새로 매기고
+    '특이사항' 줄은 건드리지 않는다. 옮긴 줄 수를 돌려준다."""
+    if not old_grid or len(old_grid) < 2:
+        return 0
+    width = E.grid_width(table)
+    new_head = {CARRY.squeeze(E.cell_text(c)): i for i, c in E.grid_cells(table.rows[0], width).items()}
+    old_head = {CARRY.squeeze(t): j for j, t in enumerate(old_grid[0]) if CARRY.squeeze(t)}
+    same = {i: old_head[name] for name, i in new_head.items() if name in old_head}
+    code_j = next((j for name, j in old_head.items() if "관리번호" in name or "코드" in name), None)
+    if code_j is None or len(same) < 2:
+        return 0
+    rows = [r for r in old_grid[1:] if code_j < len(r) and CODE.match((r[code_j] or "").strip())]
+    if not rows:
+        return 0
+    last = len(table.rows) - 1
+    if CARRY.squeeze(E.cell_text(E.raw_cells(table.rows[-1])[0])).startswith("특이사항"):
+        last -= 1
+    f, l = E.fit_rows(table, 1, last, len(rows))
+    for k, r in enumerate(rows):
+        cells = E.grid_cells(table.rows[f + k], width)
+        for i, cell in cells.items():
+            E.clear_diag(cell)
+            E.set_vmerge(cell, False)
+            if i == 0:
+                E.set_cell(cell, str(k + 1))
+                continue
+            j = same.get(i)
+            text = (r[j] if j is not None and j < len(r) else "") or ""
+            E.set_cell(cell, *text.split("\n"))
+    return len(rows)
+
+
 def _has_equipment(table):
     return any(re.match(r"^[A-Z]{3}\d{4}", E.cell_text(E.raw_cells(r)[1]).strip())
                for r in table.rows if len(E.raw_cells(r)) > 1)
@@ -629,7 +711,12 @@ def fill(document, data, product, period, today=None, log=None):
                 if lot in dev_lots:
                     yield_dev.append(lot)
                 if len(r) > 5:
-                    E.set_cell(r[5], "1)" if lot in dev_lots else "2)")
+                    # 기준을 벗어난 Lot 은 모두 '1)' — 표 아래 각주 한 줄이 설명한다(담당자 2026-09-06: "비고에는
+                    # 1), 2) 가 아니고 모두 1) 로 작성되어야 표 하단 문구로 설명되는 것 아닌지"). 11항에 일탈
+                    # 기록이 없는 Lot 은 노랑으로 남겨 대조하게 한다.
+                    E.set_cell(r[5], "1)")
+                    if lot not in dev_lots:
+                        E.highlight_cell(r[5])
         # 최댓값·최솟값·평균 — 세 줄 모두 채우고 그 칸의 사선은 지운다 (담당자 지시 2026-09).
         # raw_cells 로 그 행이 실제로 가진 칸을 쓴다: .cells 는 세로 병합을 하나로 합쳐 돌려주어
         # 세 줄이 같은 칸을 가리키고, 마지막에 쓴 평균만 남는다(최댓값 자리에 평균이 찍혔다).
@@ -661,16 +748,20 @@ def fill(document, data, product, period, today=None, log=None):
         fill_yield(t7[0], dom, True)
         if len(t7) > 1 and exp:
             fill_yield(t7[1], exp, False)
-    note = find_para(document, "수율의 최대, 최소, 평균") or find_para(document, "1) 11. 일탈")
+    note = (find_para(document, "수율의 최대, 최소, 평균") or find_para(document, "1) 11. 일탈")
+            or find_para(document, "일탈 관련 기록 참고") or find_para(document, "수율 일탈로"))
     if note is not None:
         if yield_out:
-            devs = ", ".join("%s %s" % (l, next((d["doc_no"] for d in data.deviations if d.get("lot") == l), "")) for l in yield_dev)
-            txt = "1) 충전 수율 일탈(%s)로 11항 일탈 관련 기록 참고. " % devs if yield_dev else ""
+            # 각주 한 줄 — 공양식 문안('1) 충전 수율 일탈로 11항 일탈 관련 기록 참고.')에 일탈 문서번호와
+            # 결재본 관행('수율의 최대, 최소, 평균 계산에서 제외함')을 붙인다
+            docs = [next((d["doc_no"] for d in data.deviations if d.get("lot") == l), "") for l in yield_dev]
+            docs = [x for x in docs if x]
+            stage_word = {"조제": "조제", "충전": "충전", "포장": "포장"}
+            txt = "1) 충전 수율 일탈로 11항 일탈 관련 기록%s 참고. (수율의 최대, 최소, 평균 계산에서 제외함.)" % (
+                "(%s)" % ", ".join(dict.fromkeys(docs)) if docs else "")
             others = [l for l in yield_out if l not in yield_dev]
             if others:
-                txt += "2) 자가기준 이탈, 일탈 기록 확인 필요(%s). " % ", ".join(others)
-                issues.append(("7", ", ".join(others), "수율이 자가기준을 벗어났으나 일탈 기록이 없음"))
-            txt += "수율 일탈 Lot 은 최댓값·최솟값·평균에 미반영."
+                issues.append(("7", ", ".join(others), "수율이 자가기준을 벗어났으나 11항에 일탈 기록이 없음 — 비고 '1)' 를 노랑으로 두었으니 일탈 기록을 확인하세요"))
             E.set_para_text(note, txt)
             _small(note._p)
         else:
@@ -728,6 +819,17 @@ def fill(document, data, product, period, today=None, log=None):
         return re.split(r"\s*/\s*", str(text or ""))[0].strip()
 
     upd81, grade_odd = 0, []
+    # 빈 공양식의 8.1.1·8.1.2(·8.1.3)는 관리번호 줄이 없다 — 전년도 결재본의 줄(관리번호·원/자재명·규격·제조원 …)을
+    # 먼저 세우고, 아래에서 올린 공급업체 목록·공급망 마스터로 문서번호·완료일·업체를 갱신한다
+    # (담당자 2026-09-06: "주원료명 모르면 작년 PQR 에서 가져오고 해당 항 첨부파일로 최신 정보를 가져오면 돼").
+    olds81 = getattr(data, "prev_sections_all", None) or {}
+    for prefix in ("8.1.1", "8.1.2", "8.1.3"):
+        grids = olds81.get(prefix) or []
+        for i, tb in enumerate(_tables(document, prefix)):
+            if i < len(grids) and not _has_codes(tb):
+                n = _seed_rows_by_header(tb, grids[i])
+                if n:
+                    log("%s: 전년도 결재본에서 %d줄을 세움 — 올린 자료로 갱신" % (prefix, n))
     for prefix in ("8.1.1", "8.1.3"):
         for tb in _tables(document, prefix):
             col = _cols(tb, ("code", ("관리번호", "코드")), ("name", ("원/자재명", "원자재명", "자재명", "원료명")),
@@ -941,12 +1043,17 @@ def fill(document, data, product, period, today=None, log=None):
         res = {}
         current_item = ""
         assay_parts = []          # 주성분이 둘 이상인 제품(디겐타안연고: 플루오로메톨론·겐타마이신황산염)
+        # 값이 없는 글 결과(확인 시험 '검액은 표준액과 동일한 주피크 유지시간을 나타냄' 등)는 전년도 결재본의
+        # 같은 기준 줄에서 옮긴다 — 숫자가 든 결과는 옮기지 않는다(담당자 2026-09-06: "9.1.1 시험결과들은 왜 사선인지?")
+        prior = _prior_91(data, 0 if is_dom else 1)
+        carried = 0
         for ri, row in enumerate(t91.rows):
             cells = E.raw_cells(row)
             if ri == 0 or len(cells) < 3:
                 continue
             label = re.sub(r"\s+", "", E.cell_text(cells[-3])) if len(cells) >= 4 else ""
-            crit_text = E.cell_text(cells[-2])
+            crit_i = next((i for i, c in enumerate(cells) if D.PREFIX.search(E.cell_text(c) or "")), None)
+            crit_text = E.cell_text(cells[crit_i]) if crit_i is not None else E.cell_text(cells[-2])
             if "평균" not in label and "개개" not in label:
                 # 칸이 넷뿐인 표(디겐타안연고)는 평균·개개 칸이 따로 없고 허용기준 글에 적혀 있다
                 # — "허가) 평균 : 표시량(4.0 g) 이상" / "허가) 개개 : 3.60 g 이상".
@@ -974,6 +1081,8 @@ def fill(document, data, product, period, today=None, log=None):
                 n["_fill_avg"] = True
             elif "개개" in label and n["flo"] and "질량" in item and not n.get("_fill_each"):
                 val = "%.2f ~ %.2fg" % (min(n["flo"]), max(n["fhi"])); n["_fill_each"] = True
+            elif "확인" in item and (is_dom or not re.search(r"[123]\)", E.cell_text(cells[-2]))):
+                val = _ident_result(lots, rec, prior, crit_text)      # 올해 성적서 '확인시험 적합' + 전년도 문안
             elif "확인" in item and not is_dom:
                 crit = E.cell_text(cells[-2])
                 if "1)" in crit:
@@ -1022,9 +1131,23 @@ def fill(document, data, product, period, today=None, log=None):
                 val = sorted(st)[0] if st else "음성"
             elif "포장규격" in item:
                 val = "각 규격에 적합함"
+            if val is None and crit_text.strip():
+                old = prior.get(_crit_key(crit_text))
+                if old and not re.search(r"\d", old):
+                    val = old
+                    carried += 1
             if val is not None:
-                E.set_cell(cells[-1], *val.split("\n"))
+                target = cells[-1]
+                # 결과 칸 왼쪽에 글 없는 쪽칸이 붙어 있으면(기준 칸이 아니면) 합쳐서 사선이 생기지 않게 한다
+                if crit_i is not None and len(cells) - 2 > crit_i and not E.cell_text(cells[-2]).strip():
+                    E.clear_diag(cells[-2])
+                    E.merge_right(cells[-2], cells[-1])
+                    target = cells[-2]
+                E.clear_diag(target)
+                E.set_cell(target, *val.split("\n"))
                 res[ri] = val
+        if carried:
+            log("9.1항: 글 결과 %d줄은 전년도 결재본에서 옮김(확인 시험 등)" % carried)
         if assay_parts:
             # 성적서에서 그 성분의 함량을 찾지 못했다 — 다른 성분 값이 들어가 있으니 짚는다.
             issues.append(("9.1", ", ".join(assay_parts),
@@ -1035,9 +1158,11 @@ def fill(document, data, product, period, today=None, log=None):
     # 2026 양식(공정별 9.2 표)이면 9.1·9.2 를 모두 머리글·허용기준으로 짚어 채운다.
     rules = D.criteria(t91[0]) if t91 else []
     pairs = D.tables_92(document)
-    labelled = bool(pairs) and not exp and all(st for _, st in pairs) and all(D.simple(t) for t, _ in pairs)
+    # 수출 Lot 이 있어도 머리글 기반으로 채운다 — 내수용·수출용 표를 제목으로 갈라 각각 채운다(2026-09-06 퀴노비드:
+    # 자리 기반으로 떨어지면 열이 밀려 9.2 의 확인·질량 칸이 비거나 옆 칸에 들어갔다)
+    labelled = bool(pairs) and all(st for _, st in pairs) and all(D.simple(t) for t, _ in pairs)
     if labelled:
-        n_dom, n_exp = numbers(dom), {}
+        n_dom, n_exp = numbers(dom), (numbers(exp) if exp else {})
     else:
         n_dom = fill_91(t91[0], dom, True) if t91 else {}
         n_exp = fill_91(t91[1], exp, False) if len(t91) > 1 and exp else {}
@@ -1148,13 +1273,14 @@ def fill(document, data, product, period, today=None, log=None):
 
     makers = []
 
-    def maker_of(process):
-        return makers[0](process) if makers else (lambda lab, lot, i: None)
+    def maker_of(process, idx=0):
+        return makers[idx](process) if len(makers) > idx else (lambda lab, lot, i: None)
 
-    def fill_92_labelled(pairs, rules, lots, n):
+    def fill_92_labelled(pairs, rules, lots, n, prior=None):
         """9.2 표를 머리글 이름으로 채운다 (2026 양식: 조제·충전·포장 공정별 표)."""
         parts = [r["part"] for r in rules if r["part"]]
         found = {}
+        prior = prior or {}
 
         def maker(process):
             def value(lab, lot, i):
@@ -1188,9 +1314,16 @@ def fill(document, data, product, period, today=None, log=None):
                     return r924.get("sterility") or D.criterion_for(rules, process, "무균")
                 if "기밀도" in lab:
                     return mine.get("leak") or D.criterion_for(rules, process, "기밀도")
-                for key in ("튜브개봉", "튜브인쇄", "확인", "포장규격"):
-                    if key in lab:
-                        return D.criterion_for(rules, process, key, part)
+                if "튜브개봉" in lab:
+                    return mine.get("tube_open")              # 변경관리로 더해진 항목 — 성적서에 없는 Lot 은 빈 칸(사선)
+                if "튜브인쇄" in lab:
+                    return mine.get("tube_print") or _as_result(D.criterion_for(rules, process, "튜브인쇄", part))
+                if "확인" in lab:
+                    sub = (re.search(r"\d\)", lab) or [""])[0] if re.search(r"\d\)", lab) else ""
+                    crit = D.criterion_for(rules, process, "확인", part, sub)
+                    return _ident_result([lot], rec, prior, crit)  # 올해 성적서 '확인시험 적합' + 전년도 문안
+                if "포장규격" in lab:
+                    return D.criterion_for(rules, process, "포장규격", part)
                 return None
             return value
 
@@ -1276,8 +1409,15 @@ def fill(document, data, product, period, today=None, log=None):
             return "%s%s" % (top, tail)
         return "Av. %s%s(%s ~ %s%s)" % (mean, tail, bottom, top, tail)
 
-    def fill_91_labelled(t91, rules, lots, n, maker):
-        """9.1 결과 칸을 9.2 와 같은 판독값으로 채운다 (2026 양식)."""
+    def fill_91_labelled(t91, rules, lots, n, maker, old_index=0):
+        """9.1 결과 칸을 9.2 와 같은 판독값으로 채운다 (2026 양식).
+
+        값이 없는 항(확인 시험처럼 '검액은 표준액과 동일한 주피크 유지시간을 나타냄' 같은 글 결과)은 전년도
+        결재본의 같은 기준 줄에서 글 결과를 옮긴다 — 숫자가 든 결과는 옮기지 않는다(담당자 2026-09-06: "9.1.1
+        시험결과들은 왜 사선인지?"). 결과 칸 왼쪽에 빈 쪽칸이 붙어 있으면(공양식 금속성이물 줄) 합친다.
+        """
+        prior = _prior_91(data, old_index)
+        carried = 0
         done, k, follow = 0, 0, []
         for row in t91.rows[1:]:
             cells = E.raw_cells(row)
@@ -1308,17 +1448,42 @@ def fill(document, data, product, period, today=None, log=None):
                             unit_of(crit, hit["item"], hit["sub"]))
             if "포장규격" in hit["item"] and out:
                 out = "각 규격에 적합함"
+            if not out and "확인" in hit["item"]:
+                out = _ident_result(lots, rec, prior, crit_text) or ""
+                carried += bool(out)
+            if not out:
+                old = prior.get(_crit_key(crit_text))
+                if old and not re.search(r"\d", old):
+                    out = old
+                    carried += 1
             if out:
-                E.set_cell(cells[-1], *out.split("\n"))
+                target = cells[-1]
+                # 결과 칸 왼쪽에 글 없는 쪽칸이 붙어 있으면(기준 칸이 아니면) 합쳐서 사선이 생기지 않게 한다
+                if len(cells) >= 2 and ci is not None and len(cells) - 2 > ci and not E.cell_text(cells[-2]).strip():
+                    E.clear_diag(cells[-2])
+                    E.merge_right(cells[-2], cells[-1])
+                    target = cells[-2]
+                E.clear_diag(target)
+                E.set_cell(target, *out.split("\n"))
                 done += 1
+        if carried:
+            log("9.1항: 글 결과 %d줄은 전년도 결재본에서 옮김(확인 시험 등)" % carried)
         return done
 
     if labelled:
-        cpk_dom = fill_92_labelled(pairs, rules, dom, n_dom)
+        triples = D.tables_92_by_market(document)
+        pairs_dom = [(t, st) for t, st, mk in triples if mk != "수출"]
+        pairs_exp = [(t, st) for t, st, mk in triples if mk == "수출"]
+        cpk_dom = fill_92_labelled(pairs_dom, rules, dom, n_dom, _prior_91(data, 0))
         if t91:
-            log("9.1항: 결과 칸 %d줄을 판독값으로 채움" % fill_91_labelled(t91[0], rules, dom, n_dom, maker_of))
+            log("9.1항: 결과 칸 %d줄을 판독값으로 채움" % fill_91_labelled(t91[0], rules, dom, n_dom, lambda pr: maker_of(pr, 0), 0))
         cpk_exp = {}
-        log("9.2항: 머리글로 짚어 표 %d개 채움 (%s)" % (len(pairs), ", ".join(st for _, st in pairs)))
+        if exp and pairs_exp:
+            rules_e = D.criteria(t91[1]) if len(t91) > 1 else rules
+            cpk_exp = fill_92_labelled(pairs_exp, rules_e, exp, n_exp, _prior_91(data, 1))
+            if len(t91) > 1:
+                log("9.1항(수출): 결과 칸 %d줄을 판독값으로 채움" % fill_91_labelled(t91[1], rules_e, exp, n_exp, lambda pr: maker_of(pr, 1), 1))
+        log("9.2항: 머리글로 짚어 표 %d개 채움 (%s)" % (len(triples), ", ".join((mk + " " if mk else "") + st for _, st, mk in triples)))
     else:
         cpk_dom = fill_92("9.2.1", dom, n_dom, True) or {}
         cpk_exp = fill_92("9.2.2", exp, n_exp, False) if exp else {}

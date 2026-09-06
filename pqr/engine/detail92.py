@@ -273,14 +273,20 @@ STAGES = ("조제", "충전", "포장")
 
 
 def tables_92(document):
-    """[(표, 공정)] — 9.2 아래 표들과 그 공정(조제·충전·포장).
+    """[(표, 공정)] — 9.2 아래 표들과 그 공정(조제·충전·포장)."""
+    return [(t, s) for t, s, _ in tables_92_by_market(document)]
+
+
+def tables_92_by_market(document):
+    """[(표, 공정, 시장)] — 9.2 아래 표들과 그 공정(조제·충전·포장), 시장('내수'·'수출'·'').
+    내수용·수출용 표가 따로인 서식(퀴노비드: 9.2.1 내수용 / 9.2.2 수출용)은 제목의 낱말로 가른다.
 
     표 사이의 각주 줄('1) 모든 Lot 의 …')이 제목처럼 보여 항이 끊기므로, 번호가 제대로 붙은
     제목만 항의 끝으로 본다. 양식에 '9.2.1.3 포장 완료 후' 처럼 번호가 어긋난 곳이 있어
     공정은 번호가 아니라 제목 낱말로 정한다.
     """
     from .locate import outline
-    out, inside, stage = [], False, ""
+    out, inside, stage, market = [], False, "", ""
     for kind, value, _ in outline(document):
         if kind == "h":
             m = SECTION.match(value)
@@ -289,13 +295,17 @@ def tables_92(document):
                 for s in STAGES:
                     if s in value:
                         stage = s
+                if "수출" in value:
+                    market = "수출"
+                elif "내수" in value:
+                    market = "내수"
             elif m and m.group(1) != "9":
                 inside = False
             continue
         if inside:
             table = document.tables[value]
             if any(l.lower().startswith("lotno") for l in labels(table)):
-                out.append((table, stage))          # Cpk 판정 기준 같은 안내표는 뺀다
+                out.append((table, stage, market))  # Cpk 판정 기준 같은 안내표는 뺀다
     return out
 
 
