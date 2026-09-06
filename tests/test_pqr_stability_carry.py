@@ -7,7 +7,7 @@ import docx
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from pqr.engine import carry, docedit as E                          # noqa: E402
+from pqr.engine import carry, docedit as E, handwriting            # noqa: E402
 from pqr.engine.recipe_ointment import _fill_stability26, _declared_lots, _tables   # noqa: E402
 
 
@@ -169,3 +169,29 @@ class 이어진_표(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class 같은_lot_합치기(unittest.TestCase):
+    """판독 파일에 이미 있는 Lot 을 다시 읽어도 두 줄이 되지 않는다 (담당자 2026-09-07: 13 폴더에 일지를 모두 올림)."""
+
+    def _one(self, lot, kind, periods, sure=True):
+        return {"lot": lot, "kind": kind, "kind_sure": sure, "market": "내수", "pack": "", "store": "", "year": "2023",
+                "points": [{"period": p, "done": "2025.03.0%d" % i, "assays": {}} for i, p in enumerate(periods, 1)]}
+
+    def test_같은_lot_은_시점만_보탠다(self):
+        old = [self._one("OEV301", "시판후", ["12M", "24M"])]
+        added = handwriting.merge_logs(old, [self._one("OEV301", "시판후", ["24M", "36M"])])
+        self.assertEqual(added, 0)
+        self.assertEqual(len(old), 1)
+        self.assertEqual([p["period"] for p in old[0]["points"]], ["12M", "24M", "36M"])
+
+    def test_구분을_어림한_일지는_이미_읽은_구분을_따른다(self):
+        old = [self._one("OEV301", "시판후", ["12M"])]
+        handwriting.merge_logs(old, [self._one("OEV301", "장기", ["24M"], sure=False)])
+        self.assertEqual(len(old), 1)
+        self.assertEqual(old[0]["kind"], "시판후")
+
+    def test_다른_lot_은_새_줄로(self):
+        old = [self._one("OEV301", "시판후", ["12M"])]
+        added = handwriting.merge_logs(old, [self._one("OEX101", "장기", ["3M"])])
+        self.assertEqual((added, len(old)), (1, 2))

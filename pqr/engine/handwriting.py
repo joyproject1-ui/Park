@@ -591,16 +591,17 @@ def read_log(pdf_path, specs=None, log=None, page_no=0):
             store += "\n%s±%s%%RH" % (humid.group(1), humid.group(2))
     # 시험구분 — 판독기가 한글('시판 후 안정성시험')을 못 읽으므로 파일 이름, 그다음 시점 짜임새로 가른다:
     # 손으로 시점을 적는 양식에서 시점이 모두 12개월 단위(12M·24M·36M)면 시판 후 안정성, 3M·6M·9M 이 있으면 장기
+    kind_sure = True                       # 파일 이름·본문에 '시판 후'·'장기' 라고 적혀 있으면 확실하다
     if re.search(r"시판\s*후|시판후", top_text + " " + fname):
         kind = "시판후"
     elif "장기" in fname:
         kind = "장기"
     else:
-        months = [int(p[:-1]) for p in periods[1:] if p]
         kind = "시판후" if annual else "장기"
+        kind_sure = False                  # 시점 짜임새로 어림한 것 — 다른 자료가 말하면 그것을 따른다
     say("%s: %s·%s 시점 %d개 판독 (애매 %d칸) — 시점 어림: %s" % (lot, kind, market, len(points), sum(len(p["unsure"]) for p in points), ", ".join(trace)))
     return {"lot": lot, "year": str(mfg_year) if mfg_year else "", "pack": pack, "store": store,
-            "kind": kind, "market": market, "market_hint": market_hint,
+            "kind": kind, "kind_sure": kind_sure, "market": market, "market_hint": market_hint,
             "mfg": ".".join(mfg.groups()) if mfg else "",
             "expiry": ".".join(expiry.groups()) if expiry else "",
             "why": "", "points": points, "notes": notes, "source": os.path.basename(pdf_path)}
@@ -717,3 +718,40 @@ def refresh_cache(logs, version, paths, specs=None, log=None):
     if log:
         log("    옛 판독 파일의 애매한 칸을 새 판독기로 다시 읽음 — %d칸 보완" % changed)
     return changed
+
+
+def merge_logs(old, new, log=None):
+    """새로 읽은 시험일지(new)를 이미 있는 판독 결과(old)에 합친다 — 같은 Lot 은 한 줄로.
+
+    담당자가 같은 일지를 이름만 바꿔 다시 올리거나, 한 Lot 이 여러 장에 걸쳐 있을 때 같은 Lot 이
+    두 줄로 실리는 것을 막는다. 시점은 기간(3M·6M…)으로 맞춰 합치고, 이미 있는 값(담당자가 고친
+    판독 파일)을 우선한다. 구분(장기·시판 후)이 어림값이면 이미 있는 쪽을 따른다.
+    """
+    say = log or (lambda *a: None)
+    by_lot = {}
+    for one in old:
+        by_lot.setdefault(one.get("lot"), []).append(one)
+    added = 0
+    for one in new:
+        같은 = by_lot.get(one.get("lot")) or []
+        짝 = next((o for o in 같은 if o.get("kind") == one.get("kind")), None)
+        if 짝 is None and 같은 and not one.get("kind_sure"):
+            짝 = 같은[0]                      # 구분을 어림한 것 — 이미 있는 구분을 따른다
+            say("      %s: 구분을 %s 로 맞춤 (이미 읽은 일지와 같은 Lot)" % (one.get("lot"), 짝.get("kind")))
+        if 짝 is None:
+            old.append(one)
+            by_lot.setdefault(one.get("lot"), []).append(one)
+            added += 1
+            continue
+        가진 = {p.get("period"): p for p in 짝.get("points") or []}
+        새로 = 0
+        for point in one.get("points") or []:
+            if point.get("period") not in 가진:
+                짝.setdefault("points", []).append(point)
+                새로 += 1
+        짝["points"].sort(key=lambda p: (len(p.get("period") or ""), p.get("period") or ""))
+        for key in ("pack", "store", "mfg", "expiry", "year"):
+            if not 짝.get(key) and one.get(key):
+                짝[key] = one[key]
+        say("      %s: 이미 읽은 Lot 에 시점 %d개를 보탬" % (one.get("lot"), 새로))
+    return added

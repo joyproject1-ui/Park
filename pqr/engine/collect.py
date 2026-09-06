@@ -512,8 +512,16 @@ def collect(folder, product_name=None, log=None):
                         handwriting.merge_known(logs, sheets, log)
                     except Exception:
                         pass
-                    data.stability_logs += logs
+                    # 같은 Lot 이 두 줄로 실리지 않게 합친다 — 이미 읽은 값(담당자가 고친 판독 파일)이 우선
+                    handwriting.merge_logs(data.stability_logs, logs, log)
                     data.stability_logs.sort(key=lambda r: (r.get("year") or "", r.get("lot") or ""))
+                    겹침 = {}
+                    for one in data.stability_logs:
+                        겹침.setdefault(one.get("lot"), set()).add(one.get("kind"))
+                    for lot, kinds in sorted(겹침.items()):
+                        if len(kinds) > 1:     # 같은 Lot 이 장기·시판 후 두 표에 들어간다 — 파일 이름을 확인해야 한다
+                            note("13", lot, "같은 Lot 이 %s 두 가지로 읽혔습니다 — 시험일지 파일 이름에 "
+                                            "'장기'·'시판 후' 를 바로 적어 주세요" % "·".join(sorted(kinds)))
                     shaky = sum(len(p.get("unsure") or []) for one in logs for p in one["points"])
                     note("13", "", "손글씨 시험일지 %d장을 오프라인으로 판독했습니다 — 애매한 칸 %d개는 "
                                    "노랑(워드)·주황(엑셀)으로 표시했으니 시험일지와 대조하세요" % (len(logs), shaky))
