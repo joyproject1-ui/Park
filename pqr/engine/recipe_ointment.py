@@ -250,6 +250,51 @@ def change_covers(cc, name, parts=()):
     return bool(GROUP_WIDE.search(cc.get("products") or ""))
 
 
+def _latest_pair(entry, a="IQ", b="OQ"):
+    """IQ 와 OQ 의 가장 최근 문서가 같은 한 문서(IOQ…)면 (문서, 일자), 아니면 None."""
+    def latest(kind):
+        got = [(d, dt) for d, dt in entry.get(kind, []) if d and dt]
+        return max(got, key=lambda x: re.sub(r"\D", "", x[1])[:8]) if got else None
+    la, lb = latest(a), latest(b)
+    if la and lb and la[0].split("(")[0].strip() == lb[0].split("(")[0].strip():
+        return la
+    if la and not lb and la[0].upper().startswith("IOQ"):
+        return la
+    return None
+
+
+def blank_qualification_cells(table, lookup):
+    """채우고 난 뒤의 검토 — 마스터파일에 문서가 있는데도 빈 IQ·OQ·PQ 칸. [(관리번호, 종류)].
+
+    담당자 2026-09-06: "여러 번 말한 부분이니까 다음부터는 실수하지 않게 작성할 때 꼭 검토해 줘".
+    """
+    rows = table.rows
+    width = E.grid_width(table)
+    kind_col = {}
+    for row in rows[:4]:
+        for ci, cell in E.grid_cells(row, width).items():
+            head = E.cell_text(cell).strip().upper()
+            if head in ("IQ", "OQ", "PQ"):
+                kind_col[head] = ci
+        if kind_col:
+            break
+    out = []
+    for ri, row in enumerate(rows):
+        cells = E.raw_cells(row)
+        mid = E.cell_text(cells[1]).strip() if len(cells) > 1 else ""
+        if not re.match(r"^[A-Z]{3}\d{4}", mid) or mid not in lookup or ri + 1 >= len(rows):
+            continue
+        grid = E.grid_cells(row, width)
+        for kind, col in kind_col.items():
+            if not [1 for d, dt in lookup[mid].get(kind, []) if d and dt]:
+                continue                                    # 마스터에도 없다 — 비워 두는 것이 맞다
+            if col not in grid:
+                continue                                    # 옆 칸(IQ)과 합쳐져 거기에 적혔다
+            if not E.cell_text(grid[col]).strip():
+                out.append((mid, kind))
+    return out
+
+
 def _spans(cell):
     """이 칸이 덮는 그리드 열 수 — 1 이면 저 혼자, 2 이상이면 옆 칸과 합쳐져 있다."""
     pr = cell._tc.find(qn("w:tcPr"))
@@ -286,6 +331,23 @@ def update_qualification(table, lookup):
         # 열 번호는 그리드 기준이다 — IQ·OQ 를 한 칸에 합쳐 적은 줄(IOQ…)이 있으면
         # 자리로 세었을 때 옆 칸(PQ)을 덮어쓴다.
         doc_grid, date_grid = E.grid_cells(rows[ri], width), E.grid_cells(rows[ri + 1], width)
+        # IQ·OQ 를 하나로 합친 문서(IOQ20-UT-HEA5029-R)는 두 칸을 합쳐 한 번만 적는다 — 결재본 관행.
+        # 공양식의 IQ·OQ 칸이 비어 있으면(담당자 PC 2026-09-06: 10.4·10.5 IOQ 칸이 사선만) 여기서
+        # 칸을 합쳐 채우고, 반대로 합쳐진 칸에 IQ·OQ 문서가 따로 있으면 칸을 나눠 각각 적는다.
+        ioq = _latest_pair(lookup[mid], "IQ", "OQ")
+        if ioq is not None and "IQ" in kind_col and "OQ" in kind_col:
+            ci, co = kind_col["IQ"], kind_col["OQ"]
+            for grid, row_ in ((doc_grid, rows[ri]), (date_grid, rows[ri + 1])):
+                if ci in grid and co in grid and _spans(grid[ci]) == 1:
+                    E.merge_right(grid[ci], grid[co])
+            doc_grid, date_grid = E.grid_cells(rows[ri], width), E.grid_cells(rows[ri + 1], width)
+        elif ioq is None and "IQ" in kind_col and "OQ" in kind_col:
+            ci, co = kind_col["IQ"], kind_col["OQ"]
+            if any(lookup[mid].get(k) for k in ("IQ", "OQ")):
+                for grid in (doc_grid, date_grid):
+                    if ci in grid and co not in grid and _spans(grid[ci]) > 1 and not E.cell_text(grid[ci]).strip():
+                        E.split_span(grid[ci])          # 비어 있는 합친 칸만 나눈다 — 적힌 값은 건드리지 않는다
+                doc_grid, date_grid = E.grid_cells(rows[ri], width), E.grid_cells(rows[ri + 1], width)
         for kind, col in kind_col.items():
             got = [(d, dt) for d, dt in lookup[mid].get(kind, []) if dt and d]
             if not got:
@@ -293,14 +355,16 @@ def update_qualification(table, lookup):
             latest = max(got, key=lambda x: re.sub(r"\D", "", x[1])[:8])
             doc_cells, date_cells = doc_grid, date_grid
             if col not in doc_cells or col not in date_cells:
-                continue                    # 그 줄에서는 옆 칸과 합쳐져 있다 — 건드리지 않는다
-            if _spans(doc_cells[col]) > 1 or _spans(date_cells[col]) > 1:
-                continue                    # IQ·OQ 를 한 칸에 합쳐 적은 줄(IOQ…) — 그대로 둔다
+                continue                    # 그 줄에서는 옆 칸과 합쳐져 있다 — IQ 칸에서 함께 적는다
+            if (_spans(doc_cells[col]) > 1 or _spans(date_cells[col]) > 1) and not (kind == "IQ" and ioq is not None):
+                continue                    # 합쳐진 칸인데 합친 문서가 아니다 — 그대로 둔다
+            if kind == "IQ" and ioq is not None:
+                latest = ioq
             old_doc = E.cell_text(doc_cells[col]).strip()
             old_date = E.cell_text(date_cells[col]).strip()
             doc = latest[0].split("(")[0].strip()
             new_date = latest[1].replace(". ", ".").replace(" ", "")[:10]
-            blank = not old_doc and not old_date
+            blank = not old_doc or not old_date      # 문서번호나 완료일 한쪽만 비어도 마스터로 채운다
             newer = (re.sub(r"\D", "", new_date) > re.sub(r"\D", "", old_date)
                      and doc != old_doc.split("(")[0].strip())
             if not (blank or newer):
@@ -1362,6 +1426,18 @@ def fill(document, data, product, period, today=None, log=None):
         for t in _tables(document, prefix):
             upd += update_qualification(t, sp_lookup)
     log("10항 IQ·OQ·PQ 갱신: %d" % upd)
+    # 검토: 마스터파일에 문서가 있는데 빈 칸이 남았으면 문의 목록 맨 앞에 ★ 로 알린다 —
+    # 담당자 PC 에서 10.4·10.5 IOQ 칸이 비어 나간 일(2026-09-06)이 되풀이되지 않게.
+    빈칸 = []
+    for prefix, lk in (("10.2", eq_lookup), ("10.3", sp_lookup), ("10.4", sp_lookup), ("10.5", sp_lookup)):
+        for t in _tables(document, prefix):
+            빈칸 += [(prefix, mid, kind) for mid, kind in blank_qualification_cells(t, lk)]
+    if 빈칸:
+        for prefix, mid, kind in 빈칸:
+            issues.insert(0, (prefix, mid, "★ 검토: 마스터파일에 %s 문서가 있는데 칸이 비었습니다 — 프로그램 오류, 제작자에게 알려 주세요" % kind))
+        log("★ 10항 검토: 빈 칸 %d — %s" % (len(빈칸), ", ".join("%s %s %s" % x for x in 빈칸)))
+    else:
+        log("10항 검토: 마스터파일 문서가 있는 IQ·OQ·PQ 칸은 모두 채워짐")
     # 마스터파일에 IQ·OQ 가 아예 없는 설비는 비워 둔다(값을 지어내지 않는다) — 대신 문의
     # 목록에 남겨 담당자가 마스터파일을 보완할지 판단하게 한다.
     for mid, kinds in sorted(eq_lookup.items()):
@@ -1780,6 +1856,7 @@ def _fill_stability26(document, logs, period, spec, log, issues, why_of=None):
     f, l = E.fit_rows(table, first, last, len(trend))
     same_year = [one["year"] for one, _ in trend]
     values = {k: [] for k, _ in parts}
+    guessed = {k: set() for k, _ in parts}                 # 애매하게 읽힌 예상값 — 최소·최대가 여기서 나오면 노랑
     for i, (one, taken) in enumerate(trend):
         cells = _grid_cells_of(table.rows[f + i], len(labels))
         mark = ""
@@ -1791,16 +1868,18 @@ def _fill_stability26(document, logs, period, spec, log, issues, why_of=None):
             if cells.get(k) is None:
                 continue
             shaky = [p for p in taken if part in (p.get("unsure") or [])]
-            got = [p["assays"].get(part) for p in taken if part not in (p.get("unsure") or [])]
+            # 애매하게 읽힌 예상값도 범위에 넣는다(담당자 2026-09-06: "예상하는 값을 우선 적어 주고 표시") —
+            # 그 해 칸은 노랑으로 남겨 시험일지와 대조하게 한다
+            got = [p["assays"].get(part) for p in taken]
             got = [float(x) for x in got if x is not None]
             if not got and not shaky:
                 continue
             if got:
                 values[k] += got
+                guessed[k].update(float(p["assays"][part]) for p in shaky if p["assays"].get(part) is not None)
                 E.set_cell(cells[k], "%s ~ %s" % (_trim(min(got)), _trim(max(got))))
             else:
                 E.set_cell(cells[k], "확인 필요")                 # 그해 값을 하나도 못 읽었다
-            # 애매한 판독이 섞인 해는 칸을 노랑으로 — 값은 깨끗이 읽힌 것만으로 범위를 냈다
             if shaky:
                 E.highlight_cell(cells[k])
     bold_rows = set()
@@ -1815,8 +1894,12 @@ def _fill_stability26(document, logs, period, spec, log, issues, why_of=None):
                 bold_rows.add(ri)
             elif "최소" in head:
                 E.set_cell(cells[k], _trim(min(values[k])))
+                if min(values[k]) in guessed[k]:
+                    E.highlight_cell(cells[k])              # 예상값이 최소가 됐다 — 대조 필요
             elif "최대" in head:
                 E.set_cell(cells[k], _trim(max(values[k])))
+                if max(values[k]) in guessed[k]:
+                    E.highlight_cell(cells[k])
             elif "경향" in head:
                 lo_hi = re.findall(r"\d+(?:\.\d+)?", spec.get(part, ""))
                 ok = len(lo_hi) < 2 or (float(lo_hi[0]) <= min(values[k]) and max(values[k]) <= float(lo_hi[1]))

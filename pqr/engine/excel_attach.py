@@ -337,8 +337,8 @@ def _write_trend(form, folder, data, product, today, report_path):
                 continue
             value = _num((point.get("assays") or {}).get(part))
             if shaky is not None and part in (point.get("unsure") or []):
-                shaky.add(point["period"])         # 손글씨 판독이 애매한 시점 — 시트에서 주황(값은 비움)
-                continue
+                shaky.add(point["period"])         # 손글씨 판독이 애매한 시점 — 시트에서 주황. 예상값이
+                                                   # 있으면 그 값을 적는다(담당자 2026-09-06), 없으면 빈 주황 칸
             if value is not None:
                 out[point["period"]] = float(value)
         return out

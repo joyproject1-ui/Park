@@ -1045,6 +1045,43 @@ def _span(tc):
     return int(g.get(qn("w:val"))) if g is not None else 1
 
 
+def merge_right(cell, right):
+    """옆 칸(right)을 이 칸에 합친다 — gridSpan 을 더하고 옆 칸은 지운다. 이 칸의 글은 그대로."""
+    tc, rtc = cell._tc, right._tc
+    _set_span(tc, _span(tc) + _span(rtc))
+    rtc.getparent().remove(rtc)
+    # 합친 칸의 오른쪽 테두리는 없어진 칸의 것을 잇는다
+    pr, rpr = _tcpr(tc), rtc.find(qn("w:tcPr"))
+    b, rb = pr.find(qn("w:tcBorders")), rpr.find(qn("w:tcBorders")) if rpr is not None else None
+    if b is not None and rb is not None and rb.find(qn("w:right")) is not None:
+        old = b.find(qn("w:right"))
+        if old is not None:
+            b.remove(old)
+        b.append(copy.deepcopy(rb.find(qn("w:right"))))
+
+
+def split_span(cell):
+    """두 열 이상을 덮는 칸을 열마다 하나씩 나눈다 — 새 칸은 이 칸의 서식을 복제하고 글은 비운다."""
+    tc = cell._tc
+    n = _span(tc)
+    if n <= 1:
+        return
+    _set_span(tc, 1)
+    w = _tcpr(tc).find(qn("w:tcW"))
+    if w is not None and w.get(qn("w:type")) == "dxa":
+        try:
+            w.set(qn("w:w"), str(int(int(w.get(qn("w:w"))) / n)))
+        except (TypeError, ValueError):
+            pass
+    after = tc
+    for _ in range(n - 1):
+        new = copy.deepcopy(tc)
+        for p in cell_paras(new):
+            set_para_text(p, "")
+        after.addnext(new)
+        after = new
+
+
 def _set_span(tc, n):
     pr = _tcpr(tc)
     g = pr.find(qn("w:gridSpan"))

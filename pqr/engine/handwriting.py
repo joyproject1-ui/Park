@@ -345,11 +345,12 @@ def read_log(pdf_path, specs=None, log=None):
             if value is None and not text.strip() and not _spilled(boxes, x0, x1, y0, y1):
                 continue                                         # 빈 칸(사선) — 시험 안 함
             seen = True
-            if value is not None and clean and conf >= 0.8:
-                assays[name] = value                             # 깨끗이 읽힌 값만 쓴다
-            else:
-                unsure.append(name)                              # 값은 두지 않고 '애매' 만 남긴다 — 틀린 숫자가
-                                                                 # 최소·최대·판정에 섞이면 안 된다
+            if value is not None:
+                assays[name] = value                             # 읽은 값은 적는다 — 애매하면 아래서 표시
+            if not (value is not None and clean and conf >= 0.8):
+                unsure.append(name)                              # 담당자 2026-09-06: "판독 후 예상하는 값을
+                                                                 # 우선 적어 주고 주황색으로 표시" — 값이 있으면
+                                                                 # 그대로 두고 '애매' 로 표시해 노랑(워드)·주황(엑셀)
         # 완료 일자: 이 열의 맨 아래(확인자) 날짜, 없으면 담당자 날짜
         done, done_clean = None, False
         col_dates = sorted(_in_cell(sign_boxes, x0 - 10 * s, x1 + 10 * s, H * 0.72, H), key=lambda b: -b[1])
