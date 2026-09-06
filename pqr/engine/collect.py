@@ -12,6 +12,7 @@ import tempfile
 import zipfile
 
 from .. import build as build_module
+from .readers import batch_record
 from .readers import coa as coa_reader, erp, license as license_reader, deviation, change, \
     masters, yield_sheet, suppliers, trend as trend_reader
 from .pdftext import is_scanned, PdfTextError
@@ -28,6 +29,8 @@ class ProductData(object):
         self.raw_tests = []       # 8.2.1  [(코드, 시험번호, [lots])]
         self.pkg_tests = []       # 8.2.2  [(코드, 시험번호, [lots])]
         self.manufacturing = []   # 6항    [(lot, 품명, 제조일자, 사용기한)]
+        self.batch = None         # 6항 공 기록서(제조·충전·포장 워드) — 제조단위·포장단위·수율 기준·원/자재 (batch_record.merge)
+        self.batch_exp = None     # 이름에 '(수출용)' 이 붙은 공 기록서는 따로 — 수출 제조단위·포장단위·수율 기준
         self.license = {}
         self.deviations = []
         self.changes = []
@@ -221,12 +224,32 @@ def collect(folder, product_name=None, log=None):
         log("  [%s] %s — %s" % (item, os.path.basename(path), why))
 
     # 6. 제조내역 (수출용 ERP)  · 7. 수율
+    records = []
     for p in got.get("6", []):
         if p.lower().endswith(".pdf"):
             try:
                 data.manufacturing += erp.read_manufacturing(p)
             except PdfTextError as e:
                 note("6", p, str(e))
+        elif p.lower().endswith(".docx"):
+            # 공 기록서(제조·충전·포장) — 제조단위·포장단위·수율 기준·원/자재 코드 (담당자 2026-09-06)
+            try:
+                records.append(batch_record.read(p))
+            except Exception as e:                        # 서식이 달라 못 읽어도 작성은 계속
+                note("6", p, "공 기록서를 읽지 못함: %s" % e)
+    if records:
+        exp = [r for r in records if "수출용" in r["file"]]
+        dom = [r for r in records if r not in exp] or records
+        data.batch = batch_record.merge(dom)
+        data.batch_exp = batch_record.merge(exp) if exp else None
+        for label, rec in (("내수", data.batch), ("수출", data.batch_exp)):
+            if not rec:
+                continue
+            mats = rec["materials"]
+            log("  [6] 공 기록서(%s) %d개 — 제조단위 %s · 포장단위 %s · 수율 기준 %s · 주원료 %d·부원료 %d·포장자재 %d"
+                % (label, len(rec["files"]), rec["batch_size"] or "못 읽음", rec["pack_unit"] or "못 읽음",
+                   ", ".join("%s %s" % kv for kv in rec["yield_specs"].items()) or "못 읽음",
+                   len(mats["주원료"]), len(mats["부원료"]), len(mats["포장자재"])))
     for p in got.get("7", []):
         if p.lower().endswith((".xlsx", ".xls")):
             for lot, vals in yield_sheet.read_yields(p):

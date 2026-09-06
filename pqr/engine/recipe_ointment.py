@@ -377,6 +377,49 @@ def _seed_rows_by_header(table, old_grid):
     return len(rows)
 
 
+def _add_material_rows(table, materials):
+    """표에 없는 관리번호의 원/자재를 줄로 보탠다 — 관리번호·원/자재명·규격만, 나머지 칸은 비운다(노랑).
+    표가 비어 있으면(빈 공양식) 그 줄들이 표가 된다. 보탠 줄 수를 돌려준다."""
+    if not materials:
+        return 0
+    width = E.grid_width(table)
+    head = {CARRY.squeeze(E.cell_text(c)): i for i, c in E.grid_cells(table.rows[0], width).items()}
+    col = lambda *words: next((i for name, i in head.items() if any(w in name for w in words)), None)
+    c_code, c_name, c_spec = col("관리번호", "코드"), col("원/자재명", "원자재명", "자재명", "원료명"), col("규격")
+    if c_code is None:
+        return 0
+    have = set()
+    rows = []
+    for ri, row in enumerate(table.rows[1:], 1):
+        cells = E.grid_cells(row, width)
+        text = E.cell_text(cells[c_code]).strip() if c_code in cells else ""
+        if CODE.match(text):
+            have.add(text)
+            rows.append(ri)
+        elif not CARRY.squeeze(E.cell_text(E.raw_cells(row)[0])).startswith("특이사항"):
+            rows.append(ri)                                  # 빈 줄(공양식)
+    new = [m for m in materials if m["code"] not in have]
+    if not new:
+        return 0
+    filled = [ri for ri in rows if CODE.match(E.cell_text(E.grid_cells(table.rows[ri], width)[c_code]).strip())]
+    last = rows[-1] if rows else 0
+    f, l = E.fit_rows(table, 1, last, len(filled) + len(new)) if rows else (1, len(new))
+    for k, m in enumerate(new):
+        cells = E.grid_cells(table.rows[f + len(filled) + k], width)
+        for i, cell in cells.items():
+            E.clear_diag(cell); E.set_vmerge(cell, False)
+            E.set_cell(cell, "")
+        if 0 in cells:
+            E.set_cell(cells[0], str(len(filled) + k + 1))
+        if c_code in cells:
+            E.set_cell(cells[c_code], m["code"])
+        if c_name is not None and c_name in cells:
+            E.set_cell(cells[c_name], m["name"]); E.highlight_cell(cells[c_name])
+        if c_spec is not None and c_spec in cells:
+            E.set_cell(cells[c_spec], m.get("spec") or ("자사규격" if m["code"].startswith("P") else ""))
+    return len(new)
+
+
 def _has_equipment(table):
     return any(re.match(r"^[A-Z]{3}\d{4}", E.cell_text(E.raw_cells(r)[1]).strip())
                for r in table.rows if len(E.raw_cells(r)) > 1)
@@ -603,12 +646,17 @@ def fill(document, data, product, period, today=None, log=None):
     # ---------- 6항 제조내역 ----------
     olds6 = (getattr(data, "prev_sections_all", None) or {}).get("6") or []
 
-    def fill_mfg(table, lots, old_grid=None):
+    def fill_mfg(table, lots, old_grid=None, batch=None):
         if len(table.rows) < 2:
             return
         keep = [E.cell_text(c) for c in E.raw_cells(table.rows[1])]      # 배치 크기·포장 단위는 결재본 값
         # 빈 공양식이면 제조단위·포장단위 칸이 비어 있다 — 전년도 결재본 같은 표(6.1 내수 / 6.2 수출)에서 가장
         # 많이 적힌 값을 쓴다. 해마다 같은 값이다(담당자 2026-09-06: "제조단위와 포장단위가 공란인 이유가 있나?")
+        batch = batch or {}
+        for k, key in ((3, "batch_size"), (4, "pack_unit")):
+            if k < len(keep) and not keep[k].strip() and batch.get(key):
+                keep[k] = batch[key]                         # 6항에 올린 공 기록서(제조·포장) 값 (담당자 2026-09-06)
+                log("6항: %s 를 공 기록서 값(%s)으로 채움" % ("제조단위" if k == 3 else "포장단위", keep[k]))
         for k in (3, 4):
             if k < len(keep) and not keep[k].strip() and old_grid:
                 seen = {}
@@ -631,9 +679,9 @@ def fill(document, data, product, period, today=None, log=None):
                 E.set_cell(c[6], "")                  # 비고는 비워 사선 하나로 합친다 — 공양식의 'N/A' 를 줄마다 옮기지 않는다
     t6 = _tables(document, "6.")
     if t6:
-        fill_mfg(t6[0], dom, olds6[0] if olds6 else None)
+        fill_mfg(t6[0], dom, olds6[0] if olds6 else None, getattr(data, "batch", None))
         if len(t6) > 1:
-            fill_mfg(t6[1], exp, olds6[1] if len(olds6) > 1 else None)
+            fill_mfg(t6[1], exp, olds6[1] if len(olds6) > 1 else None, getattr(data, "batch_exp", None))
 
     # ---------- 7항 수율 ----------
     def yield_specs(table):
@@ -657,30 +705,37 @@ def fill(document, data, product, period, today=None, log=None):
     dev_lots = {d.get("lot") for d in data.deviations if "수율" in (d.get("title") or "")}
     t7 = _tables(document, "7.")
 
-    def put_sheet_specs(table, stages):
+    def put_sheet_specs(table, stages, is_dom=True):
         """올해 수율현황표에 적힌 기준을 결재본의 기준 행에 옮긴다.
 
         기준은 해가 바뀌며 개정된다(디겐타안연고 충전: 96.0 ± 3.5% → 86.5 ± 6.5%). 전년도
         결재본의 기준을 그대로 두면 표에 지난해 기준이 적히고, 멀쩡한 Lot 이 모두
         '기준 벗어남' 으로 잡힌다.
         """
-        if not data.yield_specs:
+        # 수율현황표에도 결재본 기준 줄에도 기준이 없는 공정은 6항 공 기록서(제조·충전·포장)의 수율 기준을 쓴다
+        # (담당자 2026-09-06). 수출용 표는 '(수출용)' 기록서가 있을 때만.
+        batch = getattr(data, "batch" if is_dom else "batch_exp", None) or {}
+        fallback = batch.get("yield_specs") or {}
+        if not data.yield_specs and not fallback:
             return
         for row in table.rows[:3]:
             cells = E.raw_cells(row)
             texts = [E.cell_text(c) for c in cells]
-            if not any("이상" in t or "±" in t for t in texts):
+            if not any("이상" in t or "±" in t or "기준" in t for t in texts):
                 continue
             targets = cells[-4:-1] if len(cells) >= 5 else cells
             for k, stage in enumerate(stages):
                 spec = data.yield_specs.get(stage)
                 if spec and k < len(targets):
                     E.set_cell(targets[k], spec)
+                elif k < len(targets) and fallback.get(stage) and not E.cell_text(targets[k]).strip():
+                    log("7항: %s 수율 기준을 공 기록서 값(%s)으로 채움" % (stage, fallback[stage]))
+                    E.set_cell(targets[k], fallback[stage])
             return
 
     def fill_yield(table, lots, is_dom):
         stages = ("조제", "충전", "포장")
-        put_sheet_specs(table, stages)
+        put_sheet_specs(table, stages, is_dom)
         specs = yield_specs(table)
         f, l = E.fit_rows(table, 3, len(table.rows) - 4, max(1, len(lots)))
         vals = {}
@@ -830,6 +885,25 @@ def fill(document, data, product, period, today=None, log=None):
                 n = _seed_rows_by_header(tb, grids[i])
                 if n:
                     log("%s: 전년도 결재본에서 %d줄을 세움 — 올린 자료로 갱신" % (prefix, n))
+    # 6항에 올린 공 기록서(제조·충전·포장)의 원/자재 — 코드가 R 로 시작하면 주원료(8.1.1), 나머지 부원료·포장자재(8.1.3).
+    # 표에 없는 코드만 줄을 보태고, 제조원·평가문서·완료일은 아래에서 공급업체 목록으로 채운다 (담당자 2026-09-06).
+    batch_mats = {}
+    for src in (getattr(data, "batch", None), getattr(data, "batch_exp", None)):
+        for group, mats in ((src or {}).get("materials") or {}).items():
+            have = {m["code"] for m in batch_mats.get(group, [])}
+            batch_mats.setdefault(group, []).extend(m for m in mats if m["code"] not in have)
+    if batch_mats:
+        for prefix, groups in (("8.1.1", ("주원료",)), ("8.1.3", ("부원료", "포장자재"))):
+            tables = _tables(document, prefix)
+            if not tables:
+                continue
+            for gi, group in enumerate(groups):
+                tb = tables[gi] if len(tables) > gi else tables[0]
+                n = _add_material_rows(tb, batch_mats.get(group) or [])
+                if n:
+                    log("%s: 공 기록서의 %s %d줄을 보탬 — 공급업체 목록으로 갱신" % (prefix, group, n))
+                    issues.append((prefix, ", ".join(m["code"] for m in batch_mats.get(group) or []),
+                                   "공 기록서에 있는 %s 를 표에 보탰습니다(노랑) — 규격·제조원·평가 문서를 확인하세요" % group))
     for prefix in ("8.1.1", "8.1.3"):
         for tb in _tables(document, prefix):
             col = _cols(tb, ("code", ("관리번호", "코드")), ("name", ("원/자재명", "원자재명", "자재명", "원료명")),
