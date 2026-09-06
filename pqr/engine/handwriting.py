@@ -94,9 +94,15 @@ def ocr_image(image):
 
 
 # ---------- 표 자리 잡기 ----------
-LOT = re.compile(r"^[A-Z]{3}[A-Z0-9]{3}$")
+# 제조번호는 영문 2자 + 영숫자 4자, 숫자가 하나는 든다(OGX901·OGWN01) — 제품마다 앞글자가 다르다
+LOT = re.compile(r"^(?=[A-Z0-9]*\d)[A-Z]{2}[A-Z0-9]{4}$")
 DATE = re.compile(r"(20\d{2})[.\-/ ]?\s?(\d{2})[.\-/ ]?\s?(\d{2})")
-SPEC = re.compile(r"(\d{2,3}\.\d)\s*[~～\-]\s*(\d{2,3}\.\d)\s*%")
+# 인쇄된 함량 규격 — '90.0 ~ 110.0%' 도, '95 ~ 105 %' 도 읽는다(제품마다 다르다). % 가 반드시 붙는다 —
+# 보관 온도 '15~25℃' 같은 범위를 규격으로 잘못 잡으면 안 된다(2026-09 평가에서 실제로 그랬다)
+SPEC = re.compile(r"(\d{2,3}(?:\.\d)?)\s*[~～\-]\s*(\d{2,3}(?:\.\d)?)\s*%(?!\s*RH)")
+PACK = re.compile(r"(\d+(?:\.\d+)?)\s*(g|mL|ml|mg|L)\s*[/×x]?\s*(Tube|Btl|Bottle|Vial|Bag|Amp|병|튜브|바이알)", re.I)
+TEMP = re.compile(r"(\d{2})\s*±\s*(\d)\s*[°℃]?\s*C?")
+HUMID = re.compile(r"(\d{2})\s*±\s*(\d)\s*%\s*RH", re.I)
 
 
 def _center(b):
@@ -472,14 +478,22 @@ def read_log(pdf_path, specs=None, log=None):
             point["expected"] = expected
         points.append(point)
 
-    pack_box = next((b for b in boxes if re.search(r"\d+\s*g\s*[x×]?\s*Tube", b[4], re.I)), None)
     pack = ""
-    if pack_box:
-        m = re.search(r"(\d+)\s*g", pack_box[4])
-        pack = "%sg/Tube" % m.group(1) if m else "4g/Tube"
-    store = ""
-    if any("25±2" in b[4] for b in boxes):
-        store = "25±2°C,\n60±5%RH"
+    for b in boxes:                                                # 포장 형태 — 4g/Tube, 10mL/Bottle …
+        m = PACK.search(b[4])
+        if m:
+            unit = {"ML": "mL", "G": "g", "MG": "mg", "L": "L"}.get(m.group(2).upper(), m.group(2))
+            kind = {"병": "Bottle", "튜브": "Tube", "바이알": "Vial", "BTL": "Bottle"}.get(m.group(3).upper(), m.group(3))
+            kind = kind[0].upper() + kind[1:]
+            pack = "%s%s/%s" % (m.group(1), unit, kind)
+            break
+    store = ""                                                     # 보관 조건 — 25±2°C 60±5%RH, 30±2°C 65±5%RH …
+    temp = next((TEMP.search(b[4]) for b in boxes if TEMP.search(b[4])), None)
+    humid = next((HUMID.search(b[4]) for b in boxes if HUMID.search(b[4])), None)
+    if temp:
+        store = "%s±%s°C," % (temp.group(1), temp.group(2))
+        if humid:
+            store += "\n%s±%s%%RH" % (humid.group(1), humid.group(2))
     say("%s: 시점 %d개 판독 (애매 %d칸)" % (lot, len(points), sum(len(p["unsure"]) for p in points)))
     return {"lot": lot, "year": str(mfg_year) if mfg_year else "", "pack": pack, "store": store,
             "why": "", "points": points, "notes": notes, "source": os.path.basename(pdf_path)}

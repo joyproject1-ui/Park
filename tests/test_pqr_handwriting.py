@@ -75,3 +75,20 @@ def test_refresh_cache_fills_only_unsure_cells_and_keeps_clean_ones(monkeypatch)
     assert p6["assays"] == {"A": 100.0, "B": 97.8} and p6["done"] == "2025.07.02"  # 깨끗한 값은 그대로, 빈 완료일은 채움
     assert changed == 2
     assert hw.refresh_cache(old, hw.READER_VERSION, ["/x/a.pdf"], None, None) == 0    # 이미 새 판독기 결과
+
+
+def test_reader_patterns_are_not_product_specific():
+    """다른 제품(퀴노비드·네오덱스 …)의 시험일지도 읽어야 한다 — 제조번호 앞글자, 규격 꼴, 포장, 보관 조건이 다르다."""
+    from pqr.engine.handwriting import LOT, SPEC, PACK, TEMP, HUMID
+    assert LOT.match("OGX901") and LOT.match("QUIO31") and LOT.match("AB1234")
+    assert not LOT.match("REPORT") and not LOT.match("OG9")           # 숫자 없는 낱말·짧은 것은 제조번호가 아니다
+    assert SPEC.search("90.0 ~ 110.0%").groups() == ("90.0", "110.0")
+    assert SPEC.search("95 ~ 105 %").groups() == ("95", "105")
+    assert SPEC.search("90.0~120.0%").groups() == ("90.0", "120.0")
+    assert SPEC.search("2024.09.24") is None
+    assert SPEC.search("15~25℃") is None                              # 보관 온도는 규격이 아니다
+    assert SPEC.search("60±5%RH") is None
+    assert PACK.search("4g x Tube").groups() == ("4", "g", "Tube")
+    assert PACK.search("10mL/Bottle").groups() == ("10", "mL", "Bottle")
+    assert TEMP.search("30±2℃, 65±5%RH").groups() == ("30", "2")
+    assert HUMID.search("30±2℃, 65±5%RH").groups() == ("65", "5")
