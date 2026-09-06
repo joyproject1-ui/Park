@@ -52,8 +52,11 @@ def test_guess_assay_makes_a_plausible_value_from_messy_text():
     assert guess_assay("1013", 90, 110) == 101.3
     assert guess_assay("987", 90, 110) == 98.7
     assert guess_assay("lub", 90, 120) is None          # 숫자가 없다 — 지어내지 않는다
-    assert guess_assay("79.9b", 90, 120) is None        # 규격에서 한참 벗어난다
     assert guess_assay("", 90, 110) is None
+    # 규격 밖 후보뿐이면 헷갈리는 숫자 하나를 바꿔 본다 — 손글씨 9 가 4·7 로 읽힌 것
+    assert guess_assay("44.ny.", 90, 110) == 94.7
+    assert guess_assay("79.9b", 90, 120) == 99.9
+    assert guess_assay("12.3", 90, 110) is None         # 한 자리 바꿔도 규격 근처가 아니면 만들지 않는다
 
 
 def test_refresh_cache_fills_only_unsure_cells_and_keeps_clean_ones(monkeypatch):

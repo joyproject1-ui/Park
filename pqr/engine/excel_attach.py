@@ -382,11 +382,14 @@ def _write_trend(form, folder, data, product, today, report_path):
                 seen[lot] = {}
                 rows.append(lot)
             # 지난 경향표(담당자가 옮겨 적은 값)가 우선 — 판독값은 거기 없는 시점만 더한다
+            known_before = set(seen[lot])
             for period, value in values.items():
                 if period not in seen[lot]:
                     seen[lot][period] = value
                     added += 1
-            shaky = set(shaky) - set(seen[lot])
+            # 경향표에 있던 시점만 애매에서 뺀다 — 방금 넣은 예상값은 주황으로 남아야 한다
+            # (담당자 2026-09-06 미리 보기: 예상값 칸이 주황이 아니었다)
+            shaky = set(shaky) - known_before
             if shaky:
                 unsure[lot] = shaky
         sheets.append({"form_sheet": FORM_SHEETS[i], "name": "함량(%s)" % part, "item": item,

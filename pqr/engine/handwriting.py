@@ -172,7 +172,10 @@ _FIX = {"O": "0", "o": "0", "D": "0", "Q": "0", "l": "1", "I": "1", "|": "1", "[
 # 예상값 추정 — 깨끗이 못 읽은 손글씨에서 그럴듯한 값을 만든다. 담당자 2026-09-06: "주황색 부분에
 # 너의 예상값을 기재" — 여기서 나온 값은 반드시 '애매' 로 표시된다.
 _GUESS = dict(_FIX, **{"a": "9", "A": "4", "n": "7", "y": "%", "Y": "%", "G": "6", "t": "7", "e": "9"})
-READER_VERSION = 2          # 판독 방식이 바뀌면 올린다 — 옛 판독 파일은 애매한 칸만 다시 읽는다
+READER_VERSION = 3          # 판독 방식이 바뀌면 올린다 — 옛 판독 파일은 애매한 칸만 다시 읽는다
+
+
+_CONFUSED = {"4": "9", "1": "7", "7": "9", "3": "8", "5": "9", "0": "9", "2": "9"}
 
 
 def guess_assay(text, lo=None, hi=None):
@@ -191,6 +194,15 @@ def guess_assay(text, lo=None, hi=None):
     for v in cands:
         if lo is None or hi is None or (lo - 5) <= v <= (hi + 5):
             return v
+    # 규격 밖 후보뿐이면 자주 헷갈리는 숫자 하나를 바꿔 본다('44.7' → 94.7: 손글씨 9 가 4 로 읽힌다) —
+    # 마지막 수단이라 반드시 '애매' 로 표시된다
+    for v in cands:
+        whole, frac = ("%.1f" % v).split(".")
+        for i, ch in enumerate(whole):
+            for alt in _CONFUSED.get(ch, ""):
+                cand = float(whole[:i] + alt + whole[i + 1:] + "." + frac)
+                if (lo - 5) <= cand <= (hi + 5):
+                    return cand
     return None
 
 
@@ -276,6 +288,28 @@ def _crop_ocr(image, x0, x1, y0, y1, pad=6):
     scale = 2.0                                                    # 작은 칸은 키워서 읽는다
     crop = crop.resize((int(crop.size[0] * scale), int(crop.size[1] * scale)))
     return [b for b in ocr_image(crop)]
+
+
+def _crop_ocr_variants(image, x0, x1, y0, y1, pad=6):
+    """마지막 수단 — 칸을 흑백·대비 강조·여백 추가로 바꿔 가며 다시 읽은 글들. 지우고 고쳐 쓴 숫자
+    ('98.6' 위에 덧쓴 8)는 그대로는 '79.9b' 로 읽히는데, 다른 처리에서는 숫자가 나오기도 한다."""
+    from PIL import ImageOps, ImageEnhance
+    w, h = image.size
+    crop = image.crop((max(0, int(x0 - pad)), max(0, int(y0 - pad)), min(w, int(x1 + pad)), min(h, int(y1 + pad))))
+    if crop.size[0] < 20 or crop.size[1] < 20:
+        return []
+    g = ImageOps.grayscale(crop)
+    big = g.resize((g.size[0] * 2, g.size[1] * 2))
+    variants = [ImageEnhance.Contrast(big).enhance(2.0).convert("RGB"),
+                big.point(lambda v: 255 if v > 150 else 0).convert("RGB"),
+                ImageOps.expand(big, border=20, fill=255).convert("RGB")]
+    out = []
+    for img in variants:
+        try:
+            out += [b[4] for b in ocr_image(img)]
+        except Exception:
+            pass
+    return out
 
 
 def read_log(pdf_path, specs=None, log=None):
@@ -374,6 +408,12 @@ def read_log(pdf_path, specs=None, log=None):
             seen = True
             if value is None:                                    # 글자가 섞여 못 읽은 칸 — 예상값이라도 낸다
                 for t in [text] + [cb[4] for cb in crops]:
+                    value = guess_assay(t, lo, hi)
+                    if value is not None:
+                        clean, conf = False, 0.0
+                        break
+            if value is None:                                    # 그래도 없으면 칸을 다르게 처리해 다시 읽는다
+                for t in _crop_ocr_variants(image, x0, x1, y0, y1):
                     value = guess_assay(t, lo, hi)
                     if value is not None:
                         clean, conf = False, 0.0
