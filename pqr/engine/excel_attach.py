@@ -130,50 +130,71 @@ def cpk_jobs(data, lots, product_name=""):
     return jobs
 
 
-def write_cpk_files(folder, data, previous_path, today, lots=None, product_name=""):
+def write_cpk_files(folder, data, previous_path, today, lots=None, product_name="", log=None):
     """내수용 Lot 의 완제 성적서 값으로 Cpk 파일들을 만든다. [(이름, 경로)]
 
     전년도 결재본의 Cpk 파일을 서식으로 물려받아(수식·그래프 보존) 값·머리·규격을 갈아 끼운다.
+    그 길(Excel → LibreOffice → .xlsx 변환)이 모두 막히거나 전년도 파일이 없어도 파일은 반드시 나온다 —
+    openpyxl 로 서식·수식·그래프를 그린다(cpk_xlsx). 담당자 2026-09-06: "10 Lot 이상이라서 Cpk 도
+    작성이 되었어야 하는데 안 됐네" — Excel 연결이 터지자 파일이 아예 없었다.
     """
+    log = log or (lambda *a: None)
     lots = lots or data.domestic
-    from . import qc
+    from . import qc, cpk_xlsx
     if not qc.cpk_applies(len(lots)):
         # QC-126: 평가 년도 생산 Lot 이 기준(10) 미만이면 Cpk 를 산출하지 않는다 — 계산 파일도 만들지 않는다
         data.issues.append(("첨부", "", "평가 년도 생산 %d Lot 으로 %d Lot 미만 — QC-126 에 따라 Cpk 계산 파일을 만들지 않음"
                             % (len(lots), qc.cpk_min_lots())))
         return []
     work = tempfile.mkdtemp(prefix="pqr-cpk-")
-    sources = _previous_xls(previous_path, work)
+    try:
+        sources = _previous_xls(previous_path, work)
+    except Exception as error:
+        sources = {}
+        log("  전년도 Cpk 파일을 꺼내지 못함: %s" % error)
     out = []
-    missing = set()
     for job in cpk_jobs(data, lots, product_name):
         word = job["word"]
         src = sources.get(word)
-        if not src:
-            if word not in missing:
-                missing.add(word)
-                data.issues.append(("첨부", "", "전년도 결재본에 '%s Cpk 계산 파일' 이 없어 만들지 못함" % word))
-            continue
         vals = job["values"]
-        name = os.path.basename(src)
-        if job["label"] != word:                  # 성분별 파일: '함량' → '함량(플루오로메톨론)'
-            name = name.replace(word, job["label"], 1)
-        dst = os.path.join(folder, name)
+        if not vals:
+            data.issues.append(("첨부", "", "'%s' 완제 성적서 값이 없어 Cpk 계산 파일을 만들지 않음" % job["label"]))
+            continue
+        # 이름은 늘 같은 꼴 — 전년도 파일 이름('16. 전년도 PQR25함량 Cpk 계산 파일.xls')을 그대로 물려받지 않는다
+        name = "a. %s Cpk 계산 파일.xls" % job["label"]
         cells = dict(job["cells"], K4=today)
-        try:
-            xls_fill.fill(src, dst, cells, vals)
-            out.append((name, dst))
-        except xls_fill.FillError as error:
+        why = []
+        if src:
+            dst = os.path.join(folder, name)
+            try:
+                xls_fill.fill(src, dst, cells, vals)
+                out.append((name, dst))
+                continue
+            except Exception as error:            # FillError 든 COM 오류든 — 다음 길로
+                why.append(str(error))
             name = re.sub(r"\.xls$", ".xlsx", name)
             dst = os.path.join(folder, name)
-            try:                                  # 그래프는 잃지만 값이라도 남긴다
+            try:                                  # 서식을 .xlsx 로 바꿔 값만 (그래프는 잃는다)
                 _fill_cpk_xlsx(src, dst, vals, today, cells)
                 out.append((name, dst))
-                data.issues.append(("첨부", name, "%s — 그래프 없이 값만 채웠습니다" % error))
-            except Exception as second:
-                data.issues.append(("첨부", name, "Cpk 파일을 만들지 못함: %s" % second))
+                data.issues.append(("첨부", name, "%s — 그래프 없이 값만 채웠습니다" % why[0]))
+                continue
+            except Exception as error:
+                why.append(str(error))
+        else:
+            why.append("전년도 결재본(16항 압축)에 '%s Cpk 계산 파일' 이 없음" % word)
+        name = re.sub(r"\.xls$", ".xlsx", name)
+        dst = os.path.join(folder, name)
+        try:                                      # 마지막 길 — 프로그램이 서식·수식·그래프를 직접 그린다
+            kind = cpk_xlsx.build(dst, vals, cells, today)
+            out.append((name, dst))
+            log("  %s: 서식을 직접 그림(%s) — %s" % (name, kind, "; ".join(why)))
+            data.issues.append(("첨부", name, "전년도 Cpk 서식을 쓰지 못해 프로그램이 서식(HLF-QC-126-%s)을 직접 그렸습니다 — "
+                                              "값·Cpk·그래프는 같으나 모양을 한 번 확인하세요 (%s)"
+                                % ("09" if kind == "Bilateral" else "08", "; ".join(why))))
         except Exception as error:
-            data.issues.append(("첨부", name, "Cpk 파일을 만들지 못함: %s" % error))
+            data.issues.append(("첨부", name, "Cpk 파일을 만들지 못함: %s / %s" % ("; ".join(why), error)))
+            log("  %s: 만들지 못함 — %s / %s" % (name, "; ".join(why), error))
     shutil.rmtree(work, ignore_errors=True)
     return out
 

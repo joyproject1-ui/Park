@@ -370,7 +370,7 @@ def write_report(folder, product, period, out_path, today=None, recipe=None, log
         day = today.strftime("%Y.%m.%d") if hasattr(today, "strftime") else re.sub(r"-", ".", str(today or ""))[:10]
         attachments += excel_attach.write_cpk_files(os.path.dirname(out_path), data,
                                                     attachment_source(folder, work) or previous, day,
-                                                    product_name=product.get("name") or "")
+                                                    product_name=product.get("name") or "", log=log_)
         attachments += excel_attach.write_stability_workbook(
             os.path.dirname(out_path), data, product, day,
             input_dir=os.path.dirname(os.path.abspath(folder)), report_path=out_path,
