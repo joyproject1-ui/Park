@@ -130,3 +130,22 @@ class 구이_요약줄(unittest.TestCase):
         D.fill(t, ["A1", "A2"], lambda lab, lot, i: "0" if "금속" in lab else None)
         got = {E.cell_text(r.cells[0]).strip(): E.cell_text(r.cells[2]).strip() for r in t.rows[3:6]}
         self.assertEqual(got, {"최댓값": "0", "최솟값": "0", "평균": "0"})
+
+
+class Cpk_사선(unittest.TestCase):
+    def test_사선이_그어진_Cpk_칸에는_값을_적지_않는다(self):
+        from pqr.engine import detail92 as D
+        d = docx.Document()
+        t = d.add_table(rows=7, cols=4)
+        heads = [["연번", "Lot No.", "함량(%)", "입자도(㎛이하)"], ["1", "", "", ""], ["2", "", "", ""],
+                 ["최댓값", "", "", ""], ["최솟값", "", "", ""], ["공정능력지수(Cpk)", "", "", ""], ["Cpk 판정 결과", "", "", ""]]
+        for i, row in enumerate(heads):
+            for j, v in enumerate(row):
+                E.set_cell(t.rows[i].cells[j], v)
+        E.add_diag(t.rows[5].cells[3]); E.add_diag(t.rows[6].cells[3])       # 입자도 열의 Cpk 칸은 사선
+        D.fill(t, ["A1", "A2"], lambda lab, lot, i: "100" if "함량" in lab else "60",
+               cpk=lambda lab, texts: ("1.23", "충분"))
+        self.assertEqual(E.cell_text(t.rows[5].cells[2]).strip(), "1.23")
+        self.assertEqual(E.cell_text(t.rows[5].cells[3]).strip(), "")
+        self.assertEqual(E.cell_text(t.rows[6].cells[3]).strip(), "")
+        self.assertTrue(E.has_diag(t.rows[5].cells[3]))

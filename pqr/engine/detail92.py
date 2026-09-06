@@ -257,6 +257,9 @@ def fill(table, lots, value, cpk=None):
                     E.clear_diag(cell)                       # 공양식이 그어 둔 사선을 지우고 값을 적는다
                     E.set_cell(cell, three[which])
             elif cpk is not None:
+                if E.has_diag(cell):
+                    continue                   # 공양식이 Cpk 칸에 사선을 그어 둔 열(입자도 등)은 Cpk 를 적지 않는다
+                                               # (담당자 2026-09-06: "Cpk 계산란에 사선이 그어져 있을 경우 값을 기재하면 안 돼")
                 pair = cpk(labs[k], got[k])
                 if pair:
                     # 디겐타 2026 양식은 함량 열의 'Cpk' 칸과 'Cpk 판정 결과' 칸이 세로로 병합돼
