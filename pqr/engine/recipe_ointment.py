@@ -1756,9 +1756,7 @@ def _fill_stability26(document, logs, period, spec, log, issues, why_of=None):
                 E.set_vmerge(cells[k], False)
             # 손글씨 판독이 애매한 완료 일자는 노랑 (담당자 2026-09: "애매한 것만 노랑마크로")
             if any("done" in (p.get("unsure") or []) for p in taken) and len(cells) > 6:
-                if not any(p.get("done") for p in taken):
-                    E.set_cell(cells[6], "확인 필요")
-                E.highlight_cell(cells[6])
+                E.highlight_cell(cells[6])                      # 시점마다 한 줄('확인 필요' 도 줄마다) — 시험 기간 줄과 맞춘다
         if not any(one.get("why") or (why_of or {}).get(one["lot"]) for one, _ in rows):
             issues.append(("13.1", "", "장기 안정성 시험의 ‘실시 사유’ 는 시험일지에 없습니다 — "
                                        "변경관리·PV 내용을 보고 직접 적으세요"))
