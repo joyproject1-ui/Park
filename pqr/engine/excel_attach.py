@@ -130,6 +130,19 @@ def cpk_jobs(data, lots, product_name=""):
     return jobs
 
 
+FORMS = {"Bilateral": "HLF-QC-126-09 경향분석 Sheet(양쪽 규격).xlsx",
+         "Unilateral": "HLF-QC-126-08 경향분석 Sheet(한쪽 규격).xlsx"}
+
+
+def bundled_form(cells):
+    """프로그램이 지닌 빈 Cpk 서식 — 규격이 위·아래 모두 있으면 양쪽 규격(‑09), 하나면 한쪽 규격(‑08)."""
+    lo, hi = cells.get("N6"), cells.get("P6")
+    both = all(v is not None and str(v).strip() and str(v).strip().upper() != "N/A" for v in (lo, hi))
+    path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data",
+                        FORMS["Bilateral" if both else "Unilateral"])
+    return path if os.path.isfile(path) else None
+
+
 def write_cpk_files(folder, data, previous_path, today, lots=None, product_name="", log=None):
     """내수용 Lot 의 완제 성적서 값으로 Cpk 파일들을 만든다. [(이름, 경로)]
 
@@ -140,7 +153,7 @@ def write_cpk_files(folder, data, previous_path, today, lots=None, product_name=
     """
     log = log or (lambda *a: None)
     lots = lots or data.domestic
-    from . import qc, cpk_xlsx
+    from . import qc, cpk_xlsx, cpk_form
     if not qc.cpk_applies(len(lots)):
         # QC-126: 평가 년도 생산 Lot 이 기준(10) 미만이면 Cpk 를 산출하지 않는다 — 계산 파일도 만들지 않는다
         data.issues.append(("첨부", "", "평가 년도 생산 %d Lot 으로 %d Lot 미만 — QC-126 에 따라 Cpk 계산 파일을 만들지 않음"
@@ -166,35 +179,54 @@ def write_cpk_files(folder, data, previous_path, today, lots=None, product_name=
         why = []
         if src:
             dst = os.path.join(folder, name)
-            try:
+            try:                                  # Excel·LibreOffice 가 있으면 .xls 서식을 그대로 채운다
                 xls_fill.fill(src, dst, cells, vals)
                 out.append((name, dst))
+                log("  %s: 전년도 .xls 서식을 그대로 채움" % name)
                 continue
             except Exception as error:            # FillError 든 COM 오류든 — 다음 길로
-                why.append(str(error))
-            name = re.sub(r"\.xls$", ".xlsx", name)
-            dst = os.path.join(folder, name)
-            try:                                  # 서식을 .xlsx 로 바꿔 값만 (그래프는 잃는다)
-                _fill_cpk_xlsx(src, dst, vals, today, cells)
-                out.append((name, dst))
-                data.issues.append(("첨부", name, "%s — 그래프 없이 값만 채웠습니다" % why[0]))
-                continue
-            except Exception as error:
                 why.append(str(error))
         else:
             why.append("전년도 결재본(16항 압축)에 '%s Cpk 계산 파일' 이 없음" % word)
         name = re.sub(r"\.xls$", ".xlsx", name)
         dst = os.path.join(folder, name)
-        try:                                      # 마지막 길 — 프로그램이 서식·수식·그래프를 직접 그린다
-            kind = cpk_xlsx.build(dst, vals, cells, today)
-            out.append((name, dst))
-            log("  %s: 서식을 직접 그림(%s) — %s" % (name, kind, "; ".join(why)))
-            data.issues.append(("첨부", name, "전년도 Cpk 서식을 쓰지 못해 프로그램이 서식(HLF-QC-126-%s)을 직접 그렸습니다 — "
-                                              "값·Cpk·그래프는 같으나 모양을 한 번 확인하세요 (%s)"
-                                % ("09" if kind == "Bilateral" else "08", "; ".join(why))))
-        except Exception as error:
-            data.issues.append(("첨부", name, "Cpk 파일을 만들지 못함: %s / %s" % ("; ".join(why), error)))
-            log("  %s: 만들지 못함 — %s / %s" % (name, "; ".join(why), error))
+        # 서식의 칸 값만 갈아 끼운다 — 그래프·로고·수식이 그대로 남는다(담당자 2026-09-06:
+        # "Cpk 는 전년도 양식으로 작성하되 2026년 PQR 작성본 내용을 참고해서 업데이트하면 돼").
+        # 전년도 파일을 .xlsx 로 바꿀 수 있으면 그것을, 아니면 프로그램이 지닌 빈 서식을 쓴다.
+        forms = []
+        if src:
+            try:
+                converted = os.path.join(work, "form-%s.xlsx" % re.sub(r"\W+", "", word))
+                convert.to_xlsx(src, converted)
+                forms.append(("전년도 서식", converted))
+            except Exception as error:
+                why.append(str(error))
+        blank = bundled_form(cells)
+        if blank:
+            forms.append(("프로그램이 지닌 빈 서식", blank))
+        for label, form in forms:
+            try:
+                kind = cpk_form.fill(form, dst, cells, vals, today)
+                out.append((name, dst))
+                log("  %s: %s(%s)을 채움 — %s" % (name, label, kind, "; ".join(why)))
+                if label != "전년도 서식":
+                    data.issues.append(("첨부", name, "전년도 Cpk 파일을 쓰지 못해 프로그램이 지닌 같은 서식(HLF-QC-126-%s)에 "
+                                                     "올해 값을 채웠습니다 — 한 번 확인하세요 (%s)"
+                                        % ("09" if kind == "Bilateral" else "08", "; ".join(why))))
+                break
+            except Exception as error:
+                why.append("%s: %s" % (label, error))
+        else:
+            try:                                  # 마지막 길 — 프로그램이 서식·수식·그래프를 직접 그린다
+                kind = cpk_xlsx.build(dst, vals, cells, today)
+                out.append((name, dst))
+                log("  %s: 서식을 직접 그림(%s) — %s" % (name, kind, "; ".join(why)))
+                data.issues.append(("첨부", name, "전년도 Cpk 서식을 쓰지 못해 프로그램이 서식(HLF-QC-126-%s)을 직접 그렸습니다 — "
+                                                  "값·Cpk·그래프는 같으나 모양을 한 번 확인하세요 (%s)"
+                                    % ("09" if kind == "Bilateral" else "08", "; ".join(why))))
+            except Exception as error:
+                data.issues.append(("첨부", name, "Cpk 파일을 만들지 못함: %s / %s" % ("; ".join(why), error)))
+                log("  %s: 만들지 못함 — %s / %s" % (name, "; ".join(why), error))
     shutil.rmtree(work, ignore_errors=True)
     return out
 

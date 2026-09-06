@@ -1863,7 +1863,11 @@ def fill(document, data, product, period, today=None, log=None):
                 # 변경사항: 변경 번호와 변경 내용만 (변경 사유는 적지 않는다 — 담당자 지시 2026-09)
                 lines = ["[%s] %s" % (cc.get("doc_no"), cc.get("title") or "")]
                 lines += brief_change(cc.get("description") or "")
+                if cc.get("unread"):               # 글자 없는 스캔本 — 문서번호만 적고 노랑으로 표시
+                    lines = ["[%s] 확인 필요 — 변경요청서를 읽지 못했습니다" % cc.get("doc_no")]
                 E.set_cell_plain(c[1], *lines)
+                if cc.get("unread"):
+                    E.highlight_cell(c[1])
                 # 첫 줄(문서번호·변경명)만 굵게 — 변경 내용은 보통 글씨 (담당자 2026-09)
                 E.bold_first_line_only(c[1])
                 # 조치사항: 변경 실행 계획의 부서별 조치사항을 간추린다. 위탁사·위수탁 줄은 뺀다.
@@ -1879,7 +1883,9 @@ def fill(document, data, product, period, today=None, log=None):
                     issues.append(("12", cc.get("doc_no") or "",
                                    "변경 실행 계획을 읽지 못했습니다 — 조치사항을 직접 적으세요"))
                 E.set_cell(c[3], "확인 필요"); E.set_cell(c[4], "N/A")
-                if not change_covers(cc, name, 주성분):
+                if cc.get("unread"):
+                    pass                            # 못 읽은 건은 해당 여부도 알 수 없다 — 위에서 이미 알렸다
+                elif not change_covers(cc, name, 주성분):
                     issues.append(("12", cc.get("doc_no") or "",
                                    "이 제품에 해당하는 변경인지 자동으로 확인하지 못했습니다 "
                                    "(관련 제품: %s) — 확인하세요" % (cc.get("products") or "적혀 있지 않음")))
@@ -1941,15 +1947,25 @@ def fill(document, data, product, period, today=None, log=None):
 
     # ---------- 14·15항 ----------
     us_export = "미국" in (name or "")           # 계획서 비고로 갈라진 '(미국 수출용)' 건
+    빈표 = []
     returns = "평가 년도 내 반품 이력 없음." if us_export else "사용기한 경과 외 반품이력 없음"
     for prefix, msg in (("14.1", returns),
                         ("14.2", "평가 년도 내 불만 이력 없음."), ("14.3", "평가 년도 내 회수 이력 없음."),
                         ("15.", "평가 년도 내 시정조치사항 이력 없음.")):
         for tb in E.join_continuations(_tables(document, prefix)):
-            E.single_blank_row(tb)                       # 내역이 없으면 한 줄 (14.2 서식은 빈 줄 셋을 병합해 두었다)
+            if E.single_blank_row(tb):                   # 내역이 없으면 한 줄 (14.2 서식은 빈 줄 셋을 병합해 두었다)
+                빈표.append(tb)
             last = E.raw_cells(tb.rows[-1])[0]
             if E.cell_text(last).lstrip().startswith("특이사항"):
                 E.set_cell_plain(last, "특이사항 (Comment)", msg)
+
+    # 내역이 없어 한 줄로 줄인 표는 칸마다 사선을 긋는 대신, 서식이 14.1·14.3·15항에 그어 둔
+    # '한 줄을 가로지르는 선' 을 그대로 옮겨 온다 (담당자 2026-09-06: "31쪽 불만 사선도 수정이 안 됐어").
+    if 빈표:
+        본보기 = next((t for pre in ("14.1", "14.3", "15.", "14.2")
+                     for t in _tables(document, pre) if E.has_drawing(t)), None)
+        옮김 = sum(1 for t in 빈표 if E.copy_diag_line(본보기, t))
+        log("14·15항 빈 표 사선 한 줄: %d" % 옮김)
 
     # ---------- 16항 ---------- 배포본 'PQR 작성방법 공유의 건'(2026-09-04) 문안 그대로.
     # 10 Lot 미만이라 Cpk 를 산출하지 않았다는 말은 당연한 것이라 결론에 적지 않는다(담당자 지시).
@@ -2471,10 +2487,11 @@ def _fill_stability26(document, logs, period, spec, log, issues, why_of=None, pr
                             % (("(%s)" % os.path.basename(previous_name)) if previous_name else "", ", ".join(moved)))
             if new:
                 what.append("서식 13.3 각주의 Lot(%s)은 줄만 세웠습니다" % ", ".join(new))
-            issues.append(("13", ", ".join(one["lot"] for one in mcarry),
-                           "올해 시험일지를 읽지 못해 %s(노랑) — 13 폴더에 올해 안정성 시험일지(%s)를 올려 다시 만들거나 "
-                           "시험 기간·완료 일자·실시 사유·13.3 값을 직접 채우세요"
-                           % (" ".join(what), "·".join(sorted({"%s %s" % (one["kind"], market) for one in mcarry})))))
+            issues.insert(0, ("13", ", ".join(one["lot"] for one in mcarry),
+                              "★ 13 폴더에 %s 안정성 시험일지가 없습니다 — 그 일지를 올리면 시험 기간(3M·6M…)과 "
+                              "완료 일자를 읽어 채웁니다. 지금은 %s(노랑)"
+                              % ("·".join(sorted({"%s %s" % (one["kind"], market) for one in mcarry})),
+                                 " ".join(what))))
         t = pick("장기", market)
         if t is not None and rows_l:
             _fill_131_table(t, rows_l, why_of, issues, post=False)

@@ -78,8 +78,9 @@ class 결론_내어쓰기(unittest.TestCase):
         d.add_paragraph("17. 참고")
         self.assertEqual(E.set_section_indent(d, 16, 2), 2)
         ind = d.paragraphs[1]._p.find(qn("w:pPr")).find(qn("w:ind"))
-        self.assertEqual(ind.get(qn("w:leftChars")), "700")
-        self.assertEqual(ind.get(qn("w:hangingChars")), "500")
+        # '16.1 ' 은 반각 5자 = 전각 2.5칸 — 왼쪽 2칸 + 내어쓰기 2.5칸
+        self.assertEqual(ind.get(qn("w:leftChars")), "450")
+        self.assertEqual(ind.get(qn("w:hangingChars")), "250")
         ind = d.paragraphs[2]._p.find(qn("w:pPr")).find(qn("w:ind"))
         self.assertEqual(ind.get(qn("w:leftChars")), "200")
         self.assertIsNone(ind.get(qn("w:hangingChars")))

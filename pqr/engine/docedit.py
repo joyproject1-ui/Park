@@ -1934,12 +1934,14 @@ def set_section_indent(document, number, chars=2):
         # '16.1 ' 처럼 번호로 시작하는 문단은 번호 폭만큼 내어쓴다 — 둘째 줄부터 글이 번호 뒤에 맞춰진다
         # (담당자 2026-09-06: "결론 16.1~16.4 는 들여쓰기 참고")
         m = re.match(r"^\s*(\d{1,2}\.\d+\s+)", para.text)
-        hang = len(m.group(1)) if m else 0
-        ind.set(qn("w:leftChars"), str((chars + hang) * 100))
-        ind.set(qn("w:left"), str((chars + hang) * 210))
+        # 내어쓰기 폭은 전각 한 칸이 1 — '16.1 ' 은 반각 5자이므로 2.5 칸이다(반각을 1로 세면 두 배로 밀린다,
+        # 담당자 2026-09-06: "너무 들여쓰기가 됐네")
+        hang = round(text_units(m.group(1)) / 2.0, 1) if m else 0
+        ind.set(qn("w:leftChars"), str(int(round((chars + hang) * 100))))
+        ind.set(qn("w:left"), str(int(round((chars + hang) * 210))))
         if hang:
-            ind.set(qn("w:hangingChars"), str(hang * 100))
-            ind.set(qn("w:hanging"), str(hang * 210))
+            ind.set(qn("w:hangingChars"), str(int(round(hang * 100))))
+            ind.set(qn("w:hanging"), str(int(round(hang * 210))))
     return len(body)
 
 
@@ -2281,3 +2283,40 @@ def single_blank_row(table):
         set_vmerge(c, False)
         clear_diag(c)
     return len(data) - 1
+
+
+def copy_diag_line(src_table, dst_table):
+    """빈 줄에 그은 사선(그리기 개체)을 다른 표에서 그대로 옮겨 온다 — 칸마다 사선을 긋는 대신
+    한 줄을 가로지르는 선 하나가 되게 (담당자 2026-09-06: "31쪽 불만 사선도 수정이 안 됐어").
+
+    옮겼으면 True. 표 너비가 같은 14.1·14.3·15항 표의 선을 14.2 에 쓴다.
+    """
+    if src_table is None or dst_table is None or has_drawing(dst_table) or not has_drawing(src_table):
+        return False
+    src_row = next((r for r in src_table.rows[1:]
+                    if r._tr.find(".//" + qn("w:pict")) is not None
+                    or r._tr.find(".//" + qn("w:drawing")) is not None), None)
+    if src_row is None or len(dst_table.rows) < 2:
+        return False
+    where = next((i for i, c in enumerate(raw_cells(src_row))
+                  if c._tc.find(".//" + qn("w:pict")) is not None
+                  or c._tc.find(".//" + qn("w:drawing")) is not None), 0)
+    art = None
+    for cell in raw_cells(src_row):
+        got = cell._tc.find(".//" + qn("w:pict"))
+        if got is None:
+            got = cell._tc.find(".//" + qn("w:drawing"))
+        if got is not None:
+            art = got
+            break
+    cells = raw_cells(dst_table.rows[1])
+    target = cells[min(where, len(cells) - 1)]
+    paras = cell_paras(target._tc)
+    if not paras:
+        return False
+    run = paras[0].makeelement(qn("w:r"), {})
+    run.append(copy.deepcopy(art))
+    paras[0].append(run)
+    for cell in cells:                       # 칸마다 그은 사선은 지운다 — 선 하나만 보이게
+        clear_diag(cell)
+    return True

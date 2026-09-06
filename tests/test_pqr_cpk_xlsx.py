@@ -55,7 +55,7 @@ class _Data(object):
 
 
 class 전년도_파일이_없어도(unittest.TestCase):
-    def test_네_파일을_직접_그려_만든다(self):
+    def test_네_파일을_프로그램이_지닌_서식으로_만든다(self):
         folder = tempfile.mkdtemp(prefix="pqr-cpk-out-")
         data = _Data(["OEY%03d" % i for i in range(1, 13)])
         made = excel_attach.write_cpk_files(folder, data, None, "2026.09.06", product_name="퀴노비드안연고")
@@ -64,10 +64,16 @@ class 전년도_파일이_없어도(unittest.TestCase):
                           "a. 입자도 Cpk 계산 파일.xlsx", "a. 함량 Cpk 계산 파일.xlsx"])
         for _, path in made:
             self.assertTrue(os.path.isfile(path))
-        ws = openpyxl.load_workbook(dict(made)["a. 함량 Cpk 계산 파일.xlsx"]).worksheets[0]
+        book = dict(made)["a. 함량 Cpk 계산 파일.xlsx"]
+        ws = openpyxl.load_workbook(book).worksheets[0]
         self.assertEqual(ws["C4"].value, "퀴노비드안연고 (내수용)")
         self.assertEqual(ws["B10"].value, 100.0)
-        self.assertTrue(any("직접 그렸습니다" in i[2] for i in data.issues))
+        self.assertEqual(len(ws._charts), 1)                     # 그래프·로고가 그대로 남는다
+        self.assertEqual(len(ws._images), 1)
+        wv = openpyxl.load_workbook(book, data_only=True).worksheets[0]
+        self.assertAlmostEqual(wv["G9"].value, 101.65, places=2)    # 열자마자 값이 보인다
+        self.assertIsNotNone(wv["P9"].value)
+        self.assertTrue(any("프로그램이 지닌 같은 서식" in i[2] for i in data.issues))
 
     def test_10_lot_미만이면_만들지_않는다(self):
         folder = tempfile.mkdtemp(prefix="pqr-cpk-out-")

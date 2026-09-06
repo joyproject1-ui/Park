@@ -408,12 +408,31 @@ def collect(folder, product_name=None, log=None):
                 data.deviations.append(deviation.read_deviation(p))
             except PdfTextError as e:
                 note("11", p, str(e))
+    # 12항에 올린 변경요청서는 하나도 빠뜨리지 않는다 — 읽지 못한 것도 파일 이름의 문서번호로 줄을
+    # 세운다 (담당자 2026-09-06: "12항 변경관리가 5개인데 1개만 표시되어 있네").
     for p in got.get("12", []):
-        if p.lower().endswith(".pdf"):
-            try:
-                data.changes.append(change.read_change(p))
-            except PdfTextError as e:
-                note("12", p, str(e))
+        if not p.lower().endswith(".pdf"):
+            continue
+        try:
+            data.changes.append(change.read_change(p))
+        except Exception as e:                       # 글자 없는 스캔本·서식이 다른 것 모두
+            m = re.search(r"(CC-\d{6}-\d{2})", os.path.basename(p))
+            data.changes.append({"doc_no": m.group(1) if m else os.path.splitext(os.path.basename(p))[0],
+                                 "title": "", "unread": True, "actions": [], "products": ""})
+            note("12", p, "변경요청서를 읽지 못해 문서번호만 적었습니다 — 변경사항·조치사항을 직접 채우세요 (%s)" % e)
+    seen_cc = set()                                  # 같은 문서번호가 두 번 올라온 것은 한 줄만
+    only = []
+    for cc in data.changes:
+        key = (cc.get("doc_no") or "").strip()
+        if key and key in seen_cc:
+            continue
+        seen_cc.add(key)
+        only.append(cc)
+    data.changes = only
+    if data.changes:
+        log("  [12] 변경요청서 %d건: %s" % (len(data.changes),
+                                        ", ".join((c.get("doc_no") or "?") + ("(못 읽음)" if c.get("unread") else "")
+                                                  for c in data.changes)))
     # 13 안정성 — 스캔이면 비전 판독 대상. 판독 결과(.json)가 있으면 그것을 먼저 쓴다.
     for p in got.get("13", []):
         if p.lower().endswith(".pdf"):
