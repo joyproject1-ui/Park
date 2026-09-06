@@ -470,18 +470,45 @@ def hard_breaks_to_page_break_before(document):
     body = document.element.body
     moved = 0
     for el in list(body):
-        if not el.tag.endswith("}p"):
+        if not el.tag.endswith("}p") or el.getparent() is not body:
             continue
-        if el.find(".//" + qn("w:br")) is None:
+        if not _has_page_break(el):
             continue
         if "".join(t.text or "" for t in el.iter(qn("w:t"))).strip():
-            continue                      # 글자가 있는 문단은 그대로
-        nxt = el.getnext()
-        if nxt is None or not nxt.tag.endswith("}p"):
-            continue                      # 표 앞 페이지 나눔은 유지
-        if not "".join(t.text or "" for t in nxt.iter(qn("w:t"))).strip():
+            # 글 앞에 쪽나눔이 든 제목('<br/>10. 밸리데이션 현황표') — 나눔을 빼고 그 문단의 '앞에서 쪽 나눔' 으로
+            leading = True
+            for node in el.iter():
+                if node.tag == qn("w:t") and (node.text or "").strip():
+                    leading = False
+                    break
+                if node.tag == qn("w:br") and node.get(qn("w:type")) == "page":
+                    break
+            if not leading:
+                continue                  # 글 사이의 쪽나눔은 그대로
+            for b in [b for b in el.iter(qn("w:br")) if b.get(qn("w:type")) == "page"]:
+                b.getparent().remove(b)
+            page_break_before(el)
+            moved += 1
             continue
-        page_break_before(nxt)
+        # 쪽나눔 문단 뒤에 이어지는 빈 문단은 새 쪽 맨 위의 빈 줄이 된다 — 건너뛰어 첫 글 문단을 찾는다
+        # (담당자 2026-09-06: "대부분이 맨 위에서 한 칸씩 떨어져 있네 … 백스페이스로 눌러서 조치")
+        blanks, nxt = [], el.getnext()
+        while nxt is not None and nxt.tag.endswith("}p") and is_blank_para(nxt) and not _has_page_break(nxt):
+            blanks.append(nxt)
+            nxt = nxt.getnext()
+        if nxt is None or nxt.tag.endswith("}sectPr"):
+            continue
+        if nxt.tag.endswith("}tbl"):
+            first = nxt.find(".//" + qn("w:p"))
+            if first is None:
+                continue
+            page_break_before(first)      # 표의 첫 문단에 '앞에서 쪽 나눔' — 표도 새 쪽에서 시작한다
+        elif nxt.tag.endswith("}p"):
+            page_break_before(nxt)
+        else:
+            continue
+        for b in blanks:
+            body.remove(b)
         body.remove(el)
         moved += 1
     return moved
@@ -1863,7 +1890,7 @@ def _keep_next_para(para):
 def _section_paras(document, number):
     """항 제목 문단과 그 항의 본문 문단들 — (제목, [본문…]). 표 안은 들어가지 않는다."""
     head = re.compile(r"^\s*%s[.\s]" % re.escape(str(number)))
-    other = re.compile(r"^\s*\d{1,2}[.\s]")
+    other = re.compile(r"^\s*\d{1,2}\.?[ \u00a0]")          # '17. 참고' 는 다음 항, '16.1 본 제품…' 은 이 항의 본문
     title, body, inside = None, [], False
     for para in document.paragraphs:
         text = para.text.strip()
@@ -1904,8 +1931,15 @@ def set_section_indent(document, number, chars=2):
             pr.append(ind)
         for k in list(ind.attrib):
             del ind.attrib[k]
-        ind.set(qn("w:leftChars"), str(chars * 100))
-        ind.set(qn("w:left"), str(chars * 210))
+        # '16.1 ' 처럼 번호로 시작하는 문단은 번호 폭만큼 내어쓴다 — 둘째 줄부터 글이 번호 뒤에 맞춰진다
+        # (담당자 2026-09-06: "결론 16.1~16.4 는 들여쓰기 참고")
+        m = re.match(r"^\s*(\d{1,2}\.\d+\s+)", para.text)
+        hang = len(m.group(1)) if m else 0
+        ind.set(qn("w:leftChars"), str((chars + hang) * 100))
+        ind.set(qn("w:left"), str((chars + hang) * 210))
+        if hang:
+            ind.set(qn("w:hangingChars"), str(hang * 100))
+            ind.set(qn("w:hanging"), str(hang * 210))
     return len(body)
 
 
@@ -2225,3 +2259,25 @@ def comment_cell(table):
         clear_diag(first)
         set_vmerge(first, False)
     return first
+
+
+def single_blank_row(table):
+    """머리행과 '특이사항' 줄 사이가 글 없는 줄 여럿(세로 병합으로 한 줄처럼 보이게 둔 서식)이면 한 줄로 줄이고
+    병합·사선을 푼다 — 14.2 불만 현황표에 불만이 없을 때 한 줄로 (담당자 2026-09-06). 지운 줄 수를 돌려준다."""
+    rows = table.rows
+    if len(rows) < 3:
+        return 0
+    last = len(rows) - 1
+    if cell_text(raw_cells(rows[last])[0]).lstrip().startswith("특이사항"):
+        last -= 1
+    data = list(range(1, last + 1))
+    if len(data) < 2:
+        return 0
+    if any(re.sub(r"[\s\d]", "", cell_text(c)) for i in data for c in raw_cells(rows[i])):
+        return 0                          # 글이 있는 줄은 그대로 — 실제 내역이다
+    for i in reversed(data[1:]):
+        drop_row(table, i)
+    for c in raw_cells(table.rows[1]):
+        set_vmerge(c, False)
+        clear_diag(c)
+    return len(data) - 1

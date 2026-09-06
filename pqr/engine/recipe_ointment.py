@@ -1946,6 +1946,7 @@ def fill(document, data, product, period, today=None, log=None):
                         ("14.2", "평가 년도 내 불만 이력 없음."), ("14.3", "평가 년도 내 회수 이력 없음."),
                         ("15.", "평가 년도 내 시정조치사항 이력 없음.")):
         for tb in E.join_continuations(_tables(document, prefix)):
+            E.single_blank_row(tb)                       # 내역이 없으면 한 줄 (14.2 서식은 빈 줄 셋을 병합해 두었다)
             last = E.raw_cells(tb.rows[-1])[0]
             if E.cell_text(last).lstrip().startswith("특이사항"):
                 E.set_cell_plain(last, "특이사항 (Comment)", msg)

@@ -138,17 +138,19 @@ class 빈쪽방지(unittest.TestCase):
         pr = d.paragraphs[1]._p.find(qn("w:pPr"))
         self.assertIsNotNone(pr.find(qn("w:pageBreakBefore")))
 
-    def test_표_앞_쪽나눔은_그대로_둔다(self):
+    def test_표_앞_쪽나눔은_표_첫_문단의_앞에서_쪽나눔으로(self):
+        # 2026-09-06: 쪽나눔 문단의 문단 표시가 새 쪽 첫 줄로 남아 "맨 위에서 한 칸씩 떨어져" 보였다 — 표도 바꾼다
         d = docx.Document()
         d.add_paragraph("9.2.1 조제 완료 후")
         _blank(d)
         _hard_break(d)
-        d.add_table(rows=1, cols=1)
+        t = d.add_table(rows=1, cols=1)
         got = E.tidy_page_breaks(d)
-        self.assertEqual(got["쪽나눔 전환"], 0)
+        self.assertEqual(got["쪽나눔 전환"], 1)
         self.assertEqual(got["앞 빈 문단"], 1)
-        self.assertEqual(len(d.paragraphs), 2)      # 제목 + 쪽나눔 문단
-        self.assertTrue(E._has_page_break(d.paragraphs[1]._p))
+        self.assertEqual(len(d.paragraphs), 1)      # 제목만 — 쪽나눔 문단은 표 첫 문단의 '앞에서 쪽 나눔' 이 됐다
+        first = t._tbl.find(".//" + qn("w:p"))
+        self.assertIsNotNone(first.find(qn("w:pPr")).find(qn("w:pageBreakBefore")))
 
     def test_문서_끝_빈_문단을_지운다(self):
         d = docx.Document()

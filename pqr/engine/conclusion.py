@@ -208,6 +208,11 @@ def apply(document, full_name, short_name, produced, n_lots, year, write_year, q
                 if el is not None:
                     pr.remove(el)
         E.set_para_text(p, txt)
+        for rpr in p.iter(qn("w:rPr")):                  # 결론 문장은 굵게 쓰지 않는다 (담당자 2026-09-06)
+            for tag in ("w:b", "w:bCs"):
+                b = rpr.find(qn(tag))
+                if b is not None:
+                    rpr.remove(b)
         made.append(p)
     for el in tail:
         el.getparent().remove(el)

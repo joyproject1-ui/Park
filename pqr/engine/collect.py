@@ -207,6 +207,15 @@ def _lot_from_name(name):
     return m.group(1) if m else None
 
 
+def unread_scans(logs, scanned):
+    """판독 파일(logs)에 아직 없는 시험일지 — 판독 결과는 읽은 일지 이름(source)을 들고 있다.
+    어느 일지를 읽었는지 모르는 옛 판독 파일(source 없음)이면 아무것도 새로 읽지 않는다."""
+    known = {one.get("source") for one in logs if one.get("source")}
+    if not known:
+        return []
+    return [p for p in scanned if os.path.basename(p) not in known]
+
+
 def handwriting_cache_name():
     from . import handwriting
     return handwriting.CACHE_NAME
@@ -441,7 +450,15 @@ def collect(folder, product_name=None, log=None):
                 handwriting.save_cache(folder, data.stability_logs, log)
         except Exception as error:
             note("13", "", "옛 판독 파일을 새 판독기로 보완하지 못했습니다 — %s" % error)
-    if scanned and not data.stability_logs:
+    # 판독 파일이 있어도 거기에 없는 시험일지(뒤에 올린 장기·수출용 일지)는 읽는다 — 판독 파일은 읽은 일지의
+    # 이름(source)을 들고 있다. 담당자 2026-09-06: "시험 기간은 안정성 시험일지 보면 확인 가능하잖아" —
+    # 시판 후 일지만 읽은 판독 파일이 있어 장기 일지가 통째로 안 읽혔다.
+    if data.stability_logs:
+        scanned = unread_scans(data.stability_logs, scanned)
+        if scanned:
+            log("  [13] 판독 파일에 없는 시험일지 %d장을 새로 읽습니다: %s"
+                % (len(scanned), ", ".join(os.path.basename(p) for p in scanned)))
+    if scanned:
         try:
             from . import vision as vision_mod
             api_on = vision_mod.available()
@@ -477,10 +494,11 @@ def collect(folder, product_name=None, log=None):
                     except Exception:
                         pass
                     data.stability_logs += logs
+                    data.stability_logs.sort(key=lambda r: (r.get("year") or "", r.get("lot") or ""))
                     shaky = sum(len(p.get("unsure") or []) for one in logs for p in one["points"])
                     note("13", "", "손글씨 시험일지 %d장을 오프라인으로 판독했습니다 — 애매한 칸 %d개는 "
                                    "노랑(워드)·주황(엑셀)으로 표시했으니 시험일지와 대조하세요" % (len(logs), shaky))
-                    handwriting.save_cache(folder, logs, log)
+                    handwriting.save_cache(folder, data.stability_logs, log)   # 판독 파일에 새 일지를 보탠다
             else:
                 note("13", "", "손글씨 시험일지를 읽을 판독기가 없습니다 — PQR-업데이트.bat 을 실행해 "
                                "판독기(RapidOCR)를 설치하거나 API 키를 두세요")
