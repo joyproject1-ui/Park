@@ -413,7 +413,9 @@ def read_log(pdf_path, specs=None, log=None):
 
 def read_folder(paths, specs=None, log=None):
     out = []
-    for p in paths:
+    for i, p in enumerate(paths):
+        if log:                                                    # 대시보드 진행 표시에 그대로 보인다
+            log("    시험일지 판독 중 %d/%d: %s" % (i + 1, len(paths), os.path.basename(p)))
         try:
             rec = read_log(p, specs, log)
         except Exception as error:                                 # 한 장이 막혀도 나머지는 읽는다

@@ -1628,12 +1628,35 @@ $("#rd-submit").addEventListener("click", ()=>{
   const code = redoCode, button = redoButton; closeRedo();
   if (code && button) makeReport(code, button);
 });
+/* 작성 중에는 2초마다 서버에 어느 단계인지 물어 단추와 안내에 보인다 — 첫 작성은 손글씨
+   시험일지를 한 장씩 판독하느라 몇 분이 걸려 담당자가 멈춘 줄 알았다(2026-09). */
+function watchProgress(code, button){
+  const t0 = Date.now();
+  const tick = async ()=>{
+    const sec = Math.round((Date.now() - t0) / 1000);
+    const clock = sec >= 60 ? `${Math.floor(sec/60)}분 ${sec%60}초` : `${sec}초`;
+    button.textContent = `작성 중… ${clock}`;
+    try {
+      const r = await fetch(`api/progress?product=${encodeURIComponent(code)}`, { cache:"no-store" });
+      const p = await r.json();
+      if (p && p.running && p.last) {
+        const hint = /시험일지 판독 중/.test(p.last)
+          ? `<br><span class="muted">손글씨 시험일지는 PC 가 직접 읽습니다 — 한 장에 1분쯤 걸리고, 다음 작성부터는 판독 결과 파일을 써서 빠릅니다.</span>` : ``;
+        showToast(`⏳ 보고서 작성 중 (${clock}) — ${esc(p.last)}` + hint);
+      }
+    } catch (e) { /* 진행 조회 실패는 무시 — 작성은 계속된다 */ }
+  };
+  tick();
+  return setInterval(tick, 2000);
+}
 async function makeReport(code, button){
   const original = button.textContent;
   button.textContent = "작성 중…"; button.disabled = true;
+  const watcher = watchProgress(code, button);
   try {
     const response = await fetch("api/report", { method:"POST",
       headers:{ "Content-Type":"application/json" }, body: JSON.stringify({ product: code }) });
+    clearInterval(watcher);
     const payload = await response.json();
     if (!payload.ok) throw new Error(payload.error || "보고서를 만들지 못했습니다");
     const base = payload.based_on;
@@ -1683,6 +1706,7 @@ async function makeReport(code, button){
     if (payload.data) { adopt(payload.data); render(); }
     else { button.textContent = "작성됨 ✓"; }
   } catch (error) {
+    clearInterval(watcher);
     showToast(esc(error.message)); button.textContent = original; button.disabled = false;
   }
 }

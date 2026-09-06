@@ -17,6 +17,7 @@ import sys
 import shutil
 import tempfile
 import threading
+import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from . import build as build_module
@@ -268,6 +269,7 @@ class Workspace(object):
         self.config = config or build_module.load_config()
         self.lock = threading.Lock()
         self.data = None
+        self.progress = {}         # 제품 코드 → 작성 중인 보고서의 진행 줄(대시보드가 2초마다 본다)
         self.revision = 0          # 다시 읽을 때마다 하나씩 — 화면이 바뀐 것을 알아채는 표
         self._fingerprint = None
         self.rebuild()
@@ -735,7 +737,10 @@ class Handler(BaseHTTPRequestHandler):
     server_version = "pqr"
 
     def log_message(self, fmt, *args):           # 접속 로그를 간결하게
-        print("  %s %s" % (self.command, self.path.split("?")[0]))
+        path = self.path.split("?")[0]
+        if path == "/api/progress":               # 작성 중 2초마다 오는 진행 조회는 콘솔에 안 남긴다
+            return
+        print("  %s %s" % (self.command, path))
 
     # ---------------- 응답 도우미 ----------------
 
@@ -769,9 +774,27 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(200, {"ok": True, "input_dir": self.workspace.input_dir})
         if path == "/api/final-view":
             return self._handle_final_view()
+        if path == "/api/progress":
+            return self._handle_progress()
         if path == "/favicon.ico":
             return self._send(404, b"", "text/plain")
         return self._serve_file(path.lstrip("/"), None)
+
+    def _handle_progress(self):
+        """작성 중인 보고서가 지금 어느 단계인지 — 담당자가 '꽤 오래 작성 중' 이라며 멈춘 건지 물었다(2026-09).
+        첫 작성은 손글씨 시험일지를 한 장씩 판독하느라 몇 분이 걸리므로 단계를 그대로 보여 준다."""
+        import urllib.parse as _parse
+        query = _parse.parse_qs(self.path.split("?", 1)[1] if "?" in self.path else "")
+        code = (query.get("product") or [""])[0].strip()
+        state = self.workspace.progress.get(code)
+        if not state:
+            return self._json(200, {"ok": True, "running": False})
+        steps = state["steps"]
+        recent = [line.strip() for line in steps[-40:] if line.strip()]
+        return self._json(200, {"ok": True, "running": state.get("running", True),
+                                "started": state["started"], "elapsed": int(time.time() - state["started"]),
+                                "count": len(steps), "last": recent[-1] if recent else "",
+                                "recent": recent[-4:]})
 
     def _handle_final_view(self):
         """완성본 보고서를 PDF 로 바꿔 브라우저 화면에 띄웁니다 (담당자: 눌러서 바로 보고 싶다)."""
@@ -975,6 +998,7 @@ class Handler(BaseHTTPRequestHandler):
                 _made_dir(folder), docx_report.report_filename(product, self.workspace.data.get("period")))
             # 1) 자동 완성 엔진 — 결재본을 열어 올린 자료 값으로 채우고 회사 조판 규칙을 적용합니다.
             steps = []
+            self.workspace.progress[code] = {"steps": steps, "started": time.time(), "running": True}
             try:
                 engine_result = engine_writer.write_report(
                     folder, product, period, target, today=self.workspace.data.get("today"),
@@ -998,11 +1022,13 @@ class Handler(BaseHTTPRequestHandler):
                             "changed": 0, "engine": True, "log": engine_result.get("log") or []}
                 write_issue_list(folder, product, issues)
                 write_work_log(folder, product, steps)      # 잘 됐을 때도 남긴다 — 견줘 볼 수 있게
+                self.workspace.progress.pop(code, None)
             except Exception as error:
                 import traceback
                 engine_error = str(error)
                 engine_trace = traceback.format_exc()
                 write_work_log(folder, product, steps, engine_error, engine_trace)
+                self.workspace.progress.pop(code, None)
                 write_failure_note(_made_dir(folder), product, engine_error, engine_trace, steps)
                 # 2) 전년도 결재본을 그대로 복제해 연도만 옮긴다 — 제품 고유의 항·표가 남는다.
                 based_on = prior_report.write_from_previous(previous, target, year) if previous else None
