@@ -41,9 +41,21 @@ rem Output goes to install-log.txt so a failed install (e.g. the handwriting rea
 %PY% -m pip install -q -r requirements.txt --disable-pip-version-check > install-log.txt 2>&1
 if errorlevel 1 (
   echo.
-  echo   [!] Some libraries failed to install. See install-log.txt and send it to the maintainer.
-  echo       The report still works; the handwriting reader for item 13 may be off.
+  echo   [!] Some core libraries failed to install. See install-log.txt and send it to the maintainer.
   echo.
+)
+rem Handwriting reader for item 13 (installed separately; the report still works without it).
+rem rapidocr is the reader, onnxruntime its engine. Python 3.13 needs this pair; the old
+rem package name rapidocr-onnxruntime stops at 3.12.
+%PY% -c "import onnxruntime, rapidocr" >nul 2>&1
+if errorlevel 1 (
+  %PY% -m pip install -q -r requirements-ocr.txt --disable-pip-version-check > install-ocr-log.txt 2>&1
+  if errorlevel 1 (
+    echo.
+    echo   [!] The handwriting reader could not be installed. See install-ocr-log.txt and send it.
+    echo       The report still works; item 13 will carry last year's values with a yellow note.
+    echo.
+  )
 )
 %PY% -m pqr launch
 if errorlevel 1 pause

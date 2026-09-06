@@ -33,12 +33,23 @@ def available():
     try:
         import numpy  # noqa: F401
         import pypdfium2  # noqa: F401
-        from rapidocr_onnxruntime import RapidOCR  # noqa: F401
+        import onnxruntime  # noqa: F401 — 새 rapidocr 는 엔진을 따로 깔아야 한다
+        _engine_class()
         _WHY = ""
         return True
     except Exception as error:
         _WHY = "%s: %s" % (type(error).__name__, error)
         return False
+
+
+def _engine_class():
+    """RapidOCR 클래스 — 옛 이름(rapidocr_onnxruntime)과 새 이름(rapidocr) 어느 쪽이든."""
+    try:
+        from rapidocr_onnxruntime import RapidOCR
+        return RapidOCR
+    except ImportError:
+        from rapidocr import RapidOCR
+        return RapidOCR
 
 
 def why():
@@ -51,8 +62,7 @@ _OCR = None
 def _engine():
     global _OCR
     if _OCR is None:
-        from rapidocr_onnxruntime import RapidOCR
-        _OCR = RapidOCR()
+        _OCR = _engine_class()()
     return _OCR
 
 
@@ -66,9 +76,17 @@ def render(pdf_path, dpi=DPI):
 def ocr_image(image):
     """[(x0, y0, x1, y1, text, conf), …]"""
     import numpy as np
-    result, _ = _engine()(np.array(image))
+    got = _engine()(np.array(image))
+    if isinstance(got, tuple):                                     # rapidocr_onnxruntime: (result, elapse)
+        result = got[0] or []
+    elif hasattr(got, "boxes"):                                    # rapidocr 2.x: 결과 객체(numpy 배열)
+        def _l(v):
+            return [] if v is None else list(v)
+        result = list(zip(_l(got.boxes), _l(got.txts), _l(got.scores)))
+    else:
+        result = [] if got is None else list(got)
     out = []
-    for box, text, conf in (result or []):
+    for box, text, conf in result:
         xs = [p[0] for p in box]
         ys = [p[1] for p in box]
         out.append((min(xs), min(ys), max(xs), max(ys), text, float(conf)))
@@ -195,13 +213,33 @@ def parse_date(text, year_lo=None, year_hi=None):
     return "%04d.%02d.%02d" % (y, mo, d), clean
 
 
-def _in_cell(boxes, x0, x1, y0, y1):
+def _inside_frac(b, x0, x1):
+    """글상자의 가로 폭 가운데 칸 [x0, x1] 안에 든 비율."""
+    w = max(1.0, b[2] - b[0])
+    return max(0.0, min(b[2], x1) - max(b[0], x0)) / w
+
+
+def _in_cell(boxes, x0, x1, y0, y1, strict=True):
+    """칸 안의 글상자. strict 면 가로로 칸을 크게 벗어난(옆 칸까지 걸친) 상자는 뺀다 —
+    '2025.7.02 2025.09.10' 처럼 두 칸이 한 상자로 읽히면 옆 칸 값이 섞이기 때문."""
     out = []
     for b in boxes:
         cx, cy = _center(b)
         if x0 <= cx <= x1 and y0 <= cy <= y1:
+            if strict and _inside_frac(b, x0, x1) < 0.75:
+                continue
             out.append(b)
     out.sort(key=lambda b: b[0])
+    return out
+
+
+def _spilled(boxes, x0, x1, y0, y1):
+    """세로로는 칸 안이지만 가로로 옆 칸까지 걸친 글상자(칸이 비어 있지 않다는 증거)."""
+    out = []
+    for b in boxes:
+        cy = _center(b)[1]
+        if y0 <= cy <= y1 and _inside_frac(b, x0, x1) >= 0.2 and _inside_frac(b, x0, x1) < 0.75:
+            out.append(b)
     return out
 
 
@@ -304,7 +342,7 @@ def read_log(pdf_path, specs=None, log=None):
                         value, clean, conf = v2, c2, cb[5]
                         if c2:
                             break
-            if value is None and not text.strip():
+            if value is None and not text.strip() and not _spilled(boxes, x0, x1, y0, y1):
                 continue                                         # 빈 칸(사선) — 시험 안 함
             seen = True
             if value is not None and clean and conf >= 0.8:
@@ -331,11 +369,23 @@ def read_log(pdf_path, specs=None, log=None):
         if not seen and done is None:
             continue
         expected = None
-        if done is None and mfg:
+        due = None
+        if mfg:
             months = 0 if period == "Initial" else int(period[:-1])
             y, mo = int(mfg.group(1)), int(mfg.group(2)) + months
             y, mo = y + (mo - 1) // 12, (mo - 1) % 12 + 1
-            expected = "%04d.%02d" % (y, mo)                        # 완료 일자를 못 읽었을 때의 예정 시기
+            due = (y, mo)
+            if done is None:
+                expected = "%04d.%02d" % (y, mo)                    # 완료 일자를 못 읽었을 때의 예정 시기
+        if done and done_clean and due:
+            # 깨끗이 읽혔어도 예정 시기(제조일 + 기간)와 동떨어지면(한 달 이상 이르거나 넉 달 넘게 늦으면)
+            # '2024.08.02' 를 '2024.04.02' 로 읽은 경우일 수 있다 — 확인 필요로 돌린다
+            dy, dm = int(done[:4]), int(done[5:7])
+            gap = (dy - due[0]) * 12 + (dm - due[1])
+            if not (-1 <= gap <= 4):
+                done_clean = False
+        if done and done_clean and points and points[-1].get("done") and done < points[-1]["done"]:
+            done_clean = False                                      # 앞 시점보다 이른 완료일 — 오독 가능
         for name, _, _, _, _ in rows:                              # 시험한 시점인데 값을 못 읽은 성분
             if name not in assays and name not in unsure:
                 unsure.append(name)

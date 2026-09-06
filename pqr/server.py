@@ -330,6 +330,7 @@ class Workspace(object):
             payload["handwriting_reader"] = ("api" if vision.available()
                                             else "offline" if handwriting.available() else False)
             payload["handwriting_why"] = "" if payload["handwriting_reader"] else handwriting.why()
+            payload["python_version"] = "%d.%d.%d" % sys.version_info[:3]
         except Exception as error:
             payload["handwriting_reader"] = False
             payload["handwriting_why"] = str(error)

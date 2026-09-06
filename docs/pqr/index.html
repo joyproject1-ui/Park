@@ -2602,7 +2602,8 @@ function versionNote(){
       ? ` · 손글씨 시험일지 판독: <b>오프라인(RapidOCR)</b> — 애매한 칸은 노랑/주황`
       : ` · 손글씨 시험일지 판독: <b style="color:#b91c1c">꺼짐</b> — 판독기가 설치되지 않았습니다`
         + (SOURCE.handwriting_why ? ` (<code>${esc(SOURCE.handwriting_why)}</code>)` : ``)
-        + `. <code>PQR-업데이트.bat</code> 을 다시 실행하고, 그래도 꺼짐이면 프로그램 폴더의 <code>install-log.txt</code> 를 보내 주세요`;
+        + `. <code>PQR-업데이트.bat</code> 을 다시 실행하고, 그래도 꺼짐이면 프로그램 폴더의 <code>install-ocr-log.txt</code> 를 보내 주세요`
+        + (SOURCE.python_version ? ` (Python ${esc(SOURCE.python_version)})` : ``);
   return `<br><span class="muted">프로그램 버전: ${esc(version)}`
     + ` · 화면이 바뀌지 않으면 <code>PQR-업데이트.bat</code> 을 실행하세요.${reader}</span>`;
 }
