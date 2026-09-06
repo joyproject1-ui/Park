@@ -43,3 +43,32 @@ class 날짜_글_해석(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def test_guess_assay_makes_a_plausible_value_from_messy_text():
+    from pqr.engine.handwriting import guess_assay
+    assert guess_assay("9a.4-1.", 90, 120) == 99.4
+    assert guess_assay("qn.ay", 90, 110) == 97.9
+    assert guess_assay("1013", 90, 110) == 101.3
+    assert guess_assay("987", 90, 110) == 98.7
+    assert guess_assay("lub", 90, 120) is None          # 숫자가 없다 — 지어내지 않는다
+    assert guess_assay("79.9b", 90, 120) is None        # 규격에서 한참 벗어난다
+    assert guess_assay("", 90, 110) is None
+
+
+def test_refresh_cache_fills_only_unsure_cells_and_keeps_clean_ones(monkeypatch):
+    from pqr.engine import handwriting as hw
+    old = [{"lot": "OGX901", "points": [
+        {"period": "3M", "done": "2025.03.17", "assays": {"A": 100.5}, "unsure": ["B"]},
+        {"period": "6M", "done": "", "assays": {"A": 100.0, "B": 97.8}, "unsure": []}]}]
+    new = [{"lot": "OGX901", "points": [
+        {"period": "3M", "done": "2025.03.17", "assays": {"A": 100.4, "B": 90.8}, "unsure": ["B"]},
+        {"period": "6M", "done": "2025.07.02", "assays": {"A": 99.0, "B": 96.0}, "unsure": ["A", "B"]}]}]
+    monkeypatch.setattr(hw, "available", lambda: True)
+    monkeypatch.setattr(hw, "read_folder", lambda paths, specs, log: new)
+    changed = hw.refresh_cache(old, 0, ["/x/a.pdf"], None, None)
+    p3, p6 = old[0]["points"]
+    assert p3["assays"] == {"A": 100.5, "B": 90.8} and "B" in p3["unsure"]   # 애매한 B 만 예상값으로
+    assert p6["assays"] == {"A": 100.0, "B": 97.8} and p6["done"] == "2025.07.02"  # 깨끗한 값은 그대로, 빈 완료일은 채움
+    assert changed == 2
+    assert hw.refresh_cache(old, hw.READER_VERSION, ["/x/a.pdf"], None, None) == 0    # 이미 새 판독기 결과

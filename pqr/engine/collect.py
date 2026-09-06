@@ -40,6 +40,7 @@ class ProductData(object):
         self.api_chain = {}
         self.stability_files = []   # 스캔 PDF (손글씨) — 비전 판독 대상
         self.stability_logs = []    # 13항 시험일지 판독 결과 (비전 또는 담당자가 적은 .json)
+        self.stability_cache = None   # (판독 파일 경로, reader_version) — 옛 판독기 결과면 애매한 칸을 다시 읽는다
         self.stability_trend = []   # 이미 채워 둔 안정성 경향표(HLF-QC-126-06) 를 다시 읽은 것
         self.pv_reasons = {}        # {제조번호: 밸리데이션 실시 사유} — 전년도 결재본 10.1 에서
         self.prev_stability = {}    # 전년도 결재본의 13.1 · 13.3 표 (올해 시험일지를 못 읽었을 때)
@@ -201,6 +202,11 @@ def _dedupe(paths, root):
 def _lot_from_name(name):
     m = re.search(r"\b([A-Z]{2}[A-Z0-9]{4})\b", name)
     return m.group(1) if m else None
+
+
+def handwriting_cache_name():
+    from . import handwriting
+    return handwriting.CACHE_NAME
 
 
 def collect(folder, product_name=None, log=None):
@@ -386,6 +392,7 @@ def collect(folder, product_name=None, log=None):
                     got_json = json.load(fh)
                 data.stability_logs += got_json if isinstance(got_json, list) else got_json.get("logs", [])
                 log("  [13] %s — 안정성 시험일지 판독 결과 %d Lot" % (os.path.basename(p), len(data.stability_logs)))
+                data.stability_cache = (p, 0 if isinstance(got_json, list) else got_json.get("reader_version", 0))
             except Exception as error:
                 note("13", p, "안정성 판독 파일을 읽지 못했습니다 — %s" % error)
     # 판독 파일(.json)도 없고 Claude 비전(API 키)도 없으면 PC 에서 오프라인으로 손글씨를 읽는다
@@ -393,6 +400,24 @@ def collect(folder, product_name=None, log=None):
     # 쓰고 나머지는 '애매' 로 남겨 보고서가 노랑·주황으로 칠한다. 결과는 판독 파일로 저장해
     # 다음부터는 그것을 쓴다 — 담당자가 값을 손보면 그 값이 우선이다.
     scanned = [p for p, is_scan in data.stability_files if is_scan]
+    cache = getattr(data, "stability_cache", None)
+    if scanned and data.stability_logs and cache and cache[0].endswith(handwriting_cache_name()):
+        # 옛 판독기가 만든 판독 파일 — 애매한 칸만 새 판독기로 다시 읽어 예상값을 채운다
+        # (담당자 2026-09-06: "주황색 부분에 너의 예상값을 기재하지 않았어" — 업데이트 전 판독 파일을 그대로 썼다)
+        try:
+            from . import handwriting
+            specs = {}
+            for recs in data.coa.values():
+                for a in (recs.get("924") or {}).get("assays") or []:
+                    try:
+                        if a.get("part") and a["part"] not in specs:
+                            specs[a["part"]] = (float(a["lo"]), float(a["hi"]))
+                    except (TypeError, ValueError, KeyError):
+                        pass
+            if handwriting.refresh_cache(data.stability_logs, cache[1], scanned, specs or None, log):
+                handwriting.save_cache(folder, data.stability_logs, log)
+        except Exception as error:
+            note("13", "", "옛 판독 파일을 새 판독기로 보완하지 못했습니다 — %s" % error)
     if scanned and not data.stability_logs:
         try:
             from . import vision as vision_mod

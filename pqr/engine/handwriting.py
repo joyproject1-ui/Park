@@ -169,6 +169,31 @@ _FIX = {"O": "0", "o": "0", "D": "0", "Q": "0", "l": "1", "I": "1", "|": "1", "[
         "，": ",", "。": ".", "·": ".", "'": "."}
 
 
+# 예상값 추정 — 깨끗이 못 읽은 손글씨에서 그럴듯한 값을 만든다. 담당자 2026-09-06: "주황색 부분에
+# 너의 예상값을 기재" — 여기서 나온 값은 반드시 '애매' 로 표시된다.
+_GUESS = dict(_FIX, **{"a": "9", "A": "4", "n": "7", "y": "%", "Y": "%", "G": "6", "t": "7", "e": "9"})
+READER_VERSION = 2          # 판독 방식이 바뀌면 올린다 — 옛 판독 파일은 애매한 칸만 다시 읽는다
+
+
+def guess_assay(text, lo=None, hi=None):
+    """읽기 애매한 글('9a.4-1.', 'qn.ay', '1013')에서 규격 근처의 값을 추정한다. 못 하면 None."""
+    raw = (text or "").strip()
+    if not raw:
+        return None
+    fixed = "".join(_GUESS.get(ch, ch) for ch in raw)
+    fixed = re.sub(r"%.*$", "", fixed)                           # % 뒤는 흘린 획
+    cands = []
+    for m in re.finditer(r"(\d{2,3})\s*[.,\-]\s*(\d)", fixed):
+        cands.append(float("%s.%s" % (m.group(1), m.group(2))))
+    digits = re.sub(r"\D", "", fixed)
+    if len(digits) in (3, 4):                                   # '987' → 98.7, '1013' → 101.3
+        cands.append(float(digits[:-1] + "." + digits[-1]))
+    for v in cands:
+        if lo is None or hi is None or (lo - 5) <= v <= (hi + 5):
+            return v
+    return None
+
+
 def parse_assay(text, lo=None, hi=None):
     """손글씨 함량 글 → (값, 깨끗한가). 값을 못 찾으면 (None, False)."""
     raw = (text or "").strip()
@@ -334,9 +359,11 @@ def read_log(pdf_path, specs=None, log=None):
             text = " ".join(b[4] for b in cell)
             conf = min([b[5] for b in cell] or [0])
             value, clean = parse_assay(text, lo, hi)
+            crops = []
             if value is None or not clean:
                 # 칸만 오려 다시 읽어 본다
-                for cb in _crop_ocr(image, x0, x1, y0, y1):
+                crops = _crop_ocr(image, x0, x1, y0, y1)
+                for cb in crops:
                     v2, c2 = parse_assay(cb[4], lo, hi)
                     if v2 is not None and (value is None or (c2 and not clean)):
                         value, clean, conf = v2, c2, cb[5]
@@ -345,6 +372,12 @@ def read_log(pdf_path, specs=None, log=None):
             if value is None and not text.strip() and not _spilled(boxes, x0, x1, y0, y1):
                 continue                                         # 빈 칸(사선) — 시험 안 함
             seen = True
+            if value is None:                                    # 글자가 섞여 못 읽은 칸 — 예상값이라도 낸다
+                for t in [text] + [cb[4] for cb in crops]:
+                    value = guess_assay(t, lo, hi)
+                    if value is not None:
+                        clean, conf = False, 0.0
+                        break
             if value is not None:
                 assays[name] = value                             # 읽은 값은 적는다 — 애매하면 아래서 표시
             if not (value is not None and clean and conf >= 0.8):
@@ -479,6 +512,7 @@ def save_cache(folder, logs, log=None):
     payload = {"설명": "프로그램이 손글씨 안정성 시험일지를 오프라인(RapidOCR)으로 읽은 결과입니다. "
                      "unsure 에 적힌 성분·done 은 읽기 애매해 보고서에 노랑/주황으로 표시됩니다. "
                      "값을 확인해 고치고 unsure 에서 지우면 다음 재작성부터 그 값이 그대로 쓰입니다.",
+               "reader_version": READER_VERSION,
                "logs": logs}
     try:
         with open(path, "w", encoding="utf-8") as handle:
@@ -488,3 +522,38 @@ def save_cache(folder, logs, log=None):
         return path
     except OSError:
         return None
+
+
+def refresh_cache(logs, version, paths, specs=None, log=None):
+    """옛 판독기가 만든 판독 파일(logs)을 새 판독기로 보완한다 — 애매한 칸(unsure)과 빈 값만 다시 읽고,
+    깨끗이 읽혔거나 담당자가 고쳐 둔 값은 그대로 둔다. 바뀐 칸 수를 돌려준다."""
+    try:
+        version = int(version or 0)
+    except (TypeError, ValueError):
+        version = 0
+    if version >= READER_VERSION or not paths or not available():
+        return 0
+    fresh = {one["lot"]: one for one in read_folder(paths, specs, log)}
+    changed = 0
+    for one in logs:
+        new = fresh.get(one.get("lot"))
+        if not new:
+            continue
+        by_period = {p["period"]: p for p in new.get("points", [])}
+        for p in one.get("points", []):
+            q = by_period.get(p.get("period"))
+            if not q:
+                continue
+            for part in set(q.get("assays", {})) | set(p.get("assays", {})):
+                shaky = part in (p.get("unsure") or []) or p["assays"].get(part) is None
+                if shaky and q["assays"].get(part) is not None and p["assays"].get(part) != q["assays"][part]:
+                    p["assays"][part] = q["assays"][part]
+                    changed += 1
+                    if part not in p.setdefault("unsure", []) and part in (q.get("unsure") or []):
+                        p["unsure"].append(part)
+            if not p.get("done") and q.get("done"):
+                p["done"] = q["done"]
+                changed += 1
+    if log:
+        log("    옛 판독 파일의 애매한 칸을 새 판독기로 다시 읽음 — %d칸 보완" % changed)
+    return changed
