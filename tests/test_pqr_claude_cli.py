@@ -153,3 +153,45 @@ class 설치_확인(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class 읽을_폴더_열어_주기(unittest.TestCase):
+    """시험일지가 압축에서 풀려 임시 폴더에 있으면 그 폴더도 --add-dir 로 열어 준다.
+
+    담당자 PC 2026-09-07: 제품 폴더만 열어 주는 바람에 Claude Code 가
+    "The four PDFs are not readable in this session" 이라며 빈손으로 돌아왔다.
+    """
+
+    def _spy(self):
+        got = {}
+
+        def fake(prompt, folder, timeout, extra=()):
+            got["extra"] = list(extra)
+            got["folder"] = folder
+            return True, '{"logs": []}'
+        return got, fake
+
+    def test_시험일지_폴더도_함께_연다(self):
+        got, fake = self._spy()
+        old = C.ask_once
+        C.ask_once = fake
+        try:
+            C._ask("claude", "물음", os.path.join(os.sep, "제품"),
+                   paths=[os.path.join(os.sep, "tmp", "pqr-engine-x", "일지.pdf")])
+        finally:
+            C.ask_once = old
+        dirs = [got["extra"][i + 1] for i, v in enumerate(got["extra"]) if v == "--add-dir"]
+        self.assertIn(os.path.abspath(os.path.join(os.sep, "제품")), dirs)
+        self.assertIn(os.path.abspath(os.path.join(os.sep, "tmp", "pqr-engine-x")), dirs)
+
+    def test_같은_폴더는_한_번만(self):
+        got, fake = self._spy()
+        old = C.ask_once
+        C.ask_once = fake
+        try:
+            C._ask("claude", "물음", os.path.join(os.sep, "제품"),
+                   paths=[os.path.join(os.sep, "제품", "가.pdf"), os.path.join(os.sep, "제품", "나.pdf")])
+        finally:
+            C.ask_once = old
+        dirs = [got["extra"][i + 1] for i, v in enumerate(got["extra"]) if v == "--add-dir"]
+        self.assertEqual(len(dirs), 1)

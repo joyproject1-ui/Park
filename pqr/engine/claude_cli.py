@@ -199,11 +199,27 @@ def ask_once(prompt, folder=None, timeout=180, extra=()):
     return True, out
 
 
-def _ask(exe, prompt, folder, log=None):
-    """읽기(Read)만 허용해 한 번 물어본다 — 시험일지 판독용."""
-    ok, text = ask_once(prompt, folder, TIMEOUT,
-                        extra=["--restricted", "--allowedTools", "Read", "Glob",
-                               "--add-dir", os.path.abspath(folder)])
+def _ask(exe, prompt, folder, log=None, paths=()):
+    """읽기(Read)만 허용해 한 번 물어본다 — 시험일지 판독용.
+
+    읽을 파일이 있는 폴더를 모두 --add-dir 로 준다. 담당자 PC 2026-09-07: 시험일지가
+    압축 안에 있어 임시 폴더(%TEMP%\pqr-engine-…)에 풀렸는데 제품 폴더만 열어 주는 바람에
+    Claude Code 가 "The four PDFs are not readable in this session" 이라며 빈손으로 돌아왔다.
+    """
+    dirs, seen = [], set()
+    for one in [folder] + [os.path.dirname(os.path.abspath(p)) for p in paths]:
+        if not one:
+            continue
+        full = os.path.abspath(one)
+        key = os.path.normcase(full)
+        if key in seen:
+            continue
+        seen.add(key)
+        dirs.append(full)
+    extra = ["--restricted", "--allowedTools", "Read", "Glob"]
+    for one in dirs:
+        extra += ["--add-dir", one]
+    ok, text = ask_once(prompt, folder, TIMEOUT, extra=extra)
     if not ok:
         raise RuntimeError("claude -p 로 읽지 못했습니다 — %s" % text)
     return text
@@ -308,7 +324,7 @@ def read_logs(paths, specs=None, log=None, folder=None):
         say("    Claude Code 판독 %d~%d/%d장" % (i + 1, i + len(group), len(paths)))
         prompt = PROMPT % {"count": len(group), "parts": parts,
                            "files": "\n".join(os.path.abspath(p) for p in group)}
-        text = _ask(exe, prompt, where, log)
+        text = _ask(exe, prompt, where, log, group)
         got = _clean(_json_object(text).get("logs"), group, specs)
         for one in got:
             say("      %s: %s·%s 시점 %d개 (애매 %d칸)"

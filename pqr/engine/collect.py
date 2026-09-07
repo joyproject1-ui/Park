@@ -249,6 +249,65 @@ def handwriting_cache_name():
     return handwriting.CACHE_NAME
 
 
+# 항마다 프로그램이 읽을 수 있는 파일 꼴 — 이 밖의 파일은 조용히 지나가지 않고 문의 목록에 남긴다.
+# 담당자 2026-09-07: 9·10.2·12·13항이 통째로 비었는데 까닭이 어디에도 없었다
+# ("도대체 왜 작성이 안 되는 거야?", "뭐가 문제인지 정확히 나한테 요구해").
+READABLE = {
+    "3":       ((".pdf",),            "허가증 PDF"),
+    "6":       ((".pdf", ".docx"),    "제조내역 ERP PDF 또는 공 기록서 .docx"),
+    "7":       ((".xlsx", ".xls"),    "수율현황표 엑셀"),
+    "8.1.1":   ((".xlsx",),           "공급업체 List 엑셀"),
+    "8.1.2":   ((".xlsx",),           "주성분 공급망 엑셀"),
+    "8.1.3":   ((".xlsx",),           "공급업체 List 엑셀"),
+    "8.2.1":   ((".xlsx", ".xls"),    "원료 시험 ERP 엑셀"),
+    "8.2.1.1": ((".xlsx", ".xls"),    "원료 시험 ERP 엑셀"),
+    "8.2.2":   ((".xlsx", ".xls"),    "자재 시험 ERP 엑셀"),
+    "9.2.1":   ((),                   "9.2.1 은 9.2.2(조제 완료 후) 성적서로 채웁니다"),
+    "9.2.2":   ((".pdf",),            "공정 시험성적서 PDF"),
+    "9.2.3":   ((".pdf",),            "공정 시험성적서 PDF"),
+    "9.2.4":   ((".pdf",),            "완제 시험성적서 PDF"),
+    "10.1":    ((".xlsx",),           "PV 마스터파일 엑셀"),
+    "10.2":    ((".xlsx",),           "적격성 마스터파일 엑셀"),
+    "10.3-5":  ((".xlsx",),           "제조지원 설비 마스터파일 엑셀"),
+    "11":      ((".pdf",),            "일탈·OOS 보고서 PDF"),
+    "12":      ((".pdf",),            "변경요청서 PDF"),
+    "13":      ((".pdf", ".json"),    "안정성 시험일지 PDF(스캔) 또는 판독 .json"),
+    "16":      ((".doc", ".docx", ".xlsx"), "전년도 결재본 .docx 와 경향표 엑셀"),
+}
+
+
+def unread_files(got, log=None):
+    """올렸는데 프로그램이 읽지 못한 파일 — [(항, 경로, 까닭)].
+
+    '해당없음 확인' 마감 글과 우리가 남긴 글(PQR …, 판독 .json)은 뺀다.
+    """
+    rows = []
+    for item, paths in sorted(got.items()):
+        rule = READABLE.get(item)
+        if rule is None:
+            continue
+        exts, want = rule
+        살펴본것 = []
+        for path in paths:
+            name = os.path.basename(path)
+            if name.startswith(("~$", ".", "PQR ")) or name == handwriting_cache_name():
+                continue
+            if name.lower().endswith(".txt"):        # '해당없음 확인' 마감 글
+                continue
+            살펴본것.append(path)
+        읽을수있는것 = [p_ for p_ in 살펴본것 if exts and p_.lower().endswith(tuple(exts))]
+        if 읽을수있는것 or not 살펴본것:
+            continue                                 # 하나라도 읽을 수 있으면 조용히 — 잔소리가 되면 안 읽는다
+        for path in 살펴본것:
+            rows.append((item, path,
+                         "★ 이 파일을 읽지 못해 %s항이 빈 칸으로 남았습니다 — 프로그램은 %s 를 읽습니다"
+                         % (item, want)))
+    if log and rows:
+        log("  [문제] 읽지 못한 파일 %d개: %s"
+            % (len(rows), ", ".join(os.path.basename(p) for _, p, _ in rows)))
+    return rows
+
+
 def collect(folder, product_name=None, log=None):
     log = log or (lambda *a: None)
     data = ProductData()
@@ -626,4 +685,7 @@ def collect(folder, product_name=None, log=None):
         if p.lower().endswith((".doc", ".docx")):
             data.previous_report = p
     data.deviations.sort(key=lambda d: d.get("doc_no") or "")
+    # 읽지 못한 파일은 반드시 알린다 — 조용히 지나가면 그 항이 왜 비었는지 아무도 모른다
+    for item, path, why in unread_files(got, log):
+        note(item, path, why)
     return data
