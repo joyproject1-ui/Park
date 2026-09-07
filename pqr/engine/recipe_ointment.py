@@ -2207,6 +2207,16 @@ def fill(document, data, product, period, today=None, log=None):
         E.set_para_text(p132._p, "13.2 시판 후 안정성 시험 이력 없음.")
         log("13.2 줄: 항 번호 붙임")
 
+    # ---------- 내역이 없는 표는 연번을 지우고 한 줄로 (담당자 2026-09-07:
+    # "8.2.3, 11.1 및 11.2는 기재할 내용 없으면 연번 삭제하고 사선 처리해") ----------
+    빈줄표 = []
+    for prefix in ("8.2.3", "11.1", "11.2"):
+        for tb in E.join_continuations(_tables(document, prefix)):
+            if E.single_blank_row(tb):
+                빈줄표.append(tb)
+    if 빈줄표:
+        log("내역 없는 표를 한 줄로(연번 지움): %d개" % len(빈줄표))
+
     # ---------- 14·15항 ----------
     us_export = "미국" in (name or "")           # 계획서 비고로 갈라진 '(미국 수출용)' 건
     빈표 = []
@@ -2223,11 +2233,11 @@ def fill(document, data, product, period, today=None, log=None):
 
     # 내역이 없어 한 줄로 줄인 표는 칸마다 사선을 긋는 대신, 서식이 14.1·14.3·15항에 그어 둔
     # '한 줄을 가로지르는 선' 을 그대로 옮겨 온다 (담당자 2026-09-06: "31쪽 불만 사선도 수정이 안 됐어").
-    if 빈표:
+    if 빈표 or 빈줄표:
         본보기 = next((t for pre in ("14.1", "14.3", "15.", "14.2")
                      for t in _tables(document, pre) if E.has_drawing(t)), None)
-        옮김 = sum(1 for t in 빈표 if E.copy_diag_line(본보기, t))
-        log("14·15항 빈 표 사선 한 줄: %d" % 옮김)
+        옮김 = sum(1 for t in 빈표 + 빈줄표 if E.copy_diag_line(본보기, t))
+        log("빈 표 사선 한 줄: %d" % 옮김)
 
     # ---------- 16항 ---------- 배포본 'PQR 작성방법 공유의 건'(2026-09-04) 문안 그대로.
     # 10 Lot 미만이라 Cpk 를 산출하지 않았다는 말은 당연한 것이라 결론에 적지 않는다(담당자 지시).
@@ -2806,6 +2816,22 @@ def _fill_stability26(document, logs, period, spec, log, issues, why_of=None, pr
             g_prior = re.search(r"(\d+(?:\.\d+)?)\s*(?:g|mL|ml)", prior)
             same_size = bool(g_mine and g_prior and float(g_mine.group(1)) == float(g_prior.group(1)))
             one["pack"] = prior if (prior and (not mine or same_size)) else mine
+        # 용량이 없는 판독값('PE')은 포장 형태가 아니다 — 같은 시장에서 가장 많이 쓰인 표기로 바꾼다
+        # (담당자 2026-09-07: "2022 포장형태가 왜 PE야").
+        제대로 = {}
+        for one in mlogs:
+            text = one.get("pack") or ""
+            if re.search(r"\d+(?:\.\d+)?\s*(?:g|mL|ml|L)", text):
+                제대로[text] = 제대로.get(text, 0) + 1
+        흔한 = max(제대로.items(), key=lambda kv: kv[1])[0] if 제대로 else \
+               ((packs.get("by_market") or {}).get(market) or "")
+        for one in mlogs:
+            text = one.get("pack") or ""
+            if 흔한 and not re.search(r"\d+(?:\.\d+)?\s*(?:g|mL|ml|L)", text):
+                if text:
+                    issues.append(("13", one["lot"], "포장 형태를 '%s' 로 읽었는데 용량이 없어 "
+                                                     "'%s' 로 적었습니다 — 시험일지와 대조하세요" % (text, 흔한)))
+                one["pack"] = 흔한
         long_logs = [one for one in mlogs if (one.get("kind") or "장기") != "시판후"]
         post_logs = [one for one in mlogs if (one.get("kind") or "장기") == "시판후"]
         rows_l, trend_l = split(long_logs)
