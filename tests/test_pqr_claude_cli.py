@@ -33,6 +33,30 @@ class claude_찾기(unittest.TestCase):
         self.assertTrue(any(".local" in p for p in places))
 
 
+class 실행_명령(unittest.TestCase):
+    def test_Windows_의_claude_CMD_는_node_와_cli_js_를_바로_부른다(self):
+        # 담당자 PC 2026-09-07: claude.CMD 로 부르면 물음이 닿지 않아 input_tokens 0 으로 끝났다
+        import shutil
+        import tempfile
+        if not (shutil.which("node") or shutil.which("node.exe")):
+            self.skipTest("이 PC 에 node 가 없습니다")
+        base = tempfile.mkdtemp(prefix="pqr-npm-")
+        cmd = os.path.join(base, "claude.cmd")
+        with open(cmd, "w", encoding="utf-8") as handle:
+            handle.write("@echo off\n")
+        js = os.path.join(base, "node_modules", "@anthropic-ai", "claude-code", "cli.js")
+        os.makedirs(os.path.dirname(js))
+        with open(js, "w", encoding="utf-8") as handle:
+            handle.write("// cli\n")
+        got = C.command(cmd)
+        self.assertEqual(len(got), 2)
+        self.assertTrue(got[0].endswith("node") or got[0].endswith("node.exe"))
+        self.assertEqual(os.path.normpath(got[1]), os.path.normpath(js))
+
+    def test_그_밖에는_그대로_부른다(self):
+        self.assertEqual(C.command("/usr/bin/claude"), ["/usr/bin/claude"])
+
+
 class 설치_도우미(unittest.TestCase):
     def test_이미_깔려_있으면_그대로_알린다(self):
         # 담당자 2026-09-07: "설치하려면 어떻게 해야 돼?" — 두 번 클릭 파일이 이 명령을 부른다
@@ -46,11 +70,18 @@ class 설치_도우미(unittest.TestCase):
         seen = []
         keep = cli._check_login
         cli._check_login = lambda exe: seen.append(exe) or 0
+        hint = os.path.join(cli._program_root(), C.HINT_FILE)
+        before = open(hint, encoding="utf-8").read() if os.path.isfile(hint) else None
         try:
             self.assertEqual(cli.cmd_install_claude(None), 0)
             self.assertEqual(seen, [fake])        # 깔려 있어도 정말 되는지 한 번 불러 본다
+            self.assertIn(fake, open(hint, encoding="utf-8").read())   # 찾은 경로를 적어 둔다
         finally:
             cli._check_login = keep
+            if before is None:                    # 시험이 프로그램 폴더를 어지럽히지 않게
+                os.path.isfile(hint) and os.remove(hint)
+            else:
+                open(hint, "w", encoding="utf-8").write(before)
             if old is None:
                 del os.environ["PQR_CLAUDE_EXE"]
             else:

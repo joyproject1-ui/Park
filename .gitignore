@@ -17,3 +17,8 @@ docs/pqr/data.js
 docs/pqr/data.json
 install-log.txt
 install-ocr-log.txt
+
+# 이 PC 에서만 쓰는 파일 — 담당자 PC 마다 다르다
+CLAUDE 경로.txt
+API-KEY.txt
+PC 판독 사용.txt

@@ -423,32 +423,23 @@ def _check_login(exe):
     담당자 2026-09-07: "방법 A 로 완료된 거야?" — 깔렸다는 말만으로는 알 수 없어서, 프로그램이
     실제로 한 번 불러 보고 되는지/무엇이 모자란지 알려 준다.
     """
-    import subprocess
+    from .engine import claude_cli
     _print("")
     _print("  정말로 쓸 수 있는지 한 번 불러 봅니다 (10~60초)…")
-    try:
-        run = subprocess.run([exe, "-p", "--output-format", "json"],
-                             input="1+1은? 숫자만 답하세요.".encode("utf-8"),
-                             stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=180)
-    except (OSError, subprocess.TimeoutExpired) as error:
-        _print("  [X] 부르지 못했습니다 — %s" % error)
-        _print("      이 창에서  claude  를 치고 Enter 해 보세요.")
-        return 1
-    text = (run.stdout or b"").decode("utf-8", "replace")
-    if run.returncode == 0:
-        _print("  [O] 됩니다 — 로그인까지 끝났습니다.")
+    ok, text = claude_cli.ask_once("1+1은? 숫자만 답하세요.", timeout=180)
+    if ok:
+        _print("  [O] 됩니다 — 로그인까지 끝났습니다. (답: %s)" % " ".join(str(text).split())[:40])
         _print("")
         _print("  이제 대시보드에서 '안정성 판독 🔍' 를 누르면 손글씨 시험일지를 Claude 가")
         _print("  이 PC 안에서 읽습니다 (한 장 1~2분, 사외로 나가지 않습니다).")
         _print("  판독이 끝나면 '보고서 작성' 을 누르세요 — 13항이 채워집니다.")
         return 0
-    _print("  [X] 아직 쓸 수 없습니다. 나온 글:")
-    for line in " ".join(text.split()).split(". ")[:4]:
-        _print("      %s" % line[:200])
+    _print("  [X] 아직 쓸 수 없습니다 — %s" % (" ".join(str(text).split())[:300] or "까닭을 알 수 없습니다"))
     _print("")
-    _print("  대개 로그인 전이라 그렇습니다 — 이 창에서  claude  를 치고 Enter 하면")
-    _print("  브라우저가 열립니다. 늘 쓰시는 계정으로 로그인한 뒤 이 파일을 다시 두 번 누르세요.")
-    return 1
+    _print("  대개 로그인 전이라 그렇습니다. 이 파일이 곧 로그인 창을 따로 띄웁니다 —")
+    _print("  거기서 브라우저가 열리면 늘 쓰시는 계정으로 로그인하고, 로그인이 끝나면")
+    _print("  그 창에 /exit 를 치고 나온 뒤 이 파일을 다시 두 번 누르세요.")
+    return 2                     # 2 = 깔려 있는데 로그인 전 — 배치 파일이 로그인 창을 띄운다
 
 
 def cmd_update(args):

@@ -30,5 +30,14 @@ if not defined PY (
 )
 
 %PY% -m pqr install-claude
+set "RC=%ERRORLEVEL%"
+
+rem  RC=2 : claude is installed but not logged in yet.
+rem  Open a separate window that stays open and runs `claude`,
+rem  so the user can finish the browser login there.
+if "%RC%"=="2" (
+  start "Claude login - log in here, then type /exit" cmd /k claude
+)
+
 echo.
 pause

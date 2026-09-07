@@ -121,29 +121,92 @@ def available():
     return bool(_exe())
 
 
-def _ask(exe, prompt, folder, log=None):
-    """claude -p 로 한 번 물어보고 답 글을 돌려준다.
+def command(exe=None):
+    """실제로 실행할 명령 — Windows 의 claude.CMD 는 cmd.exe 를 한 겹 더 거친다.
 
-    물음은 표준 입력으로 넣는다 — Windows 에서 claude 는 .cmd 라 명령줄로 넘기면 cmd.exe 가
-    큰따옴표·%·& 를 제 나름대로 해석해 물음이 깨진다.
+    그 겹을 지나면 표준 입력이 claude 에 닿지 않아 물음이 빈 채로 돌았다(담당자 PC 2026-09-07:
+    input_tokens 0, duration_api_ms 0). 옆에 있는 node 와 cli.js 를 바로 부르면 그 겹이 없어진다.
     """
-    cmd = [exe, "-p", "--output-format", "json", "--restricted",
-           "--allowedTools", "Read", "Glob", "--add-dir", os.path.abspath(folder)]
-    got = subprocess.run(cmd, cwd=folder, input=prompt.encode("utf-8"),
-                         capture_output=True, timeout=TIMEOUT)
-    out = (got.stdout or b"").decode("utf-8", "replace")
-    err = (got.stderr or b"").decode("utf-8", "replace").strip()
-    if got.returncode != 0:
-        raise RuntimeError("claude -p 가 %d 로 끝났습니다 — %s" % (got.returncode, err[:300] or out[:300]))
-    try:                                        # --output-format json 은 겉봉투를 씌워 준다
+    exe = exe or _exe()
+    if not exe:
+        return []
+    if exe.lower().endswith((".cmd", ".bat")):
+        base = os.path.dirname(exe)
+        for js in (os.path.join(base, "node_modules", "@anthropic-ai", "claude-code", "cli.js"),
+                   os.path.join(base, "..", "lib", "node_modules", "@anthropic-ai", "claude-code", "cli.js")):
+            js = os.path.normpath(js)
+            node = shutil.which("node") or shutil.which("node.exe")
+            if node and os.path.isfile(js):
+                return [node, js]
+    return [exe]
+
+
+def ask_once(prompt, folder=None, timeout=180, extra=()):
+    """claude 에 한 번 물어보고 (성공 여부, 답 또는 까닭) 을 돌려준다.
+
+    Windows 의 `claude.CMD` 를 그냥 부르면 cmd.exe 를 한 겹 더 지나면서 표준 입력이 끊겨,
+    물음이 빈 채로 돌아 아무것도 하지 않고 끝났다 (담당자 PC 2026-09-07: `input_tokens 0 ·
+    duration_api_ms 0`). 그래서
+
+      ① node 와 cli.js 를 바로 부를 수 있으면 그 길로, 물음은 **명령 인자**로 넘긴다
+         (셸을 거치지 않으므로 따옴표·줄바꿈·%가 그대로 간다),
+      ② 그 길이 없어 .cmd 를 거쳐야 하면 물음을 **임시 파일**로 만들어 표준 입력에 물려 준다
+         (파이프는 그 겹을 지나며 끊긴다).
+    """
+    import tempfile
+    cmd = command()
+    if not cmd:
+        return False, "이 PC 에 Claude Code 가 없습니다"
+    through_cmd = cmd[0].lower().endswith((".cmd", ".bat"))
+    args = list(cmd) + ["-p"] + list(extra) + ["--output-format", "json"]
+    if not through_cmd:
+        args.append(prompt)
+    work = tempfile.mkdtemp(prefix="pqr-claude-")
+    try:
+        stdin = None
+        if through_cmd:
+            path = os.path.join(work, "ask.txt")
+            with open(path, "w", encoding="utf-8") as handle:
+                handle.write(prompt)
+            stdin = open(path, "rb")
+        try:
+            run = subprocess.run(args, cwd=folder or work, stdin=stdin,
+                                 stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=timeout)
+        except (OSError, subprocess.TimeoutExpired) as error:
+            return False, str(error)
+        finally:
+            if stdin is not None:
+                stdin.close()
+    finally:
+        shutil.rmtree(work, ignore_errors=True)
+    out = (run.stdout or b"").decode("utf-8", "replace")
+    try:                                       # --output-format json 은 겉봉투를 씌워 준다
         envelope = json.loads(out)
     except ValueError:
-        return out
+        envelope = None
     if isinstance(envelope, dict):
-        if envelope.get("is_error") or envelope.get("subtype") not in (None, "success"):
-            raise RuntimeError(str(envelope.get("result") or envelope.get("subtype") or envelope)[:300])
-        return str(envelope.get("result") or "")
-    return out
+        text = str(envelope.get("result") or "")
+        bad = envelope.get("is_error") or envelope.get("subtype") not in (None, "success")
+        if run.returncode != 0 or bad:
+            return False, (text or str(envelope.get("subtype") or ""))[:400] or "까닭을 알 수 없습니다"
+        if not text.strip():
+            # 답이 비었다 = 물음이 닿지 않았다는 뜻이다. 무엇으로 불렀는지 함께 알린다.
+            return False, ("물음이 claude 에 닿지 않았습니다(답이 비어 있음) — %s"
+                           % os.path.basename(cmd[0]))
+        return True, text
+    if run.returncode != 0:
+        return False, " ".join(out.split())[:400] or "까닭을 알 수 없습니다"
+    return True, out
+
+
+def _ask(exe, prompt, folder, log=None):
+    """읽기(Read)만 허용해 한 번 물어본다 — 시험일지 판독용."""
+    ok, text = ask_once(prompt, folder, TIMEOUT,
+                        extra=["--restricted", "--allowedTools", "Read", "Glob",
+                               "--add-dir", os.path.abspath(folder)])
+    if not ok:
+        raise RuntimeError("claude -p 로 읽지 못했습니다 — %s" % text)
+    return text
 
 
 def _json_object(text):
