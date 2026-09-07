@@ -15,7 +15,9 @@ import shutil
 import subprocess
 
 TIMEOUT = 60 * 30                 # 넉넉하게 — 스무 장이면 몇 분
-CHUNK = 6                         # 한 번에 물어볼 시험일지 수 (답이 너무 길어지지 않게)
+CHUNK = 2                         # 한 번에 물어볼 시험일지 수 (답이 너무 길어지지 않게)
+WORKERS = 4                       # 동시에 띄울 Claude Code 수 — 한 번에 한 묶음씩 물으면 너무 느리다
+                                  # (담당자 2026-09-07: "PQR 하나 만드는 데 너무 오래 걸리네")
 
 PROMPT = """다음 안정성 시험일지(손글씨 스캔 PDF)를 모두 읽고 JSON 만 출력하세요.
 
@@ -307,8 +309,14 @@ def _clean(logs, paths, specs=None):
     return out
 
 
-def read_logs(paths, specs=None, log=None, folder=None):
-    """시험일지 paths 를 이 PC 의 Claude Code 로 읽어 판독 파일 꼴의 목록을 돌려준다."""
+def read_logs(paths, specs=None, log=None, folder=None, workers=WORKERS, chunk=CHUNK):
+    """시험일지 paths 를 이 PC 의 Claude Code 로 읽어 판독 파일 꼴의 목록을 돌려준다.
+
+    묶음을 **여러 개 동시에** 물어본다 — 한 묶음씩 차례로 물으면 넉 장에 5분이 넘었다
+    (담당자 2026-09-07: "PQR 하나 만드는 데 너무 오래 걸리네"). 한 묶음이 실패해도 나머지는
+    살린다 — 다 실패했을 때만 멈춘다.
+    """
+    from concurrent.futures import ThreadPoolExecutor
     from . import handwriting
     say = log or (lambda *a: None)
     exe = _exe()
@@ -318,18 +326,40 @@ def read_logs(paths, specs=None, log=None, folder=None):
     parts = ""
     if specs:
         parts = "· 이 제품의 성분 이름은 %s 입니다 — 성분 이름을 이 가운데 하나로 맞춰 주세요.\n" % ", ".join(specs)
-    merged = []
-    for i in range(0, len(paths), CHUNK):
-        group = paths[i:i + CHUNK]
-        say("    Claude Code 판독 %d~%d/%d장" % (i + 1, i + len(group), len(paths)))
+    groups = [paths[i:i + max(1, chunk)] for i in range(0, len(paths), max(1, chunk))]
+    at_once = max(1, min(workers, len(groups)))
+    say("    Claude Code 판독: %d장 (%d장씩 %d묶음을 동시에)" % (len(paths), max(1, chunk), at_once))
+    done = [0]
+
+    def read_group(job):
+        gi, group = job
         prompt = PROMPT % {"count": len(group), "parts": parts,
                            "files": "\n".join(os.path.abspath(p) for p in group)}
-        text = _ask(exe, prompt, where, log, group)
-        got = _clean(_json_object(text).get("logs"), group, specs)
-        for one in got:
-            say("      %s: %s·%s 시점 %d개 (애매 %d칸)"
-                % (one["lot"], one["kind"], one["market"] or "구분 없음", len(one["points"]),
-                   sum(len(p["unsure"]) for p in one["points"])))
-        handwriting.merge_logs(merged, got, log)
+        try:
+            got = _clean(_json_object(_ask(exe, prompt, where, None, group)).get("logs"), group, specs)
+        except Exception as error:
+            return gi, [], error
+        return gi, got, None
+
+    results, trouble = {}, []
+    with ThreadPoolExecutor(max_workers=at_once) as pool:
+        for gi, got, error in pool.map(read_group, list(enumerate(groups))):
+            done[0] += len(groups[gi])
+            say("    Claude Code 판독 %d/%d장" % (done[0], len(paths)))
+            if error is not None:
+                trouble.append(error)
+                say("      읽지 못한 묶음: %s — %s"
+                    % (", ".join(os.path.basename(p) for p in groups[gi]), error))
+                continue
+            results[gi] = got
+            for one in got:
+                say("      %s: %s·%s 시점 %d개 (애매 %d칸)"
+                    % (one["lot"], one["kind"], one["market"] or "구분 없음", len(one["points"]),
+                       sum(len(p["unsure"]) for p in one["points"])))
+    if trouble and not results:
+        raise RuntimeError("claude -p 로 읽지 못했습니다 — %s" % trouble[0])
+    merged = []
+    for gi in sorted(results):                        # 물어본 차례대로 합친다 — 결과가 늘 같게
+        handwriting.merge_logs(merged, results[gi], log)
     merged.sort(key=lambda r: (r.get("year") or "", r.get("lot") or ""))
     return merged

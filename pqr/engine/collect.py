@@ -283,7 +283,7 @@ READABLE = {
     "8.2.1":   ((".xlsx", ".xls"),    "원료 시험 ERP 엑셀"),
     "8.2.1.1": ((".xlsx", ".xls"),    "원료 시험 ERP 엑셀"),
     "8.2.2":   ((".xlsx", ".xls"),    "자재 시험 ERP 엑셀"),
-    "9.2.1":   ((),                   "9.2.1 은 9.2.2(조제 완료 후) 성적서로 채웁니다"),
+    "9.2.1":   ((".pdf",),            "공정 시험성적서 PDF"),
     "9.2.2":   ((".pdf",),            "공정 시험성적서 PDF"),
     "9.2.3":   ((".pdf",),            "공정 시험성적서 PDF"),
     "9.2.4":   ((".pdf",),            "완제 시험성적서 PDF"),
@@ -397,7 +397,10 @@ def collect(folder, product_name=None, log=None):
         if p.lower().endswith((".xls", ".xlsx")):
             data.pkg_tests += erp.group_by_test(erp.read_material_tests(p, product=product_name))
     # 9.2.x 성적서
-    for item, key, fn in (("9.2.2", "922", coa_reader.read_ipc), ("9.2.3", "923", coa_reader.read_ipc),
+    # 9.2.1 도 조제 단계 성적서다 — 점안제는 9.2.1(점안제)·9.2.2(바이오버든)로 갈라 올린다
+    # (담당자 2026-09-07: 한림포비돈점안액 폴더에 'ELYO01 조제 완료 후.pdf' 넉 장이 9.2.1 로 올라와 있었다).
+    for item, key, fn in (("9.2.1", "921", coa_reader.read_ipc),
+                          ("9.2.2", "922", coa_reader.read_ipc), ("9.2.3", "923", coa_reader.read_ipc),
                           ("9.2.4", "924", coa_reader.read_fp)):
         for p in got.get(item, []):
             if not p.lower().endswith(".pdf"):
@@ -411,6 +414,10 @@ def collect(folder, product_name=None, log=None):
                 note(item, p, "제조번호를 읽지 못함"); continue
             rec["export"] = "수출용" in os.path.basename(p)
             data.coa.setdefault(lot, {})[key] = rec
+    # 9.2.1 에서 읽은 조제 값은 9.2.2 에 없는 것만 보탠다 — 같은 조제 단계라 한 곳에서 보면 된다.
+    for recs in data.coa.values():
+        if recs.get("921"):
+            recs["922"] = dict(recs["921"], **(recs.get("922") or {}))
     # Lot 목록: 성적서(조제)의 제조일자 > 제조내역
     lots = {}
     for lot, recs in data.coa.items():

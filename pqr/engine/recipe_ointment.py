@@ -377,6 +377,52 @@ def _seed_rows_by_header(table, old_grid):
     return len(rows)
 
 
+def _plain_stage(text):
+    """공정 이름에서 괄호 설명과 빈칸을 뗀 이름 — '포장 (베트남)' → '포장'."""
+    return re.sub(r"[\s]", "", re.sub(r"[(（][^)）]*[)）]", "", str(text or "")))
+
+
+def _yield_columns(table):
+    """7항 표의 수율 열 — [(그리드 열, 공정 이름)]. '공정' 칸 오른쪽부터 '비고' 앞까지.
+
+    제품에 따라 포장이 내수·베트남으로 갈린다(담당자 2026-09-07). 열을 셋으로 박아 두면
+    베트남 열이 통째로 빠지고, 그 시장으로 포장한 Lot 이 '확인 필요' 로 남는다.
+    """
+    width = E.grid_width(table)
+    for row in table.rows[:3]:
+        cells = E.grid_cells(row, width)
+        texts = {i: D.squeeze(E.cell_text(c)) for i, c in cells.items()}
+        head = [i for i, t in texts.items() if t == "공정"]
+        if not head:
+            continue
+        got, seen = [], set()
+        for i in sorted(texts):
+            name = texts[i]
+            if i <= head[0] or not name or "비고" in name or name in seen:
+                continue
+            seen.add(name)
+            got.append((i, name))
+        if got:
+            return got
+    return [(2, "조제"), (3, "충전"), (4, "포장")]
+
+
+def _yield_value(vals, name):
+    """표 열 이름으로 수율현황표 값 찾기 — 이름이 그대로 있으면 그것을, 없으면 괄호를 뗀 이름으로."""
+    if name in vals:
+        return vals[name]
+    base = _plain_stage(name)
+    same = [v for k, v in vals.items() if _plain_stage(k) == base]
+    return same[0] if len(same) == 1 else None
+
+
+def _other_market(columns, values, k):
+    """이 열은 비었는데 같은 공정의 다른 시장 열에는 값이 있는가 — 그러면 '확인 필요' 가 아니라 사선."""
+    base = _plain_stage(columns[k][1])
+    return any(values[j] is not None and _plain_stage(name) == base
+               for j, (_gi, name) in enumerate(columns) if j != k)
+
+
 def _mark_carried_cells(table, old_grid):
     """전년도 결재본에서 옮겨 온 값이 그대로 남은 칸을 노랑으로 표시한다 → 표시한 칸 수.
 
@@ -866,23 +912,40 @@ def fill(document, data, product, period, today=None, log=None):
             return
 
     def fill_yield(table, lots, is_dom):
-        stages = ("조제", "충전", "포장")
+        # 공정 열은 표에서 읽는다 — 제품에 따라 '포장' 이 내수·베트남으로 갈린다
+        # (담당자 2026-09-07: "ELYN01 과 ELYN02 는 내수가 아니고 베트남 포장했네").
+        columns = _yield_columns(table)
+        stages = tuple(name for _, name in columns)
         put_sheet_specs(table, stages, is_dom)
         specs = yield_specs(table)
         f, l = E.fit_rows(table, 3, len(table.rows) - 4, max(1, len(lots)))
+        width = E.grid_width(table)
         vals = {}
         for i, lot in enumerate(lots):
-            r = E.raw_cells(table.rows[f + i])
+            row = table.rows[f + i]
+            r = E.raw_cells(row)
+            cells = E.grid_cells(row, width)
             y = data.yields.get(lot, {})
-            v = [y.get(s) for s in stages]
+            v = [_yield_value(y, name) for _, name in columns]
             vals[lot] = v
             E.set_cell(r[0], str(i + 1)); E.set_cell(r[1], lot)
-            for k in range(3):
-                E.set_cell(r[2 + k], v[k] or "확인 필요")
-                if v[k] is None:
-                    issues.append(("7", lot, "%s 수율 값이 수율현황표에 없음" % stages[k]))
+            for k, (gi, name) in enumerate(columns):
+                cell = cells.get(gi)
+                if cell is None:
+                    continue
+                if v[k] is not None:
+                    E.clear_diag(cell)
+                    E.set_cell(cell, v[k])
+                elif _other_market(columns, v, k):
+                    # 그 Lot 을 그 시장으로 포장하지 않았다 — 빈 칸에 사선 (담당자 수기본과 같게)
+                    E.set_cell(cell, "")
+                    E.add_diag(cell)
+                else:
+                    E.clear_diag(cell)
+                    E.set_cell(cell, "확인 필요")
+                    issues.append(("7", lot, "%s 수율 값이 수율현황표에 없음" % name))
             out = False
-            for k in range(3):
+            for k in range(len(columns)):
                 sp = specs[k] if k < len(specs) else None
                 if sp and v[k] is not None:
                     lo, hi = sp
@@ -912,25 +975,30 @@ def fill(document, data, product, period, today=None, log=None):
                    (l + 3, avg)]
         # 칸은 그리드 열 번호로 짚는다 — 요약 행은 '최댓값' 칸이 연번·Lot No. 두 열을 덮어
         # 자리로 세면 값이 한 칸씩 밀린다(조제 자리에 사선, 비고 자리에 포장 수율).
-        width = E.grid_width(table)
         for ri, _fn in summary:
             if ri < len(table.rows):
                 cells = E.grid_cells(table.rows[ri], width)
-                for k in range(3):
-                    cell = cells.get(2 + k)
+                for gi, _name in columns:
+                    cell = cells.get(gi)
                     if cell is not None:
                         E.set_vmerge(cell, False)
                         E.clear_diag(cell)
-        stat_lots = [x for x in lots if x not in yield_out and all(v is not None for v in vals[x])]
-        if stat_lots:
-            cols = list(zip(*[[float(x) for x in vals[lt]] for lt in stat_lots]))
-            for ri, fn in summary:
-                if ri >= len(table.rows):
+        # 열마다 따로 센다 — 그 시장으로 포장하지 않은 Lot 은 그 열의 셈에서만 빠진다
+        for ri, fn in summary:
+            if ri >= len(table.rows):
+                continue
+            cells = E.grid_cells(table.rows[ri], width)
+            for k, (gi, _name) in enumerate(columns):
+                cell = cells.get(gi)
+                if cell is None:
                     continue
-                cells = E.grid_cells(table.rows[ri], width)
-                for k in range(3):
-                    if cells.get(2 + k) is not None:
-                        E.set_cell(cells[2 + k], fn(cols[k]))
+                xs = [float(vals[lt][k]) for lt in lots
+                      if lt not in yield_out and vals[lt][k] is not None]
+                if xs:
+                    E.set_cell(cell, fn(xs))
+                else:
+                    E.set_cell(cell, "")
+                    E.add_diag(cell)
     if t7:
         fill_yield(t7[0], dom, True)
         if len(t7) > 1 and exp:

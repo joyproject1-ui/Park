@@ -70,7 +70,31 @@ def _layout(path):
         return None, None, [], [], {}
     head = _stage_row(rows, value_cols, data_rows[0])
     names = {c: (str(rows[head][c] or "").strip() if head is not None else "") for c in value_cols}
+    if head is not None:
+        _split_markets(rows, value_cols, names, head, data_rows[0])
     return rows, lot_col, data_rows, value_cols, names
+
+
+def _split_markets(rows, value_cols, names, head, first_data):
+    """한 공정이 시장별로 갈라져 있으면 '포장(내수)'·'포장(베트남)' 으로 읽는다.
+
+    담당자 2026-09-07: "ELYN01 과 ELYN02 는 내수가 아니고 베트남 포장했네." 수율현황표의 포장은
+    '내수' 와 '베트남(한비돈점안액)' 두 열인데 이름이 둘 다 '포장' 이라 뒤엣것이 앞엣것을 덮어,
+    내수 열에 값이 없는 Lot 이 '확인 필요' 로 남았다.
+    """
+    같은이름 = {}
+    for c in value_cols:
+        같은이름.setdefault(names.get(c) or "", []).append(c)
+    for name, cols in 같은이름.items():
+        if not name or len(cols) < 2:
+            continue                                  # 갈라지지 않은 공정은 그대로
+        for c in cols:
+            for i in range(head + 1, first_data):
+                text = str(rows[i][c] or "").strip()
+                if not text or SPEC.search(text) or re.search(r"\d", text):
+                    continue                          # 기준 줄('98.0 ± 2.0%')은 이름이 아니다
+                names[c] = "%s(%s)" % (name, re.sub(r"[(（][^)）]*[)）]", "", text).strip())
+                break
 
 
 def read_specs(path):

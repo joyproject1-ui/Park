@@ -195,3 +195,50 @@ class 읽을_폴더_열어_주기(unittest.TestCase):
             C.ask_once = old
         dirs = [got["extra"][i + 1] for i, v in enumerate(got["extra"]) if v == "--add-dir"]
         self.assertEqual(len(dirs), 1)
+
+
+class 여러_묶음_동시에(unittest.TestCase):
+    """한 묶음씩 차례로 물으면 너무 느리다 (담당자 2026-09-07: "너무 오래 걸리네")."""
+
+    def _run(self, files, answers, chunk=2, workers=4):
+        asked = []
+
+        def fake(exe, prompt, where, log=None, paths=()):
+            asked.append(list(paths))
+            key = os.path.basename(paths[0])
+            got = answers[key]
+            if isinstance(got, Exception):
+                raise got
+            return got
+        old = C._ask
+        C._ask = fake
+        try:
+            return C.read_logs(files, None, None, "/제품", workers=workers, chunk=chunk), asked
+        finally:
+            C._ask = old
+
+    def _answer(self, *lots):
+        import json
+        return json.dumps({"logs": [
+            {"lot": l, "year": "2025", "kind": "장기", "market": "내수", "source": l + ".pdf",
+             "points": [{"period": "Initial", "done": "2025.01.02", "assays": {}, "unsure": []}]}
+            for l in lots]})
+
+    def test_묶음마다_한_번씩_묻고_결과를_모두_모은다(self):
+        files = ["/x/A.pdf", "/x/B.pdf", "/x/C.pdf", "/x/D.pdf"]
+        logs, asked = self._run(files, {"A.pdf": self._answer("ELX501", "ELX502"),
+                                        "C.pdf": self._answer("ELX503", "ELX504")})
+        self.assertEqual(len(asked), 2)                      # 2장씩 두 묶음
+        self.assertEqual(sorted(one["lot"] for one in logs),
+                         ["ELX501", "ELX502", "ELX503", "ELX504"])
+
+    def test_한_묶음이_실패해도_나머지는_살린다(self):
+        files = ["/x/A.pdf", "/x/C.pdf"]
+        logs, _ = self._run(files, {"A.pdf": RuntimeError("답에 JSON 이 없습니다"),
+                                    "C.pdf": self._answer("ELX503")}, chunk=1)
+        self.assertEqual([one["lot"] for one in logs], ["ELX503"])
+
+    def test_모두_실패하면_멈춘다(self):
+        files = ["/x/A.pdf"]
+        with self.assertRaises(RuntimeError):
+            self._run(files, {"A.pdf": RuntimeError("답이 비었습니다")}, chunk=1)
