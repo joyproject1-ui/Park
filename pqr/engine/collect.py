@@ -495,27 +495,39 @@ def collect(folder, product_name=None, log=None):
                         specs[a["part"]] = (float(a["lo"]), float(a["hi"]))
                 except (TypeError, ValueError, KeyError):
                     pass
-        from . import handwriting
+        from . import handreq, handwriting
         try:
             from . import vision as vision_mod
             api_on = vision_mod.available()
         except Exception:
             api_on = False
+        pc_on = handreq.pc_reading_on(folder)
         logs = []
-        # ① API 키가 있으면 Claude 로 읽는다 — PC 판독은 한 장에 1분이 걸려 24장이면 40분이다
-        # (담당자 2026-09-07: "PC 로 판독하면 시간이 너무 오래 걸려")
+        # ① API 키가 있으면 Claude 가 곧바로 읽는다 (한 장에 몇 초)
         if api_on:
             try:
                 from . import vision_claude
                 log("  [13] 손글씨 시험일지 %d장을 Claude 로 판독합니다" % len(scanned))
                 logs = vision_claude.read_logs(scanned, specs or None, log)
             except Exception as error:
-                note("13", "", "Claude 판독에 실패해 PC 판독으로 넘어갑니다 — %s" % error)
+                note("13", "", "Claude 판독에 실패했습니다 — %s" % error)
                 logs = []
-        # ② 키가 없거나 Claude 가 막히면 PC 가 오프라인으로 읽는다
-        if not logs and handwriting.available():
-            log("  [13] 손글씨 시험일지 %d장을 오프라인으로 판독합니다%s"
-                % (len(scanned), "" if api_on else " (API 키 없음)"))
+        # ② 키가 없으면 이 PC 로 읽지 않고, 대화에 올릴 판독 요청 묶음을 만든다.
+        #    이 PC 의 판독기는 한 장에 몇 분이라 20장이면 한 시간을 넘긴다
+        #    (담당자 2026-09-07: "PC 판독하지 말고 Claude 에서 확인해 주도록 해").
+        #    그래도 이 PC 로 읽고 싶으면 제품 폴더에 'PC 판독 사용.txt' 를 두면 된다.
+        if not logs and not api_on and not pc_on:
+            made = handreq.make_request(folder, scanned, product_name or "", log)
+            묶음 = ", ".join(name for name, _ in made) or "만들지 못함"
+            data.issues.insert(0, ("13", 묶음,
+                                   "★ 손글씨 시험일지 %d장은 Claude 가 읽습니다 — 제품 폴더의 '%s' 를 "
+                                   "Claude 대화에 올리고, 받은 '13. 안정성시험일지 판독.json' 을 그 폴더에 둔 뒤 "
+                                   "'보고서 재작성' 을 누르세요. (이 PC 로 직접 읽으려면 제품 폴더에 '%s' 를 두세요)"
+                                   % (len(scanned), 묶음, handreq.PC_OPT_IN)))
+        # ③ 담당자가 이 PC 로 읽으라고 정해 두었으면 오프라인으로 읽는다
+        if not logs and pc_on and handwriting.available():
+            log("  [13] 손글씨 시험일지 %d장을 이 PC 로 판독합니다 ('%s' 가 있어서 — 한 장에 몇 분)"
+                % (len(scanned), handreq.PC_OPT_IN))
             logs = handwriting.read_folder(scanned, specs or None, log)
         if logs:
             try:                                            # 지난 경향표가 있으면 그 값이 우선
@@ -548,9 +560,9 @@ def collect(folder, product_name=None, log=None):
                            "노랑(워드)·주황(엑셀)으로 표시했으니 시험일지와 대조하세요"
                  % (len(logs), "Claude" if api_on else "PC", shaky))
             handwriting.save_cache(folder, data.stability_logs, log)   # 판독 파일에 새 일지를 보탠다
-        elif not api_on and not handwriting.available():
-            note("13", "", "손글씨 시험일지를 읽을 판독기가 없습니다 — PQR-업데이트.bat 을 실행해 "
-                           "판독기(RapidOCR)를 설치하거나 API 키를 두세요")
+        elif pc_on and not handwriting.available():
+            note("13", "", "이 PC 로 읽으라고 되어 있는데 판독기가 없습니다 — PQR-업데이트.bat 을 실행하거나 "
+                           "'%s' 를 지우고 Claude 판독 묶음을 쓰세요" % handreq.PC_OPT_IN)
     # 담당자가 손으로 옮겨 적어 둔 값이라 스캔 판독보다 믿을 만하다.
     for item in ("13", "16", "첨부"):
         for p in got.get(item, []):
