@@ -149,3 +149,45 @@ class Cpk_사선(unittest.TestCase):
         self.assertEqual(E.cell_text(t.rows[5].cells[3]).strip(), "")
         self.assertEqual(E.cell_text(t.rows[6].cells[3]).strip(), "")
         self.assertTrue(E.has_diag(t.rows[5].cells[3]))
+
+
+class 갈음_제품(unittest.TestCase):
+    """수출용을 동일 수탁 제품(에펙신안연고)으로 갈음한 건 — 그 이름이 든 시험일지는 수출용이다
+    (담당자 2026-09-07: "에펙신은 퀴노비드와 동일한 제품, 일동제약 수탁품")."""
+
+    HEAD = ["연번", "해당 연도", "시험 기간", "제조 번호", "포장 형태", "보관 조건", "완료 일자", "실시 사유"]
+
+    def _doc_with_note(self):
+        빈줄 = [""] * 8
+        note = ["특이사항 (Comment)\n* 퀴노비드안연고(수출용)의 장기 안정성 시험은 "
+                "동일 수탁 제품(에펙신안연고)로 갈음하였음."] + [""] * 7
+        return _doc([("13. 안정성시험", None), ("13.1 장기 안정성 시험", None),
+                     ("13.1.1 내수용", [self.HEAD, 빈줄, ["특이사항 (Comment)\nN/A"] + [""] * 7]),
+                     ("13.1.2 수출용 (베트남)", [self.HEAD, 빈줄, note])])
+
+    def test_서식_특이사항에서_갈음_제품_이름을_읽는다(self):
+        from pqr.engine.recipe_ointment import _stand_in_names
+        got = _stand_in_names(_stability_tables(self._doc_with_note()))
+        self.assertEqual(got, {"에펙신안연고": "수출"})
+
+    def test_갈음_문구가_없으면_빈_값(self):
+        d = _doc([("13.1 장기 안정성 시험", None),
+                  ("13.1.2 수출용 (베트남)", [["연번"], ["1"], ["특이사항 (Comment)\nN/A"]])])
+        from pqr.engine.recipe_ointment import _stand_in_names
+        self.assertEqual(_stand_in_names(_stability_tables(d)), {})
+
+    def test_갈음_제품_일지는_수출용_표로_간다(self):
+        from pqr.engine.recipe_ointment import _fill_stability26
+        d = self._doc_with_note()
+        logs = [{"lot": "OAX101", "year": "2024", "kind": "장기", "market": "내수", "market_hint": False,
+                 "pack": "3.5g tube/갑", "store": "", "why": "",
+                 "source": "[LT-24-2]에펙신안연고_OAX101(MTC001)_24M.pdf",
+                 "points": [{"period": "24M", "done": "2025.03.10",
+                             "assays": {"오플록사신": 101.2}, "unsure": []}]}]
+        _fill_stability26(d, logs, {"from": "2025-01-01", "to": "2025-12-31"},
+                          {"오플록사신": "90.0 ~ 110.0%"}, lambda *a: None, [], {}, {})
+        self.assertEqual(logs[0]["market"], "수출")
+        수출표, 내수표 = _stability_tables(d)[1][2], _stability_tables(d)[0][2]
+        줄 = lambda t: " ".join(E.cell_text(c) for r in t.rows for c in E.raw_cells(r))
+        self.assertIn("OAX101", 줄(수출표))
+        self.assertNotIn("OAX101", 줄(내수표))

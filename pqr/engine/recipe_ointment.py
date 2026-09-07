@@ -2169,6 +2169,25 @@ def _stability_tables(document):
     return out
 
 
+_STAND_IN = re.compile(r"동일\s*수탁\s*제품\s*[(（]\s*([^)）]+?)\s*[)）]\s*(?:로|으로)?\s*갈음")
+
+
+def _stand_in_names(tabs):
+    """서식 13항 특이사항이 알려 주는 갈음 제품 — {제품 이름: 그 표의 시장}.
+
+    '동일 수탁 제품(에펙신안연고)로 갈음하였음' 처럼 적혀 있으면, 그 이름이 든 시험일지는
+    그 표(수출용)의 것이다. 제품마다 갈음 제품이 다르므로 서식에서 읽어 쓴다.
+    """
+    out = {}
+    for kind, market, table in tabs:
+        if not market or not table.rows:
+            continue
+        글 = E.cell_text(E.raw_cells(table.rows[-1])[0])
+        for name in _STAND_IN.findall(글):
+            out.setdefault(re.sub(r"\s+", "", name), market)
+    return out
+
+
 def _post_completed(one, taken):
     """시판 후 안정성 — 마지막 시점이 사용기한(제조일자~사용기한)에 닿았으면 '완료', 아니면 '진행중'."""
     months = [int(p["period"][:-1]) for p in one.get("points", []) if (p.get("period") or "").endswith("M")]
@@ -2414,12 +2433,28 @@ def _fill_stability26(document, logs, period, spec, log, issues, why_of=None, pr
         return blank[0] if blank else None
 
     packs = prev_packs or {}
+    # 갈음(대신하는) 제품 — 서식의 특이사항이 스스로 알려 준다:
+    # "* 퀴노비드안연고(수출용)의 장기 안정성 시험은 동일 수탁 제품(에펙신안연고)로 갈음하였음."
+    # 그 이름이 든 시험일지는 그 표(수출용)의 것이다 (담당자 2026-09-07: "수출용을 에펙신으로
+    # 갈음한 거야 — 동일한 충전량이고 에펙신은 퀴노비드와 동일한 제품, 일동제약 수탁품이야").
+    갈음이름 = _stand_in_names(tabs)
+    갈음 = {}
+    for one in logs:
+        base = os.path.basename(one.get("source") or "")
+        for name, market in 갈음이름.items():
+            if name and name in base:
+                갈음[base] = market
+    if 갈음:
+        log("13항: 갈음 제품 시험일지 %d장을 %s 로 봄 — %s"
+            % (len(갈음), "·".join(sorted(set(갈음.values()))), ", ".join(sorted(set(갈음이름)))))
     for one in logs:
         # 시장 — 시험일지(파일 이름·'(수출용)')에 없으면 전년도 결재본에서 그 Lot(또는 앞 두 글자)이 어느 표에
         # 있었는지로 가른다. 판독기는 한글 제품명을 못 읽는다.
         if not one.get("market_hint"):
             lot = one.get("lot") or ""
-            got = (packs.get("market_by_lot") or {}).get(lot) or (packs.get("market_by_prefix") or {}).get(lot[:2])
+            got = ((갈음.get(os.path.basename(one.get("source") or "")))
+                   or (packs.get("market_by_lot") or {}).get(lot)
+                   or (packs.get("market_by_prefix") or {}).get(lot[:2]))
             if got:
                 one["market"] = got
     # 전년도 결재본에서 올해도 이어지는 시험(장기 36M 전 · 시판 후 '진행중')인데 올해 시험일지를 읽지
