@@ -1399,6 +1399,10 @@ function reportButton(d){
   // 버튼은 두 개: 자료를 한꺼번에 올리는 버튼과 보고서 버튼.
   // 보고서가 만들어지면 '보고서 작성' 이 '보고서 완료' 로 바뀌고, 누르면 재작성·완성본 열기·취소를 고릅니다.
   let html = `<button class="mini bulk-btn" data-bulk="${d.code}" ${off}>파일 한번에 올리기</button> `
+    // 13항 손글씨 시험일지를 먼저 읽어 두는 단추 — 판독은 길게는 한 시간이라 보고서 만들기와 떼어 둔다
+    // (담당자 2026-09-07: "여기에 판독 json 만드는 단추를 만들어 누르고, 완성되면 보고서 작성을 누르게")
+    + `<button class="mini read-btn" data-read="${d.code}" ${off
+        || `title="13 폴더의 손글씨 안정성 시험일지를 읽어 '13. 안정성시험일지 판독.json' 을 만듭니다"`}>안정성 판독 🔍</button> `
     ;   /* '자료 묶기' 단추는 자동 완성 엔진이 들어오며 뺐다 — 보고서는 폴더의 자료로 프로그램이 바로 만든다. */
   if (d.final_report){
     const stale = staleReport(d);
@@ -1412,6 +1416,34 @@ function reportButton(d){
   }
   return html;
 }
+/* 안정성 판독 — 13 폴더의 손글씨 시험일지를 읽어 '13. 안정성시험일지 판독.json' 을 만듭니다.
+   이 단추를 누른 뒤 '보고서 작성' 을 누르면 13항이 채워집니다 (담당자 2026-09-07). */
+async function readStability(code, button){
+  const original = button.textContent;
+  button.textContent = "판독 중…"; button.disabled = true;
+  const watcher = watchProgress(code, button);
+  try {
+    const response = await fetch("api/read-stability", { method:"POST",
+      headers:{ "Content-Type":"application/json" }, body: JSON.stringify({ product: code }) });
+    clearInterval(watcher);
+    const payload = await response.json();
+    if (payload.ok){
+      showToast(`🔍 <b>안정성 시험일지 ${payload.pages}장을 읽었습니다</b> — ${esc(payload.how||"")}`
+        + `<br>${payload.lots} Lot · 읽기 애매한 칸 ${payload.unsure}개(보고서에 노랑·주황으로 표시됩니다)`
+        + `<br>📄 ${esc(payload.name||"")}`
+        + `<br><b>이제 '보고서 작성' 을 누르세요.</b>`
+        + `<br><span class="muted">${esc(payload.folder||"")}</span>`);
+    } else {
+      showToast(`<b style="color:#b91c1c">안정성 판독을 하지 못했습니다</b><br>${esc(payload.why || payload.error || "")}`);
+    }
+  } catch (error){
+    clearInterval(watcher);
+    showToast(`<b style="color:#b91c1c">안정성 판독을 하지 못했습니다</b><br>${esc(error.message)}`);
+  } finally {
+    button.textContent = original; button.disabled = false;
+  }
+}
+
 /* 자료 묶기 — 그 제품에 올린 자료를 zip 하나로 만들어 폴더를 엽니다.
    담당자가 그 파일 하나만 대화창에 끌어다 놓으면 작성자가 전부 볼 수 있습니다. */
 async function bundleProduct(code, button){
@@ -2279,6 +2311,8 @@ document.addEventListener("click", e=>{
   if (bundle && !bundle.disabled){ bundleProduct(bundle.dataset.bundle, bundle); return; }
   const bulk = e.target.closest(".bulk-btn");
   if (bulk && !bulk.disabled){ openBulk(bulk.dataset.bulk); return; }
+  const read = e.target.closest(".read-btn");
+  if (read && !read.disabled){ readStability(read.dataset.read, read); return; }
   const report = e.target.closest(".report-btn");
   if (report && !report.disabled){ makeReport(report.dataset.report, report); return; }
   const final = e.target.closest(".final-btn");

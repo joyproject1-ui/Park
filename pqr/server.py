@@ -895,6 +895,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(200, self._handle_close())
             if path == "/api/report":
                 return self._json(200, self._handle_report())
+            if path == "/api/read-stability":
+                return self._json(200, self._handle_read_stability())
             if path == "/api/final":
                 return self._json(200, self._handle_final())
             if path == "/api/bundle":
@@ -978,6 +980,30 @@ class Handler(BaseHTTPRequestHandler):
         self.workspace.rebuild()
         return {"ok": True, "saved": os.path.relpath(target, self.workspace.input_dir),
                 "data": self.workspace.dashboard_payload()}
+
+    def _handle_read_stability(self):
+        """'안정성 판독' 단추 — 13 폴더의 손글씨 시험일지를 읽어 판독 파일(json)을 만듭니다.
+
+        담당자 2026-09-07: "여기에 13. 안정성시험일지 판독.json 을 만드는 단추를 만들어서 누르고,
+        완성되면 보고서 작성 단추를 누르게 하면 안 될까?" — 판독은 길게는 한 시간이 걸리므로
+        보고서 만들기와 떼어 놓는다. 진행 줄은 보고서 작성과 같은 자리(progress)에 남긴다.
+        """
+        from .engine import stability_read
+        body = self._read_json()
+        code = str(body.get("product") or "").strip()
+        folder = self.workspace.product_folder(code)
+        steps = []
+        self.workspace.progress[code] = {"steps": steps, "started": time.time(), "running": True}
+        try:
+            got = stability_read.make_reading(folder, code, log=steps.append)
+        except Exception as error:
+            steps.append("판독 실패: %s" % error)
+            got = {"ok": False, "why": str(error)}
+        finally:
+            self.workspace.progress[code]["running"] = False
+        got["folder"] = folder
+        got["name"] = os.path.basename(str(got.get("path") or ""))
+        return got
 
     def _handle_report(self):
         """한 제품의 보고서 초안을 만듭니다. 자료 수집이 덜 됐으면 만들지 않고 알려 줍니다."""

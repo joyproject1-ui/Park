@@ -664,8 +664,29 @@ def merge_known(logs, trend_sheets, log=None):
 CACHE_NAME = "13. 안정성시험일지 판독.json"
 
 
-def save_cache(folder, logs, log=None):
-    """판독 결과를 제품 폴더에 남긴다 — 다음 실행은 이 파일을 쓰고, 담당자가 값을 고치면 그 값이 우선."""
+def load_cache(folder):
+    """제품 폴더의 판독 파일을 읽어 기록 목록을 돌려준다 (없으면 빈 목록).
+
+    담당자가 고쳐 둔 값이 새 판독보다 먼저다 — '안정성 판독' 단추도 이 값 위에 덧쓴다.
+    """
+    import json
+    path = os.path.join(folder or "", CACHE_NAME)
+    if not os.path.isfile(path):
+        return []
+    try:
+        with open(path, encoding="utf-8") as handle:
+            got = json.load(handle)
+    except (OSError, ValueError):
+        return []
+    return got if isinstance(got, list) else (got.get("logs") or [])
+
+
+def save_cache(folder, logs, log=None, covers_all=False):
+    """판독 결과를 제품 폴더에 남긴다 — 다음 실행은 이 파일을 쓰고, 담당자가 값을 고치면 그 값이 우선.
+
+    covers_all 은 '13 폴더를 통째로 읽었다' 는 표시다 — '안정성 판독' 단추로 만든 파일에 적어
+    두면 '보고서 작성' 이 시험일지를 다시 읽지 않는다 (담당자 2026-09-07).
+    """
     import json
     if not folder or not os.path.isdir(folder):
         return None
@@ -676,7 +697,7 @@ def save_cache(folder, logs, log=None):
                      "13 폴더 전체를 사람이 읽어 채운 파일이라면 covers_all 을 true 로 두세요 — "
                      "그러면 시험일지 PDF 를 다시 읽지 않습니다.",
                "reader_version": READER_VERSION,
-               "covers_all": False,
+               "covers_all": bool(covers_all),
                "logs": logs}
     try:
         with open(path, "w", encoding="utf-8") as handle:
