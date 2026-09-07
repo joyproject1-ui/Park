@@ -495,7 +495,7 @@ def collect(folder, product_name=None, log=None):
                         specs[a["part"]] = (float(a["lo"]), float(a["hi"]))
                 except (TypeError, ValueError, KeyError):
                     pass
-        from . import handreq, handwriting
+        from . import claude_cli, handreq, handwriting
         try:
             from . import vision as vision_mod
             api_on = vision_mod.available()
@@ -512,11 +512,20 @@ def collect(folder, product_name=None, log=None):
             except Exception as error:
                 note("13", "", "Claude 판독에 실패했습니다 — %s" % error)
                 logs = []
-        # ② 키가 없으면 이 PC 로 읽지 않고, 대화에 올릴 판독 요청 묶음을 만든다.
+        # ②' 키가 없어도 이 PC 에 Claude Code 가 깔려 있으면 그것으로 읽는다 — 담당자가 따로
+        #    물어볼 것 없이 '보고서 작성' 한 번이면 된다 (담당자 2026-09-07: "이것을 자동화하면 안 돼?")
+        if not logs and not api_on and claude_cli.available():
+            try:
+                log("  [13] 손글씨 시험일지 %d장을 이 PC 의 Claude Code 로 판독합니다 (몇 분 걸립니다)" % len(scanned))
+                logs = claude_cli.read_logs(scanned, specs or None, log, folder)
+            except Exception as error:
+                note("13", "", "이 PC 의 Claude Code 로 읽지 못했습니다 — %s" % error)
+                logs = []
+        # ② 키도 Claude Code 도 없으면 이 PC 로 읽지 않고, 대화에 올릴 판독 요청 묶음을 만든다.
         #    이 PC 의 판독기는 한 장에 몇 분이라 20장이면 한 시간을 넘긴다
         #    (담당자 2026-09-07: "PC 판독하지 말고 Claude 에서 확인해 주도록 해").
         #    그래도 이 PC 로 읽고 싶으면 제품 폴더에 'PC 판독 사용.txt' 를 두면 된다.
-        if not logs and not api_on and not pc_on:
+        if not logs and not pc_on:
             made = handreq.make_request(folder, scanned, product_name or "", log)
             묶음 = ", ".join(name for name, _ in made) or "만들지 못함"
             data.issues.insert(0, ("13", 묶음,
@@ -556,9 +565,10 @@ def collect(folder, product_name=None, log=None):
                     note("13", lot, "같은 Lot 이 %s 두 가지로 읽혔습니다 — 시험일지 파일 이름에 "
                                     "'장기'·'시판 후' 를 바로 적어 주세요" % "·".join(sorted(kinds)))
             shaky = sum(len(p.get("unsure") or []) for one in logs for p in one["points"])
+            어떻게 = "Claude(API 키)" if api_on else ("이 PC 의 Claude Code" if not pc_on else "이 PC 의 판독기")
             note("13", "", "손글씨 시험일지 %d장을 %s 로 판독했습니다 — 애매한 칸 %d개는 "
                            "노랑(워드)·주황(엑셀)으로 표시했으니 시험일지와 대조하세요"
-                 % (len(logs), "Claude" if api_on else "PC", shaky))
+                 % (len(logs), 어떻게, shaky))
             handwriting.save_cache(folder, data.stability_logs, log)   # 판독 파일에 새 일지를 보탠다
         elif pc_on and not handwriting.available():
             note("13", "", "이 PC 로 읽으라고 되어 있는데 판독기가 없습니다 — PQR-업데이트.bat 을 실행하거나 "

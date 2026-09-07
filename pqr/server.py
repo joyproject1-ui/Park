@@ -326,10 +326,11 @@ class Workspace(object):
                     "trend", "leadtime", "sources", "narrative")}
         payload["issue_count"] = len([i for i in data.get("issues", []) if i["level"] == "error"])
         payload["program_version"] = program_version()
-        # 손글씨 안정성시험일지 판독이 켜져 있는지 — API 키(ANTHROPIC_API_KEY)가 있어야 켜진다
+        # 손글씨 안정성시험일지를 무엇으로 읽는지 — API 키 → 이 PC 의 Claude Code → (표시 파일이 있으면) PC 판독
         try:
-            from .engine import vision, handwriting
+            from .engine import claude_cli, vision, handwriting
             payload["handwriting_reader"] = ("api" if vision.available()
+                                            else "cli" if claude_cli.available()
                                             else "offline" if handwriting.available() else False)
             payload["handwriting_why"] = "" if payload["handwriting_reader"] else handwriting.why()
             payload["python_version"] = "%d.%d.%d" % sys.version_info[:3]

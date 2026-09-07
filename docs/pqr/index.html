@@ -2622,6 +2622,9 @@ function versionNote(){
   const hw = SOURCE.handwriting_reader;
   const reader = hw === "api" || hw === true
     ? ` · 손글씨 시험일지 판독: <b>Claude(API 키)</b> — 한 장에 몇 초, 애매한 칸은 노랑/주황`
+    : hw === "cli"
+      ? ` · 손글씨 시험일지 판독: <b>이 PC 의 Claude Code</b> — '보고서 작성' 이 알아서 읽습니다`
+        + ` (한 장에 1~2분, 애매한 칸은 노랑/주황)`
     : hw === "offline"
       ? ` · 손글씨 시험일지 판독: <b>Claude 대화</b> — 보고서를 만들 때 제품 폴더에`
         + ` <code>13. Claude 판독 요청 …zip</code> 이 생깁니다. 그것을 Claude 에 올리고 받은`
