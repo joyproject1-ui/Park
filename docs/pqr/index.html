@@ -555,6 +555,9 @@ tbody tr:hover{background:var(--accent-soft)}
   border-radius:6px;background:#fef2f2;color:#7f1d1d;text-align:left;font-size:12px;line-height:1.55}
 .star-note code{background:#fff;border:1px solid #fecaca;border-radius:4px;padding:1px 4px}
 .star-note hr{border:0;border-top:1px solid #fecaca;margin:6px 0}
+.star-get{display:inline-block;margin-top:6px;padding:4px 10px;border-radius:6px;background:#b91c1c;
+  color:#fff;text-decoration:none;font-weight:600}
+.star-get:hover{background:#991b1b}
 .footnote{padding:0 6px;line-height:1.7}
 </style>
 
@@ -1683,7 +1686,10 @@ async function makeReport(code, button){
         + (stars.length
             ? `<div class="star-note">` + stars.map(i =>
                 `<b>[${esc(i[0])}항] 먼저 해 주세요</b><br>${esc(String(i[2]).replace(/^★\s*/, ""))}`
-                + (i[1] ? `<br><code>${esc(i[1])}</code>` : ``)).join(`<hr>`) + `</div>`
+                + (i[1] ? `<br><code>${esc(i[1])}</code>` : ``)
+                + (String(i[1]||"").indexOf(".zip") >= 0
+                    ? `<br><a class="star-get" href="api/reading-request?product=${encodeURIComponent(code)}"
+                         download>⬇ 판독 요청 묶음 내려받기</a>` : ``)).join(`<hr>`) + `</div>`
             : ``)
         + (issues.length
             ? `<br><b>확인 필요 ${issues.length}건</b> — 제품 폴더의 <code>PQR 문의 목록</code> 파일에도 있습니다:`

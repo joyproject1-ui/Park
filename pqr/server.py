@@ -775,6 +775,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(200, {"ok": True, "input_dir": self.workspace.input_dir})
         if path == "/api/final-view":
             return self._handle_final_view()
+        if path == "/api/reading-request":
+            return self._handle_reading_request()
         if path == "/api/progress":
             return self._handle_progress()
         if path == "/favicon.ico":
@@ -796,6 +798,39 @@ class Handler(BaseHTTPRequestHandler):
                                 "started": state["started"], "elapsed": int(time.time() - state["started"]),
                                 "count": len(steps), "last": recent[-1] if recent else "",
                                 "recent": recent[-4:]})
+
+    def _handle_reading_request(self):
+        """13항 판독 요청 묶음(zip)을 브라우저로 내려보낸다 — 대화창에 끌어다 놓기 쉽게.
+
+        담당자 2026-09-07: "끌어다 놓지 않고 네가 내 PC 에 접근해서 읽으면 안 돼?" — 대화의 Claude 는
+        회사 밖에서 돌아 PC 안을 볼 수 없다. 대신 파일 탐색기를 뒤지지 않고 단추 하나로 받게 한다.
+        """
+        import urllib.parse as _parse
+        query = _parse.parse_qs(self.path.split("?", 1)[1] if "?" in self.path else "")
+        code = (query.get("product") or [""])[0].strip()
+        try:
+            folder = self.workspace.product_folder(code)
+        except UploadError as error:
+            return self._send(400, str(error), "text/plain; charset=utf-8")
+        names = sorted(n for n in os.listdir(folder)
+                       if n.startswith("13. Claude 판독 요청") and n.endswith(".zip"))
+        if not names:
+            return self._send(404, "판독 요청 묶음이 없습니다 — 보고서를 한 번 만들면 생깁니다.",
+                              "text/plain; charset=utf-8")
+        try:
+            which = max(0, min(len(names) - 1, int((query.get("part") or ["1"])[0]) - 1))
+        except ValueError:
+            which = 0
+        target = os.path.join(folder, names[which])
+        with open(target, "rb") as handle:
+            payload = handle.read()
+        self.send_response(200)
+        self.send_header("Content-Type", "application/zip")
+        self.send_header("Content-Length", str(len(payload)))
+        self.send_header("Content-Disposition", "attachment; filename*=UTF-8''%s"
+                         % _parse.quote(names[which]))
+        self.end_headers()
+        self.wfile.write(payload)
 
     def _handle_final_view(self):
         """완성본 보고서를 PDF 로 바꿔 브라우저 화면에 띄웁니다 (담당자: 눌러서 바로 보고 싶다)."""
