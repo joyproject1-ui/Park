@@ -1,13 +1,14 @@
 @echo off
 rem ============================================================
-rem  Install Claude Code on this PC (Windows)
+rem  Log in to Claude Code on this PC (Windows)
 rem
-rem  ASCII only on purpose. A batch file that mixes non-ASCII text
-rem  with cmd.exe code pages garbles every line after it, so all
-rem  Korean messages are printed by Python instead.
+rem  The installer window closes when it ends, so `claude` cannot be
+rem  typed there. This file opens Claude and keeps the window open.
+rem  ASCII only on purpose (see PQR-jindan.bat comment).
 rem ============================================================
 
 cd /d "%~dp0"
+title Claude login
 
 set "CHECK=import sys; sys.exit(0 if sys.version_info>=(3,9) else 1)"
 set "PY="
@@ -29,15 +30,6 @@ if not defined PY (
   exit /b 1
 )
 
-%PY% -m pqr install-claude
-set "RC=%ERRORLEVEL%"
-
-rem  RC=2 : claude is installed but not logged in yet.
-rem  Open a separate window that stays open and runs `claude`,
-rem  so the user can finish the browser login there.
-if "%RC%"=="2" (
-  start "Claude login" cmd /k "%PY% -m pqr login-claude"
-)
-
+%PY% -m pqr login-claude
 echo.
 pause

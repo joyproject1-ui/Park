@@ -407,6 +407,37 @@ def cmd_install_claude(args):
     return _check_login(got)
 
 
+def cmd_login_claude(args):
+    """이 PC 의 Claude Code 에 로그인합니다 — 창이 닫히지 않게 이 명령이 붙들고 있습니다.
+
+    담당자 2026-09-07: "이 창에서 claude 를 치면 창이 닫아지는데 어떻게 해?" — 설치 파일은
+    끝나면서 창을 닫는다. 그래서 로그인만 하는 두 번 클릭 파일(PQR-Claude로그인.bat)을 두고,
+    이 명령이 claude 를 대화형으로 띄운 뒤 정말 되는지까지 확인한다.
+    """
+    import subprocess
+    from .engine import claude_cli
+    exe = claude_cli._exe()
+    _print("Claude Code 로그인")
+    _print("=" * 58)
+    if not exe:
+        _print("  이 PC 에서 claude 를 찾지 못했습니다 — 먼저 PQR-Claude설치.bat 을 두 번 누르세요.")
+        return 1
+    _print("  claude: %s" % exe)
+    _print("")
+    _print("  잠시 뒤 Claude 화면이 이 창에 열립니다.")
+    _print("   · 처음이면 로그인 방법을 고르라고 나옵니다 — 늘 쓰시는 계정(구독)으로 고르세요.")
+    _print("   · 브라우저가 열리면 로그인하고, 이 창으로 돌아오세요.")
+    _print("   · 로그인이 끝나면 이 창에 /exit 를 치고 Enter 하면 됩니다.")
+    _print("")
+    try:
+        subprocess.call(claude_cli.command(exe))      # 대화형 — 이 창을 그대로 물려 준다
+    except OSError as error:
+        _print("  claude 를 띄우지 못했습니다 — %s" % error)
+        return 1
+    _print("")
+    return _check_login(exe)
+
+
 def _remember_claude(path):
     """찾은 경로를 프로그램 폴더에 적어 둔다 — 다음 실행에서 헤매지 않게."""
     from .engine import claude_cli
@@ -436,9 +467,9 @@ def _check_login(exe):
         return 0
     _print("  [X] 아직 쓸 수 없습니다 — %s" % (" ".join(str(text).split())[:300] or "까닭을 알 수 없습니다"))
     _print("")
-    _print("  대개 로그인 전이라 그렇습니다. 이 파일이 곧 로그인 창을 따로 띄웁니다 —")
-    _print("  거기서 브라우저가 열리면 늘 쓰시는 계정으로 로그인하고, 로그인이 끝나면")
-    _print("  그 창에 /exit 를 치고 나온 뒤 이 파일을 다시 두 번 누르세요.")
+    _print("  대개 로그인 전이라 그렇습니다 — 프로그램 폴더의 'PQR-Claude로그인.bat' 을 두 번 누르세요.")
+    _print("  (그 창은 닫히지 않습니다. 브라우저가 열리면 늘 쓰시는 계정으로 로그인하고,")
+    _print("   끝나면 그 창에 /exit 를 치고 Enter 하면 됩니다.)")
     return 2                     # 2 = 깔려 있는데 로그인 전 — 배치 파일이 로그인 창을 띄운다
 
 
@@ -722,6 +753,10 @@ def build_parser():
     claude_cmd = subparsers.add_parser(
         "install-claude", help="이 PC 에 Claude Code 를 깔아 13항 손글씨를 여기서 읽게 합니다")
     claude_cmd.set_defaults(func=cmd_install_claude)
+
+    login_cmd = subparsers.add_parser(
+        "login-claude", help="이 PC 의 Claude Code 에 로그인합니다 (창이 닫히지 않습니다)")
+    login_cmd.set_defaults(func=cmd_login_claude)
 
     update_cmd = subparsers.add_parser(
         "update", help="프로그램을 최신 버전으로 바꿉니다 (입력 폴더는 건드리지 않습니다)")

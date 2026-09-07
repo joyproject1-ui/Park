@@ -61,6 +61,15 @@ class 배치파일(unittest.TestCase):
         self.assertIn("-m pqr doctor", text)
         self.assertIn("pause", text)
 
+    def test_Claude_로그인_파일도_ASCII_로_명령을_부른다(self):
+        # 담당자 2026-09-07: "이 창에서 claude 를 치면 창이 닫아지는데 어떻게 해?"
+        path = os.path.join(os.path.dirname(self.path()), "PQR-Claude로그인.bat")
+        raw = io.open(path, "rb").read()
+        self.assertTrue(all(b < 128 for b in raw), "배치 파일에 한글이 들어가면 안 됩니다")
+        text = raw.decode("ascii")
+        self.assertIn("-m pqr login-claude", text)
+        self.assertIn("pause", text)
+
     def test_Claude_설치_파일도_ASCII_로_명령을_부른다(self):
         # 담당자 2026-09-07: "설치하려면 어떻게 해야 돼?" — 두 번 클릭 파일 하나로
         path = os.path.join(os.path.dirname(self.path()), "PQR-Claude설치.bat")
