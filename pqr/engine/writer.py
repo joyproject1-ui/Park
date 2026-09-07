@@ -331,6 +331,10 @@ def write_report(folder, product, period, out_path, today=None, recipe=None, log
                     "Word 문서(*.docx)' 로 저장해 같은 폴더에 두고 '보고서 재작성' 을 누르세요. (%s)" % last))
                 old_document = None
             if old_document is not None:
+                # 공양식의 항이 빈 뼈대뿐이면(9.1 시험항목·9.2 열 머리글·10.2 설비 목록·13.3 머리글·4항 문안)
+                # 전년도 결재본의 그 항을 먼저 옮겨 심는다 — 담당자 PC 2026-09-07 한림포비돈점안액:
+                # 공양식이 바탕이 되면서 9·10.2 가 통째로 사선이 됐다 ("도대체 왜 작성이 안 되는 거야?").
+                carry_module.adopt_skeleton(document, old_document, period, log_)
                 carry_module.carry(document, old_document, log_)
                 data.pv_reasons = carry_module.pv_reasons(old_document)
                 # 올해 안정성 시험일지를 읽지 못했을 때 13항을 빈칸으로 두지 않으려고 미리 읽어 둔다

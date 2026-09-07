@@ -11,6 +11,7 @@
 import re
 
 from docx.oxml.ns import qn
+from lxml import etree
 
 from . import docedit as E
 from .locate import outline
@@ -468,3 +469,310 @@ def _trend_rows(table):
             values[name or "함량"] = row[k].strip()
         out.append((label, year.group(1), values))
     return out
+
+
+# ---------- 공양식에 전년도 표 뼈대 옮겨 심기 ----------
+# 담당자 PC 2026-09-07 (한림포비돈점안액): (v) 0항에 올린 빈 공양식이 바탕이 되면서 9.1 시험항목·허용기준,
+# 9.2 열 머리글, 10.2 설비 목록, 13.3 경향표 머리글, 4항 문안이 통째로 없어져 전부 사선이 됐다
+# ("도대체 왜 작성이 안 되는 거야?"). 새 양식(표지·항 구성·문안)은 그대로 쓰되, 그 항의 표가 빈 뼈대뿐이면
+# 전년도 결재본의 그 항 내용(표·소제목·문단)을 옮겨 심는다 — 그 뒤 채우기는 전년도 결재본을 바탕으로
+# 할 때와 똑같이 돌아간다.
+SKELETON = ("4", "9.1", "9.2.1", "9.2.2", "9.2.3", "9.2.4", "10.2", "13.3")
+EMPTYISH = ("", "N/A", "-", "—")
+
+
+def _spans(document):
+    """{항 번호: (제목 el, [본문 el …])} — 제목부터, 그 항 아래가 아닌 다음 제목 앞까지."""
+    body = document.element.body
+    items = [el for el in body if el.tag != qn("w:sectPr")]
+    heads = []
+    for i, el in enumerate(items):
+        if el.tag != qn("w:p"):
+            continue
+        text = " ".join(_text_of(el).split())
+        sec = _section(text)
+        if sec and len(text) < 80:
+            heads.append((i, sec))
+    out = {}
+    for n, (i, sec) in enumerate(heads):
+        stop = len(items)
+        for j, other in heads[n + 1:]:
+            if not (other == sec or other.startswith(sec + ".")):
+                stop = j
+                break
+        out.setdefault(sec, (items[i], items[i + 1:stop]))
+    return out
+
+
+def _text_of(el):
+    return "".join(t.text or "" for t in el.iter(qn("w:t")))
+
+
+def _cells_text(tbl):
+    """[[칸 글 …] …] — 표의 줄마다 원 칸(raw) 글."""
+    rows = []
+    for tr in tbl.findall(qn("w:tr")):
+        rows.append([" ".join(_text_of(tc).split()) for tc in tr.findall(qn("w:tc"))])
+    return rows
+
+
+def _blank_skeleton(section, elements):
+    """그 항이 빈 뼈대뿐인가 — 항마다 '값이 있어야 할 자리' 가 다르다. '※' 안내 블록(Cpk 판정표)은 안 본다."""
+    before = []
+    for el in elements:
+        if el.tag == qn("w:p") and _text_of(el).strip().startswith("※"):
+            break
+        before.append(el)
+    elements = before
+    tables = [el for el in elements if el.tag == qn("w:tbl")]
+    paras = [el for el in elements if el.tag == qn("w:p")]
+    if section == "4":
+        return not tables and not any(_text_of(p).strip() for p in paras)
+    if not tables:
+        return False
+    grids = [_cells_text(t) for t in tables]
+    if section == "9.1":                      # 시험항목 칸이 하나도 안 적혀 있다
+        return not any(len(r) > 1 and r[1] for g in grids for r in g[1:])
+    if section.startswith("9.2"):             # 열 머리글(시험항목 이름)이 비어 있다
+        return not any(c for g in grids for c in g[0][2:])
+    if section == "10.2":                     # 관리번호 적힌 줄이 없다
+        return not any(r[0].isdigit() and len(r) > 1 and r[1] not in EMPTYISH for g in grids for r in g)
+    if section == "13.3":                     # 시험항목 머리글이 비어 있다
+        return not any(c for g in grids for c in g[0][1:])
+    return False
+
+
+_DROP = ("w:drawing", "w:pict", "w:object", "w:bookmarkStart", "w:bookmarkEnd", "w:proofErr",
+         "w:commentRangeStart", "w:commentRangeEnd", "w:commentReference", "w:footnoteReference",
+         "w:endnoteReference", "w:lastRenderedPageBreak", "w:numPr", "w:sectPr")
+
+
+def _clean(el, style_ids):
+    """다른 문서에서 온 요소를 이 문서에 심을 수 있게 다듬는다 — 없는 스타일·번호·그림·필드·책갈피를 뗀다."""
+    import copy
+    el = copy.deepcopy(el)
+    for tag in _DROP:
+        for bad in list(el.iter(qn(tag))):
+            parent = bad.getparent()
+            if parent is not None:
+                parent.remove(bad)
+    for tag in ("w:pStyle", "w:rStyle", "w:tblStyle"):
+        for st in list(el.iter(qn(tag))):
+            if st.get(qn("w:val")) not in style_ids:
+                st.getparent().remove(st)
+    for link in list(el.iter(qn("w:hyperlink"))):          # 링크는 풀고 글만 남긴다
+        parent = link.getparent()
+        at = parent.index(link)
+        for child in list(link):
+            parent.insert(at, child)
+            at += 1
+        parent.remove(link)
+    for fld in list(el.iter(qn("w:fldSimple"))):
+        parent = fld.getparent()
+        at = parent.index(fld)
+        for child in list(fld):
+            parent.insert(at, child)
+            at += 1
+        parent.remove(fld)
+    for run in list(el.iter(qn("w:r"))):                    # 필드 코드(목차·쪽 번호 참조) 런은 뗀다
+        if run.find(qn("w:fldChar")) is not None or run.find(qn("w:instrText")) is not None:
+            run.getparent().remove(run)
+    for br in list(el.iter(qn("w:br"))):
+        if br.get(qn("w:type")) == "page":
+            br.getparent().remove(br)
+    for fonts in el.iter(qn("w:rFonts")):                  # LibreOffice 가 남긴 '굴림;Gulim' 꼴
+        for key in list(fonts.attrib):
+            val = fonts.get(key)
+            if val and ";" in val:
+                fonts.set(key, val.split(";")[0])
+    return el
+
+
+def _style_ids(document):
+    try:
+        return {s.style_id for s in document.styles}
+    except Exception:
+        return set()
+
+
+def _heading_template(document, spans):
+    """소제목(10.2.1 …)을 세울 때 본뜰 공양식의 셋째 단계 제목 문단."""
+    for sec, (head, _) in spans.items():
+        if sec.count(".") == 2:
+            return head
+    return None
+
+
+def _as_heading(text, template, style_ids):
+    """전년도 소제목 글을 공양식 제목 문단 꼴로 — 글자만 바꾼다."""
+    import copy
+    if template is None:
+        return None
+    para = _clean(template, style_ids)
+    runs = para.findall(qn("w:r"))
+    for run in runs[1:]:
+        para.remove(run)
+    if runs:
+        run = runs[0]
+        for t in run.findall(qn("w:t")):
+            run.remove(t)
+        t = etree.SubElement(run, qn("w:t"))
+        t.text = text
+        t.set("{http://www.w3.org/XML/1998/namespace}space", "preserve")
+    else:
+        run = etree.SubElement(para, qn("w:r"))
+        t = etree.SubElement(run, qn("w:t"))
+        t.text = text
+    return para
+
+
+def _take(section, elements):
+    """전년도 항에서 옮길 것 — '※' 안내 블록 앞까지, 빈 문단 뭉치는 하나로, 끝의 빈 문단은 뗀다."""
+    got = []
+    for el in elements:
+        text = _text_of(el).strip() if el.tag == qn("w:p") else None
+        if text is not None and text.startswith("※"):
+            break
+        if text == "" and got and got[-1].tag == qn("w:p") and not _text_of(got[-1]).strip():
+            continue
+        if text == "" and not got:
+            continue
+        got.append(el)
+    while got and got[-1].tag == qn("w:p") and not _text_of(got[-1]).strip():
+        got.pop()
+    return got
+
+
+def _tc_clear(tc):
+    """칸의 글을 지운다 — 첫 문단(서식)만 남긴다."""
+    paras = tc.findall(qn("w:p"))
+    for para in paras[1:]:
+        tc.remove(para)
+    if paras:
+        for child in list(paras[0]):
+            if child.tag != qn("w:pPr"):
+                paras[0].remove(child)
+    else:
+        etree.SubElement(tc, qn("w:p"))
+
+
+def _blank_values(section, tbl):
+    """옮겨 심은 표에서 전년도 값을 비운다 — 뼈대(시험항목·허용기준·열 머리글·요약 줄 이름)만 남긴다.
+
+    작년 숫자가 올해 칸에 그대로 보이면 안 된다. 9.1 은 결과 열, 9.2 는 Lot 줄(하나만 남김)과
+    최댓값·최솟값·평균 줄의 값 칸.
+    """
+    trs = tbl.findall(qn("w:tr"))
+
+    def first(tr):
+        tcs = tr.findall(qn("w:tc"))
+        return " ".join(_text_of(tcs[0]).split()) if tcs else ""
+
+    if section == "9.1":
+        for tr in trs[1:]:
+            tcs = tr.findall(qn("w:tc"))
+            if tcs:
+                _tc_clear(tcs[-1])
+    elif section.startswith("9.2"):
+        data = [tr for tr in trs if first(tr).isdigit()]
+        summary = [tr for tr in trs if first(tr).startswith(("최댓", "최솟", "평균"))]
+        for tr in data[1:]:
+            tbl.remove(tr)
+        for tr in data[:1] + summary:
+            for tc in tr.findall(qn("w:tc"))[1:]:
+                _tc_clear(tc)
+
+
+def _shift_years(text, period):
+    """4항 문안의 연도를 올해 평가 기간에 맞춘다 — '2024년 1월 ~ 12월 … 2025년도 1분기' → 한 해씩."""
+    if not period or not period.get("from"):
+        return text
+    years = [int(y) for y in re.findall(r"(?<!\d)(20\d{2})(?!\d)", text)]
+    if not years:
+        return text
+    delta = int(str(period["from"])[:4]) - min(years)
+    if not delta:
+        return text
+    return re.sub(r"(?<!\d)(20\d{2})(?!\d)", lambda m: str(int(m.group(1)) + delta), text)
+
+
+def _set_para_text(para, text):
+    runs = para.findall(qn("w:r"))
+    first = None
+    for run in runs:
+        ts = run.findall(qn("w:t"))
+        if ts and first is None:
+            first = ts[0]
+            for extra in ts[1:]:
+                run.remove(extra)
+        elif ts:
+            for t in ts:
+                run.remove(t)
+    if first is None:
+        run = etree.SubElement(para, qn("w:r"))
+        first = etree.SubElement(run, qn("w:t"))
+    first.text = text
+    first.set("{http://www.w3.org/XML/1998/namespace}space", "preserve")
+
+
+def adopt_skeleton(document, old_document, period=None, log=None):
+    """공양식의 빈 항에 전년도 결재본의 표 뼈대를 옮겨 심는다. 옮긴 항 목록을 돌려준다.
+
+    옮기는 항: 4(문안, 연도만 올해로), 9.1(시험항목·허용기준), 9.2.1~9.2.4(열 머리글이 든 표들),
+    10.2(라인별 소제목과 설비 목록), 13.3(시험항목 머리글). 그 항의 표에 이미 값이 있으면 건드리지 않는다.
+    공양식에만 있는 '※ 안내' 블록은 남긴다.
+    """
+    new_spans, old_spans = _spans(document), _spans(old_document)
+    style_ids = _style_ids(document)
+    template = _heading_template(document, new_spans)
+    moved = []
+    for section in SKELETON:
+        here, there = new_spans.get(section), old_spans.get(section)
+        if not here or not there:
+            continue
+        head, elements = here
+        if not _blank_skeleton(section, elements):
+            continue
+        take = _take(section, there[1])
+        if not any(el.tag == qn("w:tbl") for el in take) and section != "4":
+            continue
+        # 공양식 쪽: '※' 안내 블록부터는 남기고 그 앞의 빈 뼈대를 걷어 낸다
+        keep_from = None
+        for i, el in enumerate(elements):
+            if el.tag == qn("w:p") and _text_of(el).strip().startswith("※"):
+                keep_from = i
+                break
+        for el in (elements if keep_from is None else elements[:keep_from]):
+            el.getparent().remove(el)
+        # 전년도 쪽을 다듬어 제목 뒤에 차례로 심는다
+        anchor = head
+        for el in take:
+            if el.tag == qn("w:p"):
+                text = " ".join(_text_of(el).split())
+                sub = _section(text)
+                if sub and len(text) < 80 and template is not None:       # 소제목(10.2.1 …)
+                    new = _as_heading(text, template, style_ids)
+                elif section == "4" and text:
+                    new = _clean(el, style_ids)
+                    _set_para_text(new, _shift_years(text, period))
+                else:
+                    new = _clean(el, style_ids)
+            else:
+                new = _clean(el, style_ids)
+                if section == "9.1" or section.startswith("9.2"):
+                    _blank_values(section, new)
+            anchor.addnext(new)
+            anchor = new
+        if keep_from is None or not (anchor.tag == qn("w:p") and not _text_of(anchor).strip()):
+            blank = etree.SubElement(document.element.body, qn("w:p"))   # 표 뒤에는 빈 문단 하나
+            document.element.body.remove(blank)
+            anchor.addnext(blank)
+        moved.append(section)
+    if "9.1" in moved:
+        # 쪽을 나누려고 둘로 갈라 둔 9.1 표(조제·충전 / 포장)는 하나로 — 둘째 표를 수출용으로 오해하지 않게
+        tables = _tables_by_section(document).get("9.1") or []
+        if len(tables) > 1:
+            E.join_continuations(tables)
+    if log and moved:
+        log("공양식이 빈 뼈대뿐인 항은 전년도 결재본의 표를 옮겨 심음: %s" % ", ".join(moved))
+    return moved
