@@ -203,6 +203,19 @@ def apply(document, log=None, product_title=None, edms=None):
         log("%d항 줄간격 1.5: %d" % (항, E.set_section_line_spacing(document, 항, 1.5)))
     for 항 in (4, 16):                                  # 본문 왼쪽 2글자
         log("%d항 들여쓰기 2글자: %d" % (항, E.set_section_indent(document, 항, 2)))
+    # 16.1 문장 아래 Cpk 표는 그 문단 폭 안에 둔다
+    # (담당자 2026-09-07: "16.1항 아래 있는 표 크기는 16.1항을 벗어나면 안 돼")
+    inset = 0
+    for tb in document.tables:
+        prev = tb._tbl.getprevious()
+        if prev is None or not prev.tag.endswith("}p"):
+            continue
+        if not re.match(r"^\s*16\.\d", "".join(t.text or "" for t in prev.iter(qn("w:t")))):
+            continue
+        left = E.para_left_before(tb)
+        if left and E.inset_table(tb, left, page - left):
+            inset += 1
+    log("16항 표를 본문 폭 안으로: %d" % inset)
     log("특이사항 칸 빈 줄 정리: %d" % E.tidy_comment_cells(document))
     빈줄 = 0
     for ti in _tables_under(document, ("8.1.1", "8.1.2")):

@@ -544,6 +544,57 @@ def update_qualification(table, lookup):
 
 
 LINE = "연고"          # 이 조리법은 연고·안연고 라인 전용이다
+FLOOR = "1"            # 연고 라인은 1층에 있다 (담당자 2026-09-07: "내가 검토한 결과 연고라인은 1층에 위치해 있어")
+
+_FLOOR = re.compile(r"(\d)\s*층")
+
+
+def _floors(name):
+    """설비명에 적힌 층 — '주사용수 제조 시스템 (2t - 2층)' → {"2"}. 없으면 빈 집합."""
+    return set(_FLOOR.findall(str(name or "")))
+
+
+def _kind_name(name):
+    """설비명에서 괄호 설명을 뗀 이름 — '주사용수 제조 시스템 (2t - 2층)' → '주사용수제조시스템'."""
+    return re.sub(r"[\s·]", "", re.sub(r"[(（][^)）]*[)）]", "", str(name or "")))
+
+
+def use_our_floor(table, support, floor=FLOOR):
+    """다른 층 설비로 적힌 줄을 같은 종류의 우리 층 설비로 바꾼다. [(옛 관리번호, 새 관리번호)].
+
+    제조용수(10.4)는 층마다 시스템이 따로 있고, 적격성평가 현황표의 설비명에 층이 적혀 있다
+    ('주사용수 제조 시스템 (1.5t - 1층, 냉주사용수)' · '(2t - 2층)'). 연고 라인은 1층이라 2층
+    설비를 실으면 안 된다 — 전년도 결재본이 2층 설비로 적혀 있어도 바로잡는다
+    (담당자 2026-09-07: "제조용수 정보는 왼쪽 내용대로 작성하면 돼").
+    """
+    swapped = []
+    for row in table.rows:
+        cells = E.raw_cells(row)
+        if len(cells) < 2:
+            continue
+        mid = E.cell_text(cells[1]).strip()
+        one = support.get(mid)
+        if not one:
+            continue
+        floors = _floors(one.get("name"))
+        if not floors or floor in floors:
+            continue                       # 층이 안 적혔거나 이미 우리 층 설비다
+        kind = _kind_name(one.get("name"))
+        best, best_score = "", -1
+        for mid2, two in sorted(support.items()):
+            if mid2 == mid or _kind_name(two.get("name")) != kind:
+                continue
+            if floor not in _floors(two.get("name")):
+                continue
+            score = (2 if (two.get("system") or "") == (one.get("system") or "") else 0) \
+                + (1 if mid2[:3] == mid[:3] else 0)
+            if score > best_score:
+                best, best_score = mid2, score
+        if not best:
+            continue
+        E.set_cell(cells[1], best)
+        swapped.append((mid, best))
+    return swapped
 
 
 def fill(document, data, product, period, today=None, log=None):
@@ -1337,13 +1388,16 @@ def fill(document, data, product, period, today=None, log=None):
         return ("%s CFU/g %s" % (m.group(1), m.group(2))) if m else bio_text(lot)
 
     def _plain(value, fmt=None):
-        v = _num(value)
-        if v is None:
-            return (str(value).strip() or None) if value else None
-        f = float(v)
-        if fmt:
-            return fmt % f
-        return ("%d" % round(f)) if abs(f - round(f)) < 1e-9 else ("%g" % f)
+        """성적서에 적힌 숫자를 적힌 자릿수 그대로 (5.10 을 5.1 로, 5.00 을 5 로 줄이지 않는다).
+
+        담당자 2026-09-07: "소숫점 자리를 왼쪽처럼 통일시켜줘" — 자릿수는 열마다
+        detail92.unify_decimals 가 가장 자세한 값에 맞춘다.
+        """
+        text = str(value if value is not None else "").strip()
+        m = re.search(r"-?\d+(?:\.\d+)?", text)
+        if m is None:
+            return text or None
+        return (fmt % float(m.group())) if fmt else m.group()
 
     makers = []
 
@@ -1375,7 +1429,8 @@ def fill(document, data, product, period, today=None, log=None):
                 if "입자도" in lab:
                     return _plain(r924.get("particle"))
                 if "금속성이물" in lab:
-                    return _plain(r924.get("metal_total") if "합계" in lab else r924.get("metal_each"))
+                    # 9.1 표는 '합계' 라는 글 없이 줄만 갈라져 있다 — '개개' 가 아니면 합계 줄이다
+                    return _plain(r924.get("metal_each") if "개개" in lab else r924.get("metal_total"))
                 if "질량" in lab or "용량" in lab:
                     if "평균" in lab:
                         return _plain(mine.get("mass_avg"))
@@ -1472,6 +1527,11 @@ def fill(document, data, product, period, today=None, log=None):
             return "%s ~ %s%s" % (bottom, top, tail)
         if len(set(texts)) == 1:
             return "%s%s" % (texts[0].strip(), tail)
+        if "금속성" in item:
+            # 결재본은 금속성이물 결과를 평균 하나로 적는다 — 합계 '0 개', 개개 '0 매'
+            # (담당자 2026-09-07: "금속성 이물 결과는 왼쪽 내용 참고해서 작성해 줘")
+            mean = D._stats("", texts)[2]
+            return ("%s%s" % (mean, tail)) if mean else None
         one_low = ("이상" in (crit or "") or any("이상" in t for t in texts)) and "평균" not in sub
         one_high = ("이하" in (crit or "") or any("이하" in t for t in texts)) and "평균" not in sub
         top, bottom, mean = D._stats("이상" if one_low else "이하" if one_high else "", texts)
@@ -1481,7 +1541,9 @@ def fill(document, data, product, period, today=None, log=None):
             return "%s%s 이하" % (top, tail)
         if top == bottom:
             return "%s%s" % (top, tail)
-        return "Av. %s%s(%s ~ %s%s)" % (mean, tail, bottom, top, tail)
+        # 결재본은 평균과 범위를 두 줄로 적는다 — "Av. 3.64 g" / "(3.60 ~ 3.67 g)"
+        # (담당자 2026-09-07: "질량 용량도 왼쪽과 같은 형태로 작성해 줘")
+        return "Av. %s%s\n(%s ~ %s%s)" % (mean, tail, bottom, top, tail)
 
     def fill_91_labelled(t91, rules, lots, n, maker, old_index=0):
         """9.1 결과 칸을 9.2 와 같은 판독값으로 채운다 (2026 양식).
@@ -1543,8 +1605,13 @@ def fill(document, data, product, period, today=None, log=None):
                 left_ok = (ci is None and len(cells) >= 2) or (ci is not None and len(cells) - 2 > ci)
                 if left_ok and not E.cell_text(cells[-2]).strip() and not D.PREFIX.search(E.cell_text(cells[-2])):
                     E.clear_diag(cells[-2])
-                    E.merge_right(cells[-2], cells[-1])
-                    target = cells[-2]
+                    if "금속성이물" in hit["item"]:
+                        # 결재본은 이 쪽칸에 '합계'·'개개' 를 적고 결과를 오른쪽 칸에 둔다
+                        # (담당자 2026-09-07: "포장에서의 금속성 이물도 왼쪽을 참고해 줘")
+                        E.set_cell(cells[-2], "개개" if "개개" in hit["sub"] else "합계")
+                    else:
+                        E.merge_right(cells[-2], cells[-1])
+                        target = cells[-2]
                 E.clear_diag(target)
                 E.set_cell(target, *out.split("\n"))
                 done += 1
@@ -1775,6 +1842,13 @@ def fill(document, data, product, period, today=None, log=None):
             if gone:
                 log("10.2: 이 제품에 쓰지 않는 설비 %d대를 뺌" % gone)
             upd += update_qualification(t, eq_lookup)
+    for t in _tables(document, "10.4"):        # 제조용수는 층마다 따로다 — 우리 층(1층) 설비로
+        for old_mid, new_mid in use_our_floor(t, data.support):
+            log("10.4: %s(%s층 설비)를 연고 라인 %s층 설비 %s 로 바꿈"
+                % (old_mid, "·".join(sorted(_floors(data.support[old_mid].get("name")))), FLOOR, new_mid))
+            issues.append(("10.4", old_mid,
+                           "연고 라인(%s층) 설비가 아니라 같은 종류의 %s(%s)로 바꿨습니다 — 확인 필요"
+                           % (FLOOR, new_mid, data.support[new_mid].get("name") or "")))
     for prefix in ("10.3", "10.4", "10.5"):
         for t in _tables(document, prefix):
             upd += update_qualification(t, sp_lookup)
@@ -1829,6 +1903,8 @@ def fill(document, data, product, period, today=None, log=None):
                     action.append(("(조치사항 완료일 : %s)" % d["completed"], "none"))
                 if i_det is not None and i_det < len(c):
                     E.set_cell_flow(c[i_det], detail)
+                    # 제목·'* 일탈 내용'·'* 일탈 원인' 머리만 굵게 (담당자 2026-09-07)
+                    E.bold_lines(c[i_det], ("[", "* "))
                 if i_act is not None and i_act < len(c):
                     E.set_cell_flow(c[i_act], action)
                 if i_capa is not None and i_capa < len(c):

@@ -811,6 +811,38 @@ def fit_to_window(table, width):
     return True
 
 
+def para_left_before(table):
+    """표 바로 앞 문단의 왼쪽 들여쓰기(twip). 없으면 0 — 표를 그 문단 안에 맞출 때 쓴다."""
+    prev = table._tbl.getprevious()
+    if prev is None or not prev.tag.endswith("}p"):
+        return 0
+    pr = prev.find(qn("w:pPr"))
+    ind = pr.find(qn("w:ind")) if pr is not None else None
+    try:
+        return max(0, int(ind.get(qn("w:left"))))
+    except (AttributeError, TypeError, ValueError):
+        return 0
+
+
+def inset_table(table, indent, width):
+    """표를 왼쪽에서 indent(twip)만큼 들여 놓고 폭을 width 로 맞춘다. 바꿨으면 True.
+
+    16.1 문장 아래 Cpk 표가 본문 폭을 넘어 16.1 항 밖으로 나가지 않게
+    (담당자 2026-09-07: "16.1항 아래 있는 표 크기는 16.1항을 벗어나면 안 돼").
+    """
+    if width <= 0 or not fit_to_window(table, width):
+        return False
+    pr = get_or_add(table._tbl, "tblPr")
+    tw = get_or_add(pr, "tblW")
+    tw.set(qn("w:w"), str(int(width)))
+    tw.set(qn("w:type"), "dxa")                  # pct 5000 이면 다시 본문 폭으로 늘어난다
+    get_or_add(pr, "tblLayout").set(qn("w:type"), "fixed")
+    ind = get_or_add(pr, "tblInd")
+    ind.set(qn("w:w"), str(int(indent)))
+    ind.set(qn("w:type"), "dxa")
+    return True
+
+
 UNIT = 92           # 반각 한 자의 폭(twip) — 굴림 10pt 를 Word 로 재어 맞춤. 한글·전각은 2 단위
 CELL_MARGIN = 220   # 칸 좌우 여백(108×2) + 여유
 KEY_HEADS = ("연번", "no.", "lot no", "lot", "구분")
@@ -1935,10 +1967,12 @@ def set_section_indent(document, number, chars=2):
         # (담당자 2026-09-06: "결론 16.1~16.4 는 들여쓰기 참고")
         m = re.match(r"^\s*(\d{1,2}\.\d+\s+)", para.text)
         # 내어쓰기 폭은 전각 한 칸이 1 — '16.1 ' 은 반각 5자이므로 2.5 칸이다(반각을 1로 세면 두 배로 밀린다,
-        # 담당자 2026-09-06: "너무 들여쓰기가 됐네")
-        hang = round(text_units(m.group(1)) / 2.0, 1) if m else 0
-        ind.set(qn("w:leftChars"), str(int(round((chars + hang) * 100))))
-        ind.set(qn("w:left"), str(int(round((chars + hang) * 210))))
+        # 담당자 2026-09-06: "너무 들여쓰기가 됐네"). 왼쪽 들여쓰기는 chars 글자 그대로이고
+        # (담당자 2026-09-07: "16.1~16.4 는 단락 들여쓰기 왼쪽 2글자로 변경해 줘"), 번호는 그만큼
+        # 내어써 첫 줄이 왼쪽 여백 밖으로 나가지 않게 한다.
+        hang = min(round(text_units(m.group(1)) / 2.0, 1), chars) if m else 0
+        ind.set(qn("w:leftChars"), str(int(round(chars * 100))))
+        ind.set(qn("w:left"), str(int(round(chars * 210))))
         if hang:
             ind.set(qn("w:hangingChars"), str(int(round(hang * 100))))
             ind.set(qn("w:hanging"), str(int(round(hang * 210))))
@@ -2213,6 +2247,28 @@ def bold_first_line_only(cell):
     return n
 
 
+def bold_lines(cell, starts=()):
+    """칸의 줄 가운데 starts 로 시작하는 줄만 굵게, 나머지 줄은 보통 글씨로 되돌린다.
+
+    11항 일탈사항은 제목('[충전 수율 일탈 건]')과 '* 일탈 내용'·'* 일탈 원인' 머리만 굵고
+    그 아래 설명은 보통 글씨다 (담당자 2026-09-07: "일탈 제목, 내용, 원인은 굵은 글씨 처리해 줘").
+    """
+    n = 0
+    for para in cell_paras(cell._tc):
+        text = "".join(t.text or "" for t in para.iter(qn("w:t"))).strip()
+        want = bool(text) and any(text.startswith(s) for s in starts)
+        for run in para.findall(qn("w:r")):
+            rpr = get_or_add(run, "rPr")
+            b = rpr.find(qn("w:b"))
+            if b is None:
+                b = get_or_add(rpr, "b")
+            val = "1" if want else "0"
+            if b.get(qn("w:val")) != val:
+                b.set(qn("w:val"), val)
+                n += 1
+    return n
+
+
 # ---------- 이어진 표 · 특이사항 줄 ----------
 def _row_text(tr):
     return re.sub(r"\s+", "", "".join(t.text or "" for t in tr.iter(qn("w:t"))))
@@ -2273,7 +2329,7 @@ def single_blank_row(table):
     if cell_text(raw_cells(rows[last])[0]).lstrip().startswith("특이사항"):
         last -= 1
     data = list(range(1, last + 1))
-    if len(data) < 2:
+    if not data:
         return 0
     if any(re.sub(r"[\s\d]", "", cell_text(c)) for i in data for c in raw_cells(rows[i])):
         return 0                          # 글이 있는 줄은 그대로 — 실제 내역이다
@@ -2282,6 +2338,9 @@ def single_blank_row(table):
     for c in raw_cells(table.rows[1]):
         set_vmerge(c, False)
         clear_diag(c)
+        if cell_text(c).strip():
+            # 내역이 없으면 연번도 비운다 (담당자 2026-09-07: "불만이 없는데 연번에 1 표시됨")
+            set_cell(c, "")
     return len(data) - 1
 
 

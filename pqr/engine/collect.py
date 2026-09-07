@@ -540,7 +540,7 @@ def collect(folder, product_name=None, log=None):
                 log("  [13] 손글씨 시험일지 %d장을 Claude 로 판독합니다" % len(scanned))
                 logs = vision_claude.read_logs(scanned, specs or None, log)
             except Exception as error:
-                note("13", "", "Claude 판독에 실패했습니다 — %s" % error)
+                data.issues.insert(0, ("13", "", "★ Claude(API 키) 판독에 실패해 13항을 채우지 못했습니다 — %s" % error))
                 logs = []
         # ②' 키가 없어도 이 PC 에 Claude Code 가 깔려 있으면 그것으로 읽는다 — 담당자가 따로
         #    물어볼 것 없이 '보고서 작성' 한 번이면 된다 (담당자 2026-09-07: "이것을 자동화하면 안 돼?")
@@ -549,7 +549,7 @@ def collect(folder, product_name=None, log=None):
                 log("  [13] 손글씨 시험일지 %d장을 이 PC 의 Claude Code 로 판독합니다 (몇 분 걸립니다)" % len(scanned))
                 logs = claude_cli.read_logs(scanned, specs or None, log, folder)
             except Exception as error:
-                note("13", "", "이 PC 의 Claude Code 로 읽지 못했습니다 — %s" % error)
+                data.issues.insert(0, ("13", "", "★ 이 PC 의 Claude Code 로 13항을 읽지 못했습니다 — %s" % error))
                 logs = []
         # ② 키도 Claude Code 도 없으면 이 PC 로 읽지 않고, 대화에 올릴 판독 요청 묶음을 만든다.
         #    이 PC 의 판독기는 한 장에 몇 분이라 20장이면 한 시간을 넘긴다

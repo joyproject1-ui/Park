@@ -58,7 +58,8 @@ class 불만_없음_한_줄(unittest.TestCase):
         t.rows[4].cells[0].text = "특이사항 (Comment)"
         self.assertEqual(E.single_blank_row(t), 2)
         self.assertEqual(len(t.rows), 3)
-        self.assertEqual(E.cell_text(E.raw_cells(t.rows[1])[0]), "1")
+        # 내역이 없으면 연번도 비운다 (담당자 2026-09-07: "불만이 없는데 연번에 1 표시됨")
+        self.assertEqual(E.cell_text(E.raw_cells(t.rows[1])[0]), "")
         self.assertIsNone(E.raw_cells(t.rows[1])[0]._tc.find(qn("w:tcPr")).find(qn("w:vMerge")))
 
     def test_글이_있는_줄은_줄이지_않는다(self):
@@ -78,9 +79,10 @@ class 결론_내어쓰기(unittest.TestCase):
         d.add_paragraph("17. 참고")
         self.assertEqual(E.set_section_indent(d, 16, 2), 2)
         ind = d.paragraphs[1]._p.find(qn("w:pPr")).find(qn("w:ind"))
-        # '16.1 ' 은 반각 5자 = 전각 2.5칸 — 왼쪽 2칸 + 내어쓰기 2.5칸
-        self.assertEqual(ind.get(qn("w:leftChars")), "450")
-        self.assertEqual(ind.get(qn("w:hangingChars")), "250")
+        # 왼쪽 들여쓰기는 2칸 그대로이고 번호만 그만큼 내어쓴다 — 첫 줄이 여백 밖으로 나가지 않게
+        # (담당자 2026-09-07: "16.1~16.4 는 단락 들여쓰기 왼쪽 2글자로 변경해 줘")
+        self.assertEqual(ind.get(qn("w:leftChars")), "200")
+        self.assertEqual(ind.get(qn("w:hangingChars")), "200")
         ind = d.paragraphs[2]._p.find(qn("w:pPr")).find(qn("w:ind"))
         self.assertEqual(ind.get(qn("w:leftChars")), "200")
         self.assertIsNone(ind.get(qn("w:hangingChars")))

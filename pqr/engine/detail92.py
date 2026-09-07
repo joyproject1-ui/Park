@@ -151,6 +151,20 @@ def criterion_for(rules, process, item, part="", sub=""):
 NUM = re.compile(r"-?\d+(?:\.\d+)?")
 
 
+NUMBERS_ONLY = re.compile(r"^[\d.,\s~]+(?:\s*(?:이상|이하))?$")
+
+
+def _numbers_only(texts):
+    """열의 결과가 모두 숫자(범위·‘이상/이하’ 포함)인가 — 글이 섞이면 통계를 내지 않는다.
+
+    ‘10 CFU/g 미만’·‘224-228nm 및 292~296nm에서 흡수극대를 나타냄’ 처럼 글로 적는 결과에서
+    숫자만 뽑아 최댓값·평균을 적으면 뜻이 없는 값이 된다(담당자 2026-09-07: "베트남 생균수 시험
+    최댓·최솟·평균·Cpk 는 구할 필요 없으니 사선처리해야 돼", "포장 완료 후 확인 시험도 마찬가지").
+    """
+    got = [t for t in texts if (t or "").strip()]
+    return bool(got) and all(NUMBERS_ONLY.match(t.strip()) for t in got)
+
+
 def _decimals(texts):
     d = 0
     for t in texts:
@@ -160,12 +174,28 @@ def _decimals(texts):
     return d
 
 
+def unify_decimals(texts):
+    """한 열의 소수 자릿수를 가장 자세한 값에 맞춘다 — 5.1·5 를 5.10·5.00 으로.
+
+    담당자 2026-09-07: "소숫점 자리를 왼쪽처럼 통일시켜줘". 결재본은 한 열을 같은 자릿수로 적는다.
+    """
+    if not _numbers_only(texts):
+        return list(texts)
+    d = _decimals(texts)
+    if not d:
+        return list(texts)
+    fmt = "%%.%df" % d
+    return [NUM.sub(lambda m: fmt % float(m.group()), t) for t in texts]
+
+
 def _stats(label, texts):
     """열의 자료 글에서 (최댓값, 최솟값, 평균) 글을 만든다. 쓰지 않을 자리는 None.
 
     “a ~ b” 는 범위(개개)라 평균이 없고, “… 이상”·“… 이하” 는 뜻이 있는 쪽만 적는다 —
     한림 2026 결재본이 그렇게 쓴다.
     """
+    if not _numbers_only(texts):
+        return None, None, None          # 글로 적는 결과 — 공양식의 사선을 그대로 둔다
     lows, highs, plain = [], [], []
     for t in texts:
         got = [float(x) for x in NUM.findall(t)]
@@ -217,7 +247,7 @@ def fill(table, lots, value, cpk=None):
     first, last, summary = data_range(table)
     f, l = E.fit_rows(table, first, last, max(1, len(lots)))
     summary = [ri + (l - last) for ri in summary]    # 자료 줄이 늘거나 줄면 요약 줄도 밀린다
-    got = {}
+    got, where = {}, {}
     for i, lot in enumerate(lots):
         cells = _grid_cells(table.rows[f + i], len(labs))
         for k, lab in enumerate(labs):
@@ -232,8 +262,14 @@ def fill(table, lots, value, cpk=None):
                 text = value(lab, lot, i)
             if text is None:
                 continue
-            E.set_cell(cell, *str(text).split("\n"))
             got.setdefault(k, []).append(str(text))
+            where.setdefault(k, []).append(cell)
+    for k, texts in got.items():                     # 한 열의 자릿수를 맞춘 뒤 적는다
+        lab = labs[k]
+        if not ("연번" in lab or lab.lower().startswith("lotno") or lab.lower() == "no."):
+            got[k] = texts = unify_decimals(texts)
+        for cell, text in zip(where[k], texts):
+            E.set_cell(cell, *text.split("\n"))
     if not summary:
         return {labs[k]: v for k, v in got.items()}
     stats = {}
