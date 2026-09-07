@@ -377,6 +377,47 @@ def _seed_rows_by_header(table, old_grid):
     return len(rows)
 
 
+def _mark_carried_cells(table, old_grid):
+    """전년도 결재본에서 옮겨 온 값이 그대로 남은 칸을 노랑으로 표시한다 → 표시한 칸 수.
+
+    담당자 2026-09-07: "지금 기록서가 없어 내용이 없거나 이상하면 전년도 PQR 정보로 가져오고 노랑 MARK 해."
+    올린 자료로 갱신된 칸은 값이 달라져 표시되지 않는다 — 노랑은 '아직 작년 것' 이라는 뜻이다.
+    """
+    if not old_grid or len(old_grid) < 2 or not table.rows:
+        return 0
+    width = E.grid_width(table)
+    new_head = {CARRY.squeeze(E.cell_text(c)): i for i, c in E.grid_cells(table.rows[0], width).items()}
+    old_head = {CARRY.squeeze(t): j for j, t in enumerate(old_grid[0]) if CARRY.squeeze(t)}
+    code_i = next((i for name, i in new_head.items() if "관리번호" in name or "코드" in name), None)
+    code_j = next((j for name, j in old_head.items() if "관리번호" in name or "코드" in name), None)
+    if code_i is None or code_j is None:
+        return 0
+    by_code = {}
+    for r in old_grid[1:]:
+        code = (r[code_j] if code_j < len(r) else "").strip()
+        if CODE.match(code):
+            by_code.setdefault(code, r)
+    n = 0
+    for row in table.rows[1:]:
+        cells = E.grid_cells(row, width)
+        cell = cells.get(code_i)
+        old = by_code.get(E.cell_text(cell).strip()) if cell is not None else None
+        if not old:
+            continue
+        for name, i in new_head.items():
+            if i in (0, code_i) or not name:
+                continue
+            j = old_head.get(name)
+            here = cells.get(i)
+            want = (old[j] if j is not None and j < len(old) else "").strip()
+            if here is None or not want:
+                continue
+            if E.cell_text(here).strip() == want:
+                E.highlight_cell(here)
+                n += 1
+    return n
+
+
 def _base_name(text):
     """원/자재명에서 괄호 설명·빈칸을 뗀 이름 — '케이스(내수)' → '케이스', '케 이 스' → '케이스'."""
     return re.sub(r"[\s·]", "", re.sub(r"[(（][^)）]*[)）]", "", str(text or "")))
@@ -741,6 +782,7 @@ def fill(document, data, product, period, today=None, log=None):
             if k < len(keep) and not keep[k].strip() and batch.get(key):
                 keep[k] = batch[key]                         # 6항에 올린 공 기록서(제조·포장) 값 (담당자 2026-09-06)
                 log("6항: %s 를 공 기록서 값(%s)으로 채움" % ("제조단위" if k == 3 else "포장단위", keep[k]))
+        carried = set()                              # 전년도에서 가져온 칸 — 노랑으로 표시한다
         for k in (3, 4):
             if k < len(keep) and not keep[k].strip() and old_grid:
                 seen = {}
@@ -750,13 +792,19 @@ def fill(document, data, product, period, today=None, log=None):
                         seen[v] = seen.get(v, 0) + 1
                 if seen:
                     keep[k] = max(seen.items(), key=lambda kv: kv[1])[0]
+                    carried.add(k)
                     log("6항: %s 를 전년도 결재본 값(%s)으로 채움" % ("제조단위" if k == 3 else "포장단위", keep[k]))
+                    issues.append(("6", "제조단위" if k == 3 else "포장단위",
+                                   "올해 공 기록서가 없어 전년도 결재본 값(%s)을 옮겼습니다(노랑) — "
+                                   "이 제품의 제조·충전·포장 기록서를 6항에 올리면 올해 값으로 채웁니다" % keep[k]))
         f, l = E.fit_rows(table, 1, len(table.rows) - 1, max(1, len(lots)))
         for i, lot in enumerate(lots):
             c = E.raw_cells(table.rows[f + i])
             E.set_cell(c[0], str(i + 1)); E.set_cell(c[1], lot); E.set_cell(c[2], mfg.get(lot, ""))
             for k in range(3, len(c)):
                 E.set_cell(c[k], keep[k] if k < len(keep) else "")
+                if k in carried:
+                    E.highlight_cell(c[k])
             if len(c) > 5:
                 E.set_cell(c[5], "■ 적합 □ 부적합")
             if len(c) > 6:
@@ -962,6 +1010,7 @@ def fill(document, data, product, period, today=None, log=None):
     # 먼저 세우고, 아래에서 올린 공급업체 목록·공급망 마스터로 문서번호·완료일·업체를 갱신한다
     # (담당자 2026-09-06: "주원료명 모르면 작년 PQR 에서 가져오고 해당 항 첨부파일로 최신 정보를 가져오면 돼").
     olds81 = getattr(data, "prev_sections_all", None) or {}
+    seeded81 = []                                    # [(항, 표, 전년도 표)] — 갱신이 끝난 뒤 남은 칸을 노랑으로
     for prefix in ("8.1.1", "8.1.2", "8.1.3"):
         grids = olds81.get(prefix) or []
         for i, tb in enumerate(_tables(document, prefix)):
@@ -969,6 +1018,7 @@ def fill(document, data, product, period, today=None, log=None):
                 n = _seed_rows_by_header(tb, grids[i])
                 if n:
                     log("%s: 전년도 결재본에서 %d줄을 세움 — 올린 자료로 갱신" % (prefix, n))
+                    seeded81.append((prefix, tb, grids[i]))
     # 6항에 올린 공 기록서(제조·충전·포장)의 원/자재 — 코드가 R 로 시작하면 주원료(8.1.1), 나머지 부원료·포장자재(8.1.3).
     # 표에 없는 코드만 줄을 보태고, 제조원·평가문서·완료일은 아래에서 공급업체 목록으로 채운다 (담당자 2026-09-06).
     batch_mats = {}
@@ -1053,6 +1103,17 @@ def fill(document, data, product, period, today=None, log=None):
         issues.append(("8.1", ", ".join(sorted(set(grade_odd))),
                        "공급업체 평가등급이 A·B 가 아니어서 평가결과 칸을 비웠습니다 — 확인해 적으세요"))
     log("8.1 공급업체 정보 채움: %d 칸" % upd81)
+    # 올린 자료로 갱신되지 않아 아직 전년도 값인 칸은 노랑으로 — 담당자가 확인해야 할 자리다
+    # (담당자 2026-09-07: "전년도 PQR 정보로 가져오고 노랑 MARK 해").
+    남은 = {}
+    for prefix, tb, grid in seeded81:
+        got = _mark_carried_cells(tb, grid)
+        남은[prefix] = 남은.get(prefix, 0) + got
+    for prefix, got in sorted(남은.items()):
+        if got:
+            log("%s: 전년도 값 그대로인 칸 %d개를 노랑으로 표시" % (prefix, got))
+            issues.append((prefix, "", "공 기록서·공급업체 목록으로 갱신되지 않아 전년도 결재본 값을 그대로 "
+                                       "옮긴 칸이 %d개 있습니다(노랑) — 올해 자료로 확인하세요" % got))
 
     # ---------- 8.2 시험성적 ----------
     def group_fill(table, records):

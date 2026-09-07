@@ -96,3 +96,51 @@ class 밸리데이션_사유(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class 전년도_값은_노랑(unittest.TestCase):
+    """담당자 2026-09-07: "기록서가 없어 내용이 없거나 이상하면 전년도 PQR 정보로 가져오고 노랑 MARK 해"."""
+
+    def _table(self, rows):
+        import docx
+        from pqr.engine import docedit as E
+        d = docx.Document()
+        t = d.add_table(rows=len(rows), cols=len(rows[0]))
+        for i, row in enumerate(rows):
+            for j, v in enumerate(row):
+                E.set_cell(t.rows[i].cells[j], v)
+        return t
+
+    def _yellow(self, table):
+        from docx.oxml.ns import qn
+        from pqr.engine import docedit as E
+        out = []
+        for row in table.rows[1:]:
+            for cell in E.raw_cells(row):
+                if list(cell._tc.iter(qn("w:highlight"))):
+                    out.append(E.cell_text(cell))
+        return out
+
+    def test_전년도_값_그대로인_칸만_노랑으로(self):
+        from pqr.engine.recipe_ointment import _mark_carried_cells
+        old = [["연번", "관리번호", "원/자재명", "제조원"],
+               ["1", "EPB116", "벤잘코늄염화물", "Hubei"],
+               ["2", "EPB105", "붕산", "삼전순약"]]
+        table = self._table([["연번", "관리번호", "원/자재명", "제조원"],
+                             ["1", "EPB116", "벤잘코늄염화물", "Hubei"],          # 그대로 — 노랑
+                             ["2", "EPB105", "붕산", "올해 제조원㈜"]])           # 갱신됨 — 그대로 둔다
+        self.assertEqual(_mark_carried_cells(table, old), 3)
+        self.assertEqual(sorted(self._yellow(table)), sorted(["벤잘코늄염화물", "Hubei", "붕산"]))
+
+    def test_전년도에_없는_줄은_건드리지_않는다(self):
+        from pqr.engine.recipe_ointment import _mark_carried_cells
+        old = [["연번", "관리번호", "원/자재명"], ["1", "EPB116", "벤잘코늄염화물"]]
+        table = self._table([["연번", "관리번호", "원/자재명"], ["1", "P12061", "PE 병 10mL"]])
+        self.assertEqual(_mark_carried_cells(table, old), 0)
+        self.assertEqual(self._yellow(table), [])
+
+    def test_관리번호_열이_없으면_아무것도_하지_않는다(self):
+        from pqr.engine.recipe_ointment import _mark_carried_cells
+        old = [["연번", "이름"], ["1", "가"]]
+        table = self._table([["연번", "이름"], ["1", "가"]])
+        self.assertEqual(_mark_carried_cells(table, old), 0)
