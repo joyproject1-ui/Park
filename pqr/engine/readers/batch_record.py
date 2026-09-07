@@ -63,6 +63,17 @@ def _value_after(cells, i):
     return ""
 
 
+# 8.1.3 에 실을 자재가 아닌 것 — 저울 같은 계측기·설비와 배송용 하조(荷造) 상자
+# (담당자 2026-09-07: "전자 저울과 하조용 종이상자는 지워 줘")
+NOT_MATERIAL = re.compile(r"저울|계측기|측정기|하조용")
+EQUIP_CODE = re.compile(r"^(?:FAB|FAC|EQ|MC)\d")
+
+
+def is_material(code, name):
+    """공 기록서에 적혀 있어도 8.1.3 원/자재 표에 실을 것인가."""
+    return not (EQUIP_CODE.match(code or "") or NOT_MATERIAL.search(name or ""))
+
+
 def _group_of(code, kind):
     if code.startswith("R"):
         return "주원료"
@@ -122,6 +133,8 @@ def read(path):
             if not name_:
                 continue
             seen_codes.add(code)
+            if not is_material(code, name_):
+                continue                       # 저울(설비)·하조용 상자는 자재가 아니다
             out["materials"].append({"code": code, "name": name_.split("\n")[0].strip(), "spec": spec.split("\n")[0].strip(),
                                      "group": _group_of(code, out["kind"])})
     # 표 밖의 글줄('제조단위 : 82,000 g')

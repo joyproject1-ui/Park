@@ -377,9 +377,24 @@ def _seed_rows_by_header(table, old_grid):
     return len(rows)
 
 
-def _add_material_rows(table, materials):
+def _base_name(text):
+    """원/자재명에서 괄호 설명·빈칸을 뗀 이름 — '케이스(내수)' → '케이스', '케 이 스' → '케이스'."""
+    return re.sub(r"[\s·]", "", re.sub(r"[(（][^)）]*[)）]", "", str(text or "")))
+
+
+def _one_letter_off(a, b):
+    """관리번호가 한 자만 다른가 — 결재본의 오기(P38033)와 공 기록서(P38003)를 알아보려고."""
+    return len(a) == len(b) and sum(1 for x, y in zip(a, b) if x != y) == 1
+
+
+def _add_material_rows(table, materials, fixed=None):
     """표에 없는 관리번호의 원/자재를 줄로 보탠다 — 관리번호·원/자재명·규격만, 나머지 칸은 비운다(노랑).
-    표가 비어 있으면(빈 공양식) 그 줄들이 표가 된다. 보탠 줄 수를 돌려준다."""
+    표가 비어 있으면(빈 공양식) 그 줄들이 표가 된다. 보탠 줄 수를 돌려준다.
+
+    표의 관리번호가 공 기록서와 한 자만 다르고 이름이 같으면 결재본의 오기로 보고 기록서 번호로
+    고친다 — 같은 자재가 두 줄이 되지 않게 (담당자 2026-09-07: "케이스는 내수 케이스야, 기존
+    P38033 관리번호 오기라서 P38003 으로 수정해 줘"). 고친 것은 fixed 목록에 (옛, 새)로 담는다.
+    """
     if not materials:
         return 0
     width = E.grid_width(table)
@@ -388,17 +403,35 @@ def _add_material_rows(table, materials):
     c_code, c_name, c_spec = col("관리번호", "코드"), col("원/자재명", "원자재명", "자재명", "원료명"), col("규격")
     if c_code is None:
         return 0
-    have = set()
+    have = {}
     rows = []
     for ri, row in enumerate(table.rows[1:], 1):
         cells = E.grid_cells(row, width)
         text = E.cell_text(cells[c_code]).strip() if c_code in cells else ""
         if CODE.match(text):
-            have.add(text)
+            have[text] = (ri, E.cell_text(cells[c_name]).strip() if (c_name is not None and c_name in cells) else "")
             rows.append(ri)
         elif not CARRY.squeeze(E.cell_text(E.raw_cells(row)[0])).startswith("특이사항"):
             rows.append(ri)                                  # 빈 줄(공양식)
-    new = [m for m in materials if m["code"] not in have]
+    new = []
+    for m in materials:
+        if m["code"] in have:
+            continue
+        # 한 자만 다른 관리번호에 같은 이름이 붙어 있으면 그 줄의 번호가 오기다 — 줄을 보태지 않고 고친다
+        같은것 = [(code, ri) for code, (ri, nm) in have.items()
+                if _one_letter_off(code, m["code"]) and _base_name(nm)
+                and (_base_name(m["name"]) in _base_name(nm) or _base_name(nm) in _base_name(m["name"]))]
+        if len(같은것) == 1:
+            code, ri = 같은것[0]
+            cells = E.grid_cells(table.rows[ri], width)
+            if c_code in cells:
+                E.set_cell(cells[c_code], m["code"])
+                E.highlight_cell(cells[c_code])
+                have[m["code"]] = have.pop(code)
+                if fixed is not None:
+                    fixed.append((code, m["code"]))
+                continue
+        new.append(m)
     if not new:
         return 0
     filled = [ri for ri in rows if CODE.match(E.cell_text(E.grid_cells(table.rows[ri], width)[c_code]).strip())]
@@ -950,7 +983,12 @@ def fill(document, data, product, period, today=None, log=None):
                 continue
             for gi, group in enumerate(groups):
                 tb = tables[gi] if len(tables) > gi else tables[0]
-                n = _add_material_rows(tb, batch_mats.get(group) or [])
+                오기 = []
+                n = _add_material_rows(tb, batch_mats.get(group) or [], 오기)
+                for 옛, 새 in 오기:
+                    log("%s: 관리번호 %s → %s (공 기록서와 한 자 차이라 오기로 봄)" % (prefix, 옛, 새))
+                    issues.append((prefix, "%s → %s" % (옛, 새),
+                                   "표의 관리번호가 공 기록서와 한 자만 달라 오기로 보고 고쳤습니다(노랑) — 확인 필요"))
                 if n:
                     log("%s: 공 기록서의 %s %d줄을 보탬 — 공급업체 목록으로 갱신" % (prefix, group, n))
                     issues.append((prefix, ", ".join(m["code"] for m in batch_mats.get(group) or []),

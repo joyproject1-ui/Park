@@ -96,5 +96,26 @@ class 표에_보태기(unittest.TestCase):
         self.assertEqual(rows[1][:4], ["1", "RBO101", "오플록사신", "USP"])
 
 
+    def test_한_자_다른_관리번호는_오기로_보고_고친다(self):
+        # 담당자 2026-09-07: "케이스는 내수 케이스야, 기존 P38033 관리번호 오기라서 P38003 으로 수정해 줘"
+        t = self._table([self.HEAD, ["1", "P38033", "케이스(내수)", "자사규격", "한신인쇄"],
+                         ["2", "P33603", "케이스(수출)", "자사규격", "한신인쇄"]])
+        오기 = []
+        n = _add_material_rows(t, [{"code": "P38003", "name": "케 이 스", "spec": ""}], 오기)
+        self.assertEqual((n, 오기), (0, [("P38033", "P38003")]))
+        rows = [[E.cell_text(c) for c in E.raw_cells(r)] for r in t.rows]
+        self.assertEqual(len(rows), 3)                                  # 줄을 보태지 않는다
+        self.assertEqual(rows[1][1:3], ["P38003", "케이스(내수)"])
+        self.assertEqual(rows[2][1:3], ["P33603", "케이스(수출)"])
+
+
+class 자재가_아닌_것(unittest.TestCase):
+    def test_저울과_하조용_상자는_자재로_보지_않는다(self):
+        self.assertFalse(B.is_material("FAB5069", "전자저울"))
+        self.assertFalse(B.is_material("P34732", "하조용 종이상자 732호"))
+        self.assertTrue(B.is_material("P38003", "케이스"))
+        self.assertTrue(B.is_material("RBO101", "오플록사신"))
+
+
 if __name__ == "__main__":
     unittest.main()
