@@ -85,6 +85,27 @@ class 제조용수_층(unittest.TestCase):
         self.assertEqual(use_our_floor(t, self.support), [])
 
 
+class 금속성이물_라벨(unittest.TestCase):
+    def test_합계_개개_칸은_가운데_맞춤_허용기준은_왼쪽(self):
+        from pqr.engine import layout                                  # noqa: PLC0415
+        d = docx.Document()
+        d.add_paragraph("9.1.1 내수용")
+        t = d.add_table(rows=3, cols=4)
+        for j, v in enumerate(("공정", "시험항목", "허용기준", "결과")):
+            E.set_cell(t.rows[0].cells[j], v)
+        E.set_cell(t.rows[1].cells[2], "허가) 50 ㎛ 이상 이물의 합계는 50 개 이하")
+        E.set_cell(t.rows[1].cells[3], "0 개")
+        E.set_cell(t.rows[2].cells[2], "합계")
+        E.set_cell(t.rows[2].cells[3], "0 매")
+        layout.align_91_columns([t])
+        def jc(cell):
+            pr = E.cell_paras(cell._tc)[0].find(qn("w:pPr"))
+            el = pr.find(qn("w:jc")) if pr is not None else None
+            return el.get(qn("w:val")) if el is not None else None
+        self.assertEqual(jc(t.rows[2].cells[2]), "center")
+        self.assertEqual(jc(t.rows[1].cells[2]), "left")
+
+
 class 결론_표_폭(unittest.TestCase):
     def test_16_1_아래_표는_본문_들여쓰기만큼_들어가고_그만큼_좁아진다(self):
         d = docx.Document()

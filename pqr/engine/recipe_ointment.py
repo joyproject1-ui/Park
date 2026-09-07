@@ -1647,6 +1647,8 @@ def fill(document, data, product, period, today=None, log=None):
                         # 결재본은 이 쪽칸에 '합계'·'개개' 를 적고 결과를 오른쪽 칸에 둔다
                         # (담당자 2026-09-07: "포장에서의 금속성 이물도 왼쪽을 참고해 줘")
                         E.set_cell(cells[-2], "개개" if "개개" in hit["sub"] else "합계")
+                        E.set_cell_align(cells[-2], "center")      # 가운데 맞춤 (담당자 2026-09-07)
+                        E.set_cell_valign(cells[-2], "center")
                     else:
                         E.merge_right(cells[-2], cells[-1])
                         target = cells[-2]

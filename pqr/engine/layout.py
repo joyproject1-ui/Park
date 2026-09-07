@@ -17,6 +17,26 @@ def _tables_under(document, prefixes):
     return sorted(set(out))
 
 
+def align_91_columns(tables):
+    """9.1 표: 허용기준 열은 왼쪽 맞춤, 금속성이물 줄의 '합계'·'개개' 칸은 가운데 맞춤.
+
+    그 두 칸은 허용기준이 아니라 결과 칸의 이름이다
+    (담당자 2026-09-07: "금속성이물 합계/개개 추가된 글씨는 가운데 맞춤으로 정정").
+    """
+    n = 0
+    for table in tables:
+        for ri, row in enumerate(table.rows):
+            cells = E.raw_cells(row)
+            if not ri or len(cells) < 2:
+                continue
+            label = re.sub(r"\s+", "", E.cell_text(cells[-2])) in ("합계", "개개")
+            E.set_cell_align(cells[-2], "center" if label else "left")
+            if label:
+                E.set_cell_valign(cells[-2], "center")
+            n += 1
+    return n
+
+
 def _header_text(table):
     return re.sub(r"\s+", "", _text(table._tbl.findall(qn("w:tr"))[0]))
 
@@ -150,11 +170,7 @@ def apply(document, log=None, product_title=None, edms=None):
                     get_or_add(rpr, tag).set(qn("w:val"), "18")
                 small += 1
     log("일탈·변경 표 9 pt: %d" % small)
-    for ti in _tables_under(document, ("9.1",)):   # 허용기준 열 왼쪽
-        for ri, row in enumerate(T[ti].rows):
-            cells = E.raw_cells(row)
-            if ri and len(cells) >= 2:
-                E.set_cell_align(cells[-2], "left")
+    align_91_columns([T[ti] for ti in _tables_under(document, ("9.1",))])
 
     # ---- 사선 ----
     # '해당 없음' 표: 결재본의 그리기 개체 선을 지우고 빈 블록에 칸 고정 선을 긋는다
