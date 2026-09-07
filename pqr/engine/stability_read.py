@@ -27,6 +27,62 @@ def scans(folder):
     return collect_mod.same_files_once([p for p in got if p.lower().endswith(".pdf") and is_scanned(p)])
 
 
+def looked(folder):
+    """13 항에서 본 파일과, 손글씨 판독 대상이 아니라면 그 까닭 — [(이름, 까닭)].
+
+    담당자 2026-09-07: "안정성 json 파일이 보이지 않아." 판독이 아무것도 만들지 못했을 때
+    무엇을 보고 왜 지나쳤는지 그대로 보여 준다. 까닭이 빈 값이면 판독 대상이다.
+    """
+    rows = []
+    for path in collect_mod.discover(folder).get("13", []):
+        name = os.path.basename(path)
+        if name.startswith("PQR ") or name == collect_mod.handwriting_cache_name():
+            continue                          # 우리가 남긴 글은 자료가 아니다
+        if not path.lower().endswith(".pdf"):
+            rows.append((name, "PDF 가 아닙니다 — 시험일지를 PDF 로 스캔해 올려 주세요"))
+            continue
+        try:
+            scanned = is_scanned(path)
+        except Exception as error:
+            rows.append((name, "PDF 를 열지 못했습니다: %s" % error))
+            continue
+        rows.append((name, "" if scanned else "글자가 든 PDF 입니다 — 손글씨 스캔이 아니어서 "
+                                              "'보고서 작성' 이 그대로 읽습니다"))
+    return rows
+
+
+# 이름이 '13.' 으로 시작하면 13항 자료로 셈해진다 — 우리가 남긴 글은 'PQR' 로 시작한다
+LOG_NAME = "PQR 안정성 판독 기록.txt"
+
+
+def save_log(folder, lines, result=None):
+    """판독이 무엇을 했는지 제품 폴더에 남긴다 — 화면 알림은 사라지지만 이 파일은 남는다.
+
+    담당자 2026-09-07: 판독 단추를 눌렀는데 판독 파일이 안 보여 "완료된 건지 아닌지 모르겠네".
+    """
+    import datetime
+    if not folder or not os.path.isdir(folder):
+        return ""
+    got = dict(result or {})
+    head = ["PQR 안정성 판독 기록", datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"), ""]
+    if got.get("ok"):
+        head.append("결과: 판독했습니다 — %s Lot · 애매한 칸 %s개 · %s"
+                    % (got.get("lots"), got.get("unsure"), got.get("how") or ""))
+        head.append("만든 파일: %s" % os.path.basename(str(got.get("path") or "")))
+    elif got:
+        head.append("결과: 판독 파일을 만들지 못했습니다")
+        head.append("까닭: %s" % (got.get("why") or got.get("error") or "알 수 없음"))
+        for name, why in (got.get("looked") or []):
+            head.append("  · %s%s" % (name, (" — " + why) if why else " (판독 대상)"))
+    path = os.path.join(folder, LOG_NAME)
+    try:
+        with open(path, "w", encoding="utf-8") as handle:
+            handle.write("\n".join(head + [""] + ["진행 기록:"] + list(lines or [])) + "\n")
+    except OSError:
+        return ""
+    return path
+
+
 def specs_of(folder, log=None):
     """완제 성적서(9.2.4)에서 성분 이름과 규격 — 판독한 함량에 성분 이름을 붙이는 데 쓴다."""
     from .readers import coa as coa_reader
@@ -84,8 +140,11 @@ def make_reading(folder, product="", log=None, allow_pc=False):
     folder = os.path.abspath(folder)
     paths = scans(folder)
     if not paths:
-        return {"ok": False, "why": "13 폴더에 손글씨 시험일지(스캔 PDF)가 없습니다 — 먼저 (r) 13. 안정성 시험에 올려 주세요.",
-                "pages": 0}
+        saw = looked(folder)
+        why = ("13 항에 올린 파일이 없습니다 — 먼저 (r) 13. 안정성 시험에 시험일지 스캔 PDF 를 올려 주세요."
+               if not saw else
+               "13 항에 손글씨 시험일지(스캔 PDF)가 없습니다 — 올리신 파일은 판독 대상이 아닙니다.")
+        return {"ok": False, "why": why, "pages": 0, "looked": saw}
     kind, label = how(folder)
     if kind == "pc" and not allow_pc:
         # 이 PC 판독기는 느리다 — 담당자가 한 번 더 고를 때만 돌린다. 그동안 쓸 묶음을 만들어 둔다.
@@ -113,7 +172,10 @@ def make_reading(folder, product="", log=None, allow_pc=False):
         logs = handwriting.read_folder(paths, specs, say)
     if not logs:
         return {"ok": False, "pages": len(paths), "how": label,
-                "why": "시험일지에서 읽어 낸 것이 없습니다 — 원본이 너무 흐리거나 표가 다른 꼴일 수 있습니다."}
+                "why": "시험일지 %d장을 %s 로 읽었지만 얻어 낸 것이 없습니다 — 원본이 너무 흐리거나 "
+                       "표가 다른 꼴일 수 있습니다. 제품 폴더의 '%s' 를 보내 주세요."
+                       % (len(paths), label, LOG_NAME),
+                "looked": [(os.path.basename(p), "") for p in paths]}
     # 이미 있던 판독 파일(담당자가 고쳐 둔 값)이 있으면 그 값이 우선이다
     old = handwriting.load_cache(folder) if hasattr(handwriting, "load_cache") else []
     merged = list(old or [])

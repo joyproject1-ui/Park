@@ -530,6 +530,8 @@ tbody tr:hover{background:var(--accent-soft)}
 .mini{border-radius:999px;padding:5px 12px;font-weight:500;transition:background .12s,border-color .12s,color .12s,transform .1s}
 .mini:hover{background:var(--accent-soft)}
 .mini:active{transform:translateY(1px)}
+.read-btn.done{background:var(--ok-soft);border-color:var(--ok);color:var(--ok);font-weight:600}
+.read-btn.done:hover{background:var(--ok);color:#fff}
 .report-btn{background:var(--ok-soft);border-color:transparent;font-weight:600}
 .report-btn:hover{background:var(--ok);color:#fff}
 .final-btn{background:var(--accent);color:#fff;border-color:var(--accent)}
@@ -1420,6 +1422,22 @@ function staleReport(d){
   const made = d.final_report_time || "", version = SOURCE.program_version || "";
   return !!(d.final_report && made && version && made < version);
 }
+/* '안정성 판독' 단추 — 제품 폴더에 판독 파일이 있으면 언제 읽었는지까지 보입니다.
+   담당자 2026-09-07: "안정성 판독이 완료된 건지 아닌지 모르겠네" */
+function readButton(d, off){
+  const got = d.stability_read || {};
+  if (!got.time){
+    return `<button class="mini read-btn" data-read="${d.code}" ${off
+      || `title="13 폴더의 손글씨 안정성 시험일지를 읽어 '13. 안정성시험일지 판독.json' 을 만듭니다"`
+      }>안정성 판독 🔍</button> `;
+  }
+  const detail = [got.lots ? `${got.lots} Lot` : "", got.points ? `시점 ${got.points}개` : "",
+                  got.unsure ? `애매한 칸 ${got.unsure}개` : ""].filter(Boolean).join(" · ");
+  return `<button class="mini read-btn done" data-read="${d.code}" ${off
+    || `title="${esc(got.time)} 에 읽었습니다${detail ? " — " + esc(detail) : ""}
+${esc(got.name || "")}
+다시 누르면 새로 읽습니다 (읽어 둔 값은 그대로 씁니다)"`}>판독됨 ✓ ${esc(got.time.slice(5, 16))}</button> `;
+}
 function reportButton(d){
   const off = uploadEnabled() ? "" : `disabled title="python -m pqr serve 로 실행한 경우에만 동작합니다"`;
   // 버튼은 두 개: 자료를 한꺼번에 올리는 버튼과 보고서 버튼.
@@ -1427,8 +1445,9 @@ function reportButton(d){
   let html = `<button class="mini bulk-btn" data-bulk="${d.code}" ${off}>파일 한번에 올리기</button> `
     // 13항 손글씨 시험일지를 먼저 읽어 두는 단추 — 판독은 길게는 한 시간이라 보고서 만들기와 떼어 둔다
     // (담당자 2026-09-07: "여기에 판독 json 만드는 단추를 만들어 누르고, 완성되면 보고서 작성을 누르게")
-    + `<button class="mini read-btn" data-read="${d.code}" ${off
-        || `title="13 폴더의 손글씨 안정성 시험일지를 읽어 '13. 안정성시험일지 판독.json' 을 만듭니다"`}>안정성 판독 🔍</button> `
+    // 판독 파일이 폴더에 있으면 '판독됨 ✓' 로 보인다 — 눌렀다 돌아오면 되돌아가서
+    // 읽은 것인지 아직인지 알 수 없었다 (담당자 2026-09-07: "완료된 건지 아닌지 모르겠네")
+    + readButton(d, off)
     ;   /* '자료 묶기' 단추는 자동 완성 엔진이 들어오며 뺐다 — 보고서는 폴더의 자료로 프로그램이 바로 만든다. */
   if (d.final_report){
     const stale = staleReport(d);
@@ -1480,6 +1499,36 @@ function md(text){
   return esc(text || "").replace(/\*\*(.+?)\*\*/g, "<b>$1</b>").replace(/`([^`]+)`/g, "<code>$1</code>");
 }
 
+/* 판독이 끝나면 몇 초 뒤 저절로 '보고서 작성' 으로 넘어갑니다 — 담당자가 단추를 한 번 더
+   누르지 않아도 되게 (담당자 2026-09-07). 잘못 눌렀을 때를 위해 '그만두기' 를 함께 둡니다. */
+const CHAIN_WAIT = 5;
+let chainTimer = null;
+function stopChain(){
+  if (chainTimer){ clearInterval(chainTimer); chainTimer = null; }
+}
+function chainToReport(code){
+  stopChain();
+  let left = CHAIN_WAIT;
+  const stop = document.getElementById("chain-stop");
+  if (stop) stop.addEventListener("click", ()=>{
+    stopChain();
+    showToast(`보고서 작성을 그만두었습니다 — 판독 결과는 그대로 남아 있습니다.`
+      + `<br>준비되면 그 줄의 <b>보고서 작성</b> 을 누르세요.`);
+  });
+  chainTimer = setInterval(()=>{
+    left -= 1;
+    const clock = document.getElementById("chain-clock");
+    if (clock) clock.textContent = left;
+    if (left > 0) return;
+    stopChain();
+    // 그 줄이 지금 화면에 없을 수도 있다(다른 갈래를 보고 있거나 찾기를 걸어 둔 경우) —
+    // 그때도 작성은 시작한다. 진행 글은 화면 위 알림으로 보인다.
+    const button = document.querySelector(`.report-btn[data-report="${code}"]`)
+      || Object.assign(document.createElement("button"), { className:"mini report-btn" });
+    if (!button.disabled) makeReport(code, button);
+  }, 1000);
+}
+
 /* 안정성 판독 — 13 폴더의 손글씨 시험일지를 읽어 '13. 안정성시험일지 판독.json' 을 만듭니다.
    이 단추를 누른 뒤 '보고서 작성' 을 누르면 13항이 채워집니다 (담당자 2026-09-07). */
 async function readStability(code, button, allowPc){
@@ -1513,13 +1562,36 @@ async function readStability(code, button, allowPc){
       return;
     }
     if (payload.ok){
+      // 판독이 끝나면 단추가 '판독됨 ✓' 로 남고, 이어서 보고서를 저절로 만듭니다
+      // (담당자 2026-09-07: "판독 완료 후에 보고서 작성 단추를 누르지 않아도 자동으로 넘어갈 수 있나")
+      if (payload.data){ adopt(payload.data); render(); }
+      const row = (DATA || []).find(d => d.code === code) || {};
+      const next = !row.done && row.pct >= 100 && uploadEnabled();
       showToast(`🔍 <b>안정성 시험일지 ${payload.pages}장을 읽었습니다</b> — ${esc(payload.how||"")}`
         + `<br>${payload.lots} Lot · 읽기 애매한 칸 ${payload.unsure}개(보고서에 노랑·주황으로 표시됩니다)`
         + `<br>📄 ${esc(payload.name||"")}`
-        + `<br><b>이제 '보고서 작성' 을 누르세요.</b>`
+        + (next
+            ? `<br><b>이어서 보고서를 만듭니다 — <span id="chain-clock">${CHAIN_WAIT}</span>초 뒤 시작합니다.</b>`
+              + ` <button class="mini" id="chain-stop">그만두기</button>`
+              + `<br><span class="muted">그만두어도 판독 결과는 그대로 남습니다 — 나중에 '보고서 작성' 을 누르면 됩니다.</span>`
+            : row.done
+              ? `<br><b>보고서를 다시 만들려면 '보고서 완료 📄' 를 누르고 재작성을 고르세요.</b>`
+              : `<br><b>자료 수집이 100% 가 되면 '보고서 작성' 을 누르세요.</b>`)
         + `<br><span class="muted">${esc(payload.folder||"")}</span>`);
+      if (next) chainToReport(code);
     } else {
-      showToast(`<b style="color:#b91c1c">안정성 판독을 하지 못했습니다</b><br>${esc(payload.why || payload.error || "")}`);
+      // 무엇을 보고 왜 지나쳤는지까지 보인다 — '판독 파일이 안 보인다' 는 물음의 답이다
+      const saw = payload.looked || [];
+      showToast(`<div class="star-note"><b style="color:#b91c1c">안정성 판독을 하지 못했습니다 — `
+        + `<code>13. 안정성시험일지 판독.json</code> 이 만들어지지 않았습니다</b>`
+        + `<br>${esc(payload.why || payload.error || "")}`
+        + (saw.length
+            ? `<br><b>13 항에서 본 파일</b><ul class="issue-list">`
+              + saw.map(f=>`<li>${esc(f[0])}${f[1] ? ` — <span class="muted">${esc(f[1])}</span>` : ``}</li>`).join("")
+              + `</ul>`
+            : `<br><span class="muted">13 항에서 본 파일이 없습니다.</span>`)
+        + (payload.log_file ? `<br>📄 자세한 기록: <code>${esc(payload.log_file)}</code> (제품 폴더)` : ``)
+        + `<br><span class="muted">${esc(payload.folder||"")}</span></div>`);
     }
   } catch (error){
     clearInterval(watcher);
@@ -1789,6 +1861,7 @@ function watchProgress(code, button, label){
   return setInterval(tick, 2000);
 }
 async function makeReport(code, button){
+  stopChain();                       // 담당자가 먼저 눌렀으면 저절로 넘어가는 시계는 멈춘다
   const original = button.textContent;
   button.textContent = "작성 중…"; button.disabled = true;
   const watcher = watchProgress(code, button);
@@ -1866,10 +1939,13 @@ function showToast(html){
   tip.innerHTML = html; tip.classList.add("on");
   tip.style.left = "50%"; tip.style.top = "18px"; tip.style.transform = "translateX(-50%)";
   clearTimeout(toastTimer);
-  const hasButtons = /class="mini /.test(html);
+  const hasButtons = /class="mini/.test(html);
   const hasList = /issue-list/.test(html);
+  // 판독·작성이 안 됐다는 알림은 오래 남긴다 — 6초 만에 사라져 담당자가 까닭을 못 봤다
+  // (담당자 2026-09-07: "안정성 판독이 완료된 건지 아닌지 모르겠네")
+  const bad = /star-note|색:#b91c1c|color:#b91c1c/.test(html);
   toastTimer = setTimeout(()=>{ tip.classList.remove("on"); tip.style.transform = ""; },
-                          hasList ? 30000 : (hasButtons ? 20000 : 6000));
+                          bad ? 60000 : (hasList ? 30000 : (hasButtons ? 20000 : 6000)));
 }
 function progCell(d){
   return `<div class="prog"><span class="track"><span class="fill" style="width:${d.pct}%"></span></span><span class="pct num">${d.pct}%</span></div>`;

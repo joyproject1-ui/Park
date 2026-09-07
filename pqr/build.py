@@ -638,7 +638,7 @@ def find_final_report(folder, matcher=None, include_drafts=False):
 # 상수는 여기 두고 engine.collect 가 가져다 쓴다 — collect 가 build 를 읽으므로 반대로 두면 돈다.
 OUTPUT_DIR = "PQR 작성본"
 
-SIDE_FILES = (AUTO_DRAFT_MARKER, "PQR 문의 목록", "PQR 작성 기록")
+SIDE_FILES = (AUTO_DRAFT_MARKER, "PQR 문의 목록", "PQR 작성 기록", "PQR 안정성 판독 기록")
 
 
 def has_source_files(folder, matcher=None):
@@ -725,6 +725,42 @@ def final_attachment_files(folder, matcher=None):
                 continue
             rows.append(path)
     return rows
+
+
+# 13항 손글씨 판독 파일 — engine.handwriting.CACHE_NAME 과 같은 이름이다(시험이 지킨다)
+READING_NAME = "13. 안정성시험일지 판독.json"
+
+
+def stability_reading(folder):
+    """제품 폴더의 '13. 안정성시험일지 판독.json' 이 언제 만들어졌고 무엇이 들었는지.
+
+    담당자 2026-09-07: "안정성 판독이 완료된 건지 아닌지 모르겠네" — 단추는 눌렀다 돌아오면
+    다시 '안정성 판독 🔍' 로 보여서, 읽은 것인지 아직인지 알 길이 없었습니다. 화면이
+    '판독됨 ✓' 과 읽은 시각·Lot 수를 그대로 보이도록 이 값을 함께 내려 줍니다.
+    """
+    import datetime
+    import io
+    import json
+    name = READING_NAME
+    path = os.path.join(folder or "", name)
+    if not os.path.isfile(path):
+        return {}
+    got = {"name": name,
+           "time": datetime.datetime.fromtimestamp(os.path.getmtime(path)).strftime("%Y-%m-%d %H:%M")}
+    try:
+        with io.open(path, encoding="utf-8") as handle:
+            payload = json.load(handle)
+    except (OSError, ValueError):
+        return got                       # 파일은 있는데 읽지 못했다 — 시각만이라도 보인다
+    logs = payload if isinstance(payload, list) else (payload.get("logs") or [])
+    got["lots"] = len(logs)
+    got["points"] = sum(len(one.get("points") or []) for one in logs if isinstance(one, dict))
+    got["unsure"] = sum(len(point.get("unsure") or [])
+                        for one in logs if isinstance(one, dict)
+                        for point in (one.get("points") or []) if isinstance(point, dict))
+    if isinstance(payload, dict) and payload.get("covers_all"):
+        got["covers_all"] = True
+    return got
 
 
 def final_report_time(folder, matcher=None):
@@ -1263,6 +1299,9 @@ def build(input_dir=None, files=None, today=None, config=None, period=None):
             # 단, 근거 자료가 제품 폴더에서 사라졌으면 완료로 세우지 않습니다 — 그 보고서는
             # 더 이상 폴더의 자료로 뒷받침되지 않으므로 다시 작성해야 합니다
             # (담당자 2026-09: "자료가 없으면 보고서 완료 버튼이 보고서 작성 버튼으로").
+            # 13항 손글씨 판독 파일이 폴더에 있으면 '안정성 판독' 단추가 '판독됨 ✓' 로 바뀝니다.
+            "stability_read": (stability_reading(os.path.join(input_dir, folder_for_code[code]))
+                               if folder_for_code.get(code) else {}),
             "final_report": final_reports.get(code, ""),
             "final_report_time": (final_report_time(os.path.join(input_dir, folder_for_code[code]))
                                   if final_reports.get(code) and folder_for_code.get(code) else ""),

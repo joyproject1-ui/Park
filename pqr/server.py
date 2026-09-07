@@ -1048,6 +1048,15 @@ class Handler(BaseHTTPRequestHandler):
             self.workspace.progress[code]["running"] = False
         got["folder"] = folder
         got["name"] = os.path.basename(str(got.get("path") or ""))
+        # 무엇을 했는지 제품 폴더에 남긴다 — 화면 알림은 사라져도 이 파일은 남는다
+        # (담당자 2026-09-07: "안정성 판독이 완료된 건지 아닌지 모르겠네", "json 파일이 보이지 않아").
+        got["log_file"] = os.path.basename(str(stability_read.save_log(folder, steps, got) or ""))
+        if got.get("ok"):
+            # 판독 파일이 새로 생겼으니 화면을 다시 세운다 — 단추가 '판독됨 ✓' 로 바뀌고,
+            # 이어서 보고서를 만들 수 있는지도 이 자료로 가른다 (담당자 2026-09-07:
+            # "안정성 판독이 완료된 건지 아닌지 모르겠네").
+            self.workspace.rebuild()
+            got["data"] = self.workspace.dashboard_payload()
         return got
 
     def _handle_report(self):

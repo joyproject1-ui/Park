@@ -23,7 +23,8 @@ class 판독_단추(unittest.TestCase):
     def test_시험일지가_없으면_까닭을_알려_준다(self):
         got = stability_read.make_reading(self.folder)
         self.assertFalse(got["ok"])
-        self.assertIn("13 폴더", got["why"])
+        self.assertIn("13 항에 올린 파일이 없습니다", got["why"])
+        self.assertEqual(got["looked"], [])
 
     def test_읽은_결과를_covers_all_로_저장한다(self):
         self._scan("퀴노비드안연고 장기 안정성시험일지 OEX101.pdf")
@@ -171,3 +172,74 @@ class 덮어쓰지_못한_첨부(unittest.TestCase):
         self.assertEqual(len(data.issues), 1)
         self.assertTrue(data.issues[0][2].startswith("★"))
         self.assertTrue(said)
+
+
+class 무엇을_보았는지(unittest.TestCase):
+    """판독 파일이 안 생겼을 때 무엇을 보고 왜 지나쳤는지 말한다
+    (담당자 2026-09-07: "안정성 json 파일이 보이지 않아")."""
+
+    def setUp(self):
+        self.folder = tempfile.mkdtemp(prefix="pqr-look-")
+        self.thirteen = os.path.join(self.folder, "13. 안정성 시험")
+        os.makedirs(self.thirteen)
+
+    def _put(self, name, data=b"x"):
+        with open(os.path.join(self.thirteen, name), "wb") as handle:
+            handle.write(data)
+
+    def test_pdf_가_아닌_자료는_까닭과_함께_보인다(self):
+        self._put("13. 안정성 시험 - 개인.mht")
+        got = stability_read.make_reading(self.folder)
+        self.assertFalse(got["ok"])
+        self.assertIn("손글씨 시험일지(스캔 PDF)가 없습니다", got["why"])
+        self.assertEqual(got["looked"], [("13. 안정성 시험 - 개인.mht",
+                                          "PDF 가 아닙니다 — 시험일지를 PDF 로 스캔해 올려 주세요")])
+
+    def test_우리가_남긴_글은_세지_않는다(self):
+        self._put(stability_read.LOG_NAME)
+        with open(os.path.join(self.folder, handwriting.CACHE_NAME), "w", encoding="utf-8") as fh:
+            fh.write("[]")
+        self.assertEqual(stability_read.looked(self.folder), [])
+
+    def test_판독_기록을_제품_폴더에_남긴다(self):
+        got = {"ok": False, "why": "13 항에 올린 파일이 없습니다",
+               "looked": [("가.mht", "PDF 가 아닙니다")]}
+        path = stability_read.save_log(self.folder, ["첫 줄", "둘째 줄"], got)
+        self.assertEqual(os.path.basename(path), "PQR 안정성 판독 기록.txt")
+        with open(path, encoding="utf-8") as handle:
+            text = handle.read()
+        self.assertIn("판독 파일을 만들지 못했습니다", text)
+        self.assertIn("가.mht — PDF 가 아닙니다", text)
+        self.assertIn("둘째 줄", text)
+
+    def test_판독_기록은_자료로_세지_않는다(self):
+        from pqr import build
+        self.assertTrue(any(stability_read.LOG_NAME.startswith(side) for side in build.SIDE_FILES))
+
+
+class 판독_상태(unittest.TestCase):
+    """화면이 '판독됨 ✓' 을 보이도록 판독 파일의 시각·Lot 수를 함께 내려 준다."""
+
+    def setUp(self):
+        self.folder = tempfile.mkdtemp(prefix="pqr-state-")
+
+    def test_판독_파일이_없으면_빈_값(self):
+        from pqr import build
+        self.assertEqual(build.stability_reading(self.folder), {})
+
+    def test_읽은_시각과_lot_시점_애매한_칸을_센다(self):
+        from pqr import build
+        payload = {"covers_all": True, "logs": [
+            {"lot": "OEY301", "points": [{"period": "Initial", "unsure": ["done"]},
+                                         {"period": "3M", "unsure": []}]},
+            {"lot": "OEY302", "points": [{"period": "Initial", "unsure": ["함량"]}]}]}
+        with open(os.path.join(self.folder, build.READING_NAME), "w", encoding="utf-8") as fh:
+            json.dump(payload, fh, ensure_ascii=False)
+        got = build.stability_reading(self.folder)
+        self.assertEqual((got["lots"], got["points"], got["unsure"]), (2, 3, 2))
+        self.assertTrue(got["covers_all"])
+        self.assertRegex(got["time"], r"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$")
+
+    def test_이름은_판독기가_쓰는_이름과_같다(self):
+        from pqr import build
+        self.assertEqual(build.READING_NAME, handwriting.CACHE_NAME)
