@@ -850,8 +850,17 @@ class Handler(BaseHTTPRequestHandler):
         names = sorted(n for n in os.listdir(folder)
                        if n.startswith("13. Claude 판독 요청") and n.endswith(".zip"))
         if not names:
-            return self._send(404, "판독 요청 묶음이 없습니다 — 보고서를 한 번 만들면 생깁니다.",
-                              "text/plain; charset=utf-8")
+            # 묶음이 아직 없으면 그 자리에서 만든다 — 이 PC 의 Claude Code 로 읽는 길을 쓰면
+            # 묶음이 만들어지지 않는데, 담당자가 웹 대화 길을 고를 수도 있다 (2026-09-07).
+            from .engine import handreq, stability_read
+            paths = stability_read.scans(folder)
+            if not paths:
+                return self._send(404, "13 폴더에 손글씨 시험일지(스캔 PDF)가 없습니다.",
+                                  "text/plain; charset=utf-8")
+            product = next((p["name"] for p in self.workspace.data["products"] if p["code"] == code), code)
+            names = [n for n, _ in handreq.make_request(folder, paths, product or "")]
+            if not names:
+                return self._send(500, "판독 요청 묶음을 만들지 못했습니다.", "text/plain; charset=utf-8")
         try:
             which = max(0, min(len(names) - 1, int((query.get("part") or ["1"])[0]) - 1))
         except ValueError:
