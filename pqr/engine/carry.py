@@ -111,6 +111,12 @@ def _label_columns(headers):
             if h and LABEL_KEY not in h and not any(w in h for w in ROW_NUMBER)}
 
 
+# 해마다 새로 생기는 이력 — 전년도 값을 옮기면 올해 없던 일이 있는 것으로 적힌다
+# (담당자 2026-09-07: "일탈이 없는데 일탈 문서번호는 왜 작성한 거야?" — 11.1 에 전년도
+# 일탈 문서번호 DR-240509-06 이 옮겨져 '이력 없음' 이라는 특이사항과 어긋났다).
+THIS_YEAR_ONLY = ("11", "12", "14", "15")
+
+
 def carry(document, old_document, log=None):
     """빈 칸에 전년도 값을 넣는다. 넣은 칸 수를 돌려준다."""
     new_by, old_by = _tables_by_section(document), _tables_by_section(old_document)
@@ -119,6 +125,8 @@ def carry(document, old_document, log=None):
         olds = old_by.get(section)
         if not olds:
             continue
+        if section.split(".")[0] in THIS_YEAR_ONLY:
+            continue                           # 일탈·변경·반품·시정조치는 올해 자료로만 적는다
         for i, table in enumerate(tables):
             if i >= len(olds):
                 break

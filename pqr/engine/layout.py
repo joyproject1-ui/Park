@@ -245,6 +245,12 @@ def apply(document, log=None, product_title=None, edms=None):
         log("7항 비고 사선 합치기: %d" % E.merge_remark_column(T[ti]))
         # 조제·충전·포장(내수)·포장(수출) 네 칸은 같은 폭 (담당자 2026-09-07)
         log("7항 공정 칸 폭 같게: %d" % E.equal_columns(T[ti], ("조제", "충전", "포장"), prefix=True))
+    # 8.1.x 의 좁은 열('규격'·'평가결과')은 글씨가 세로로 쪼개지지 않게 넓힌다 (담당자 2026-09-07)
+    넓힘 = 0
+    for ti in _tables_under(document, ("8.1.1", "8.1.3")):
+        넓힘 += E.widen_narrow_columns(T[ti], ("규격", "평가결과"), chars=2)
+    if 넓힘:
+        log("8.1 좁은 칸 넓힘: %d" % 넓힘)
     같게 = 0
     for ti in _tables_under(document, ("10.2", "10.3", "10.4", "10.5")):
         같게 += E.equal_columns(T[ti], ("IQ", "OQ", "PQ"))

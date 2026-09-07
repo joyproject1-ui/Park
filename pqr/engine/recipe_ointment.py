@@ -423,6 +423,20 @@ def _other_market(columns, values, k):
                for j, (_gi, name) in enumerate(columns) if j != k)
 
 
+def _last_data_row(table):
+    """마지막 자료 줄 = '특이사항' 줄 바로 위. 특이사항이 없으면 마지막 줄.
+
+    담당자 2026-09-07: "특이사항은 연번 4로 적는 게 아니고 13.2항 표 연번 3 아래 바로 기재해야지."
+    자료 줄이 모자라면 마지막 자료 줄을 복제해 늘리는데, 그 자리를 '끝에서 두 번째' 로 박아 두면
+    특이사항 줄이 복제되어 그 글이 연번 줄 안으로 들어간다.
+    """
+    for i in range(len(table.rows) - 1, 0, -1):
+        cells = E.raw_cells(table.rows[i])
+        if cells and CARRY.squeeze(E.cell_text(cells[0])).startswith("특이사항"):
+            return max(1, i - 1)
+    return max(1, len(table.rows) - 1)
+
+
 def _mark_carried_cells(table, old_grid):
     """전년도 결재본에서 옮겨 온 값이 그대로 남은 칸을 노랑으로 표시한다 → 표시한 칸 수.
 
@@ -2860,7 +2874,7 @@ def _fill_stability(document, stab, log, assay_limits=None):
     """stab: {"post_dom": [...], "post_exp": [...], "long_dom": [...], "long_exp": [...],
     "trend_dom": [...], "trend_exp": [...]} — 손글씨 판독(비전) 결과. 형식은 kynobuild/data.py 와 같다."""
     def fill_post(table, rows):
-        f, l = E.fit_rows(table, 1, len(table.rows) - 2, max(1, len(rows)))
+        f, l = E.fit_rows(table, 1, _last_data_row(table), max(1, len(rows)))
         for i, (no, yr, per, lot, pack, day, note) in enumerate(rows):
             c = E.raw_cells(table.rows[f + i])
             for k, v in enumerate((no, yr, per, lot, pack)):
@@ -2871,7 +2885,7 @@ def _fill_stability(document, stab, log, assay_limits=None):
 
     def fill_long(table, groups):
         total = sum(len(g[5]) for g in groups)
-        f, l = E.fit_rows(table, 1, len(table.rows) - 2, max(1, total))
+        f, l = E.fit_rows(table, 1, _last_data_row(table), max(1, total))
         ri, prev_year = f, None
         for no, yr, lot, pack, why, points in groups:
             for pi, (period, day) in enumerate(points):

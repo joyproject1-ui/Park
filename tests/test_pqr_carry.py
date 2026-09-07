@@ -144,3 +144,43 @@ class 전년도_값은_노랑(unittest.TestCase):
         old = [["연번", "이름"], ["1", "가"]]
         table = self._table([["연번", "이름"], ["1", "가"]])
         self.assertEqual(_mark_carried_cells(table, old), 0)
+
+
+class 올해_이력만(unittest.TestCase):
+    """담당자 2026-09-07: "일탈이 없는데 일탈 문서번호는 왜 작성한 거야?" """
+
+    def _doc(self, rows):
+        import docx
+        from pqr.engine import docedit as E
+        d = docx.Document()
+        d.add_paragraph("11.1 중요 일탈 및 기준일탈 내역")
+        t = d.add_table(rows=len(rows), cols=len(rows[0]))
+        for i, row in enumerate(rows):
+            for j, v in enumerate(row):
+                E.set_cell(t.rows[i].cells[j], v)
+        return d, t
+
+    def test_일탈_문서번호는_전년도에서_옮기지_않는다(self):
+        from pqr.engine import carry as C, docedit as E
+        old, _ = self._doc([["연번", "Lot No.", "문서번호", "일탈사항"],
+                            ["1", "OEX101", "DR-240509-06", "충전 수율"]])
+        new, table = self._doc([["연번", "Lot No.", "문서번호", "일탈사항"],
+                                ["1", "", "", ""]])
+        C.carry(new, old)
+        self.assertEqual(E.cell_text(table.rows[1].cells[2]), "")
+
+    def test_다른_항의_규격은_그대로_옮긴다(self):
+        import docx
+        from pqr.engine import carry as C, docedit as E
+        def make(rows):
+            d = docx.Document()
+            d.add_paragraph("8.1.3 부원료 및 포장자재")
+            t = d.add_table(rows=len(rows), cols=len(rows[0]))
+            for i, row in enumerate(rows):
+                for j, v in enumerate(row):
+                    E.set_cell(t.rows[i].cells[j], v)
+            return d, t
+        old, _ = make([["연번", "관리번호", "규격"], ["1", "EPB116", "KP"]])
+        new, table = make([["연번", "관리번호", "규격"], ["1", "EPB116", ""]])
+        C.carry(new, old)
+        self.assertEqual(E.cell_text(table.rows[1].cells[2]), "KP")

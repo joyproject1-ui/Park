@@ -2209,6 +2209,52 @@ def equal_columns(table, names, prefix=False):
     return len(cols)
 
 
+# 굴림 10pt 한글 한 글자 ≒ 200 twip, 칸 좌우 여백 ≒ 220 twip
+CHAR_W, CELL_PAD = 200, 220
+
+
+def widen_narrow_columns(table, names, chars=2):
+    """이름이 names 인 열이 글자 chars 개도 못 담을 만큼 좁으면 넓힌다 → 넓힌 열 수.
+
+    담당자 2026-09-07: "칸은 글씨가 1줄이나 2줄에서 모두 나오게" — 8.1.3 의 '규격' 열이 좁아
+    '자사규격' 이 넉 줄로, '평가결과' 의 '적합' 이 두 줄로 세로로 쪼개졌다. 모자란 만큼을
+    가장 넓은 열에서 덜어 오므로 표 전체 폭은 그대로다.
+    """
+    width = grid_width(table)
+    if not table.rows or not width:
+        return 0
+    grid = table._tbl.find(qn("w:tblGrid"))
+    gcols = grid.findall(qn("w:gridCol")) if grid is not None else []
+    if not gcols:
+        return 0
+    head = {i: re.sub(r"\s+", "", cell_text(c)) for i, c in grid_cells(table.rows[0], width).items()}
+    need = chars * CHAR_W + CELL_PAD
+    좁은칸 = [i for i, text in head.items()
+              if i < len(gcols) and any(n in text for n in names)
+              and int(gcols[i].get(qn("w:w")) or 0) < need]
+    if not 좁은칸:
+        return 0
+    for i in 좁은칸:
+        모자람 = need - int(gcols[i].get(qn("w:w")) or 0)
+        남 = [j for j in range(len(gcols)) if j != i and j not in 좁은칸]
+        if not 남:
+            return 0
+        큰것 = max(남, key=lambda j: int(gcols[j].get(qn("w:w")) or 0))
+        덜어옴 = min(모자람, max(0, int(gcols[큰것].get(qn("w:w")) or 0) - need))
+        if 덜어옴 <= 0:
+            continue
+        gcols[i].set(qn("w:w"), str(int(gcols[i].get(qn("w:w")) or 0) + 덜어옴))
+        gcols[큰것].set(qn("w:w"), str(int(gcols[큰것].get(qn("w:w")) or 0) - 덜어옴))
+    for row in table.rows:                          # 칸 폭도 그리드에 맞춘다
+        for i, cell in grid_cells(row, width).items():
+            if i < len(gcols) and _span(cell._tc) == 1:
+                w = _tcpr(cell._tc).find(qn("w:tcW"))
+                if w is not None:
+                    w.set(qn("w:w"), gcols[i].get(qn("w:w")))
+                    w.set(qn("w:type"), "dxa")
+    return len(좁은칸)
+
+
 def keep_lines_in_cells(table, header, needles):
     """이름에 needles 가 든 칸의 글이 쪽 경계에서 나뉘지 않게 하고 세로 가운데로 놓는다.
 

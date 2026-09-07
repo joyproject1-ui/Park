@@ -202,7 +202,7 @@ def ask_once(prompt, folder=None, timeout=180, extra=()):
 
 
 def _ask(exe, prompt, folder, log=None, paths=()):
-    """읽기(Read)만 허용해 한 번 물어본다 — 시험일지 판독용.
+    r"""읽기(Read)만 허용해 한 번 물어본다 — 시험일지 판독용.
 
     읽을 파일이 있는 폴더를 모두 --add-dir 로 준다. 담당자 PC 2026-09-07: 시험일지가
     압축 안에 있어 임시 폴더(%TEMP%\pqr-engine-…)에 풀렸는데 제품 폴더만 열어 주는 바람에
@@ -363,3 +363,53 @@ def read_logs(paths, specs=None, log=None, folder=None, workers=WORKERS, chunk=C
         handwriting.merge_logs(merged, results[gi], log)
     merged.sort(key=lambda r: (r.get("year") or "", r.get("lot") or ""))
     return merged
+
+CHANGE_PROMPT = """다음 변경요청서(스캔 PDF)를 읽고 JSON 만 출력하세요.
+
+읽을 파일:
+%(file)s
+
+규칙
+· 보이는 대로만 적습니다 — 안 보이면 빈 값으로 두고 지어내지 않습니다.
+· "actions" 는 '변경 실행 계획' 표의 부서별 조치사항입니다. 부서 이름과 할 일을 짝으로 적습니다.
+· "products" 는 '관련 제품' 에 적힌 제품 이름입니다.
+
+{"doc_no": "CC-240723-08",
+ "title": "변경명 한 줄",
+ "description": "변경 내용 (여러 줄이면 줄바꿈으로)",
+ "reason": "변경 사유",
+ "products": "관련 제품",
+ "approved": "2024.08.01",
+ "actions": [["부서", "조치사항"], ["부서", "조치사항"]]}
+"""
+
+
+def read_change(path, folder=None, log=None):
+    """스캔 변경요청서를 이 PC 의 Claude Code 로 읽는다 — readers.change.read_change 와 같은 꼴.
+
+    담당자 2026-09-07: "변경요청서 읽으면 돼 PDF 라서 못 읽는 거야?" — PDF 라서가 아니라
+    글자가 없는 스캔본이라 글자 판독기로는 한 자도 안 나온다. 시험일지와 같은 길로 읽는다.
+    """
+    say = log or (lambda *a: None)
+    if not _exe():
+        raise RuntimeError("이 PC 에 Claude Code 가 없습니다")
+    where = folder or os.path.dirname(os.path.abspath(path))
+    got = _json_object(_ask(_exe(), CHANGE_PROMPT % {"file": os.path.abspath(path)},
+                            where, None, [path]))
+    acts = []
+    for one in got.get("actions") or []:
+        if isinstance(one, (list, tuple)) and len(one) >= 2:
+            acts.append((str(one[0] or "").strip(), str(one[1] or "").strip()))
+        elif isinstance(one, dict):
+            acts.append((str(one.get("team") or "").strip(), str(one.get("action") or "").strip()))
+    out = {"doc_no": str(got.get("doc_no") or "").strip(),
+           "title": str(got.get("title") or "").strip(),
+           "description": str(got.get("description") or "").strip(),
+           "reason": str(got.get("reason") or "").strip(),
+           "products": str(got.get("products") or "").strip(),
+           "approved": str(got.get("approved") or "").strip(),
+           "attachments": "", "target_date": "", "all_dates": [],
+           "actions": [(t, a) for t, a in acts if a]}
+    say("    [12] %s — Claude Code 로 읽음: %s (조치 %d건)"
+        % (os.path.basename(path), out["title"] or "제목 못 읽음", len(out["actions"])))
+    return out

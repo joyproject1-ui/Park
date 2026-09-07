@@ -296,3 +296,39 @@ class 경향표_특이사항(unittest.TestCase):
                  "points": [{"period": "36M", "done": "2025.03.10", "assays": {"오플록사신": 99.1}}]}]
         first, second = self._trend(logs), self._trend(logs)
         self.assertEqual(first, second)
+
+
+class 특이사항_줄은_복제하지_않는다(unittest.TestCase):
+    """담당자 2026-09-07: "특이사항은 연번 4로 적는 게 아니고 13.2항 표 연번 3 아래 바로 기재해야지"."""
+
+    def _table(self, rows):
+        d = docx.Document()
+        t = d.add_table(rows=len(rows), cols=len(rows[0]))
+        for i, row in enumerate(rows):
+            for j, v in enumerate(row):
+                E.set_cell(t.rows[i].cells[j], v)
+        return t
+
+    def test_특이사항_줄_위가_마지막_자료_줄(self):
+        from pqr.engine.recipe_ointment import _last_data_row
+        t = self._table([["연번", "Lot No."], ["1", "OEX101"], ["특이사항 (Comment)", ""]])
+        self.assertEqual(_last_data_row(t), 1)
+
+    def test_특이사항_뒤에_줄이_더_있어도_그_위를_고른다(self):
+        from pqr.engine.recipe_ointment import _last_data_row
+        t = self._table([["연번", "Lot No."], ["1", "OEX101"], ["2", "OEX102"],
+                         ["특이사항 (Comment)", ""], ["", ""]])
+        self.assertEqual(_last_data_row(t), 2)
+
+    def test_특이사항이_없으면_마지막_줄(self):
+        from pqr.engine.recipe_ointment import _last_data_row
+        t = self._table([["연번", "Lot No."], ["1", "OEX101"], ["2", "OEX102"]])
+        self.assertEqual(_last_data_row(t), 2)
+
+    def test_늘려도_특이사항_글이_자료_줄에_들어가지_않는다(self):
+        from pqr.engine.recipe_ointment import _last_data_row
+        t = self._table([["연번", "Lot No."], ["1", ""],
+                         ["특이사항 (Comment)", ""], ["", ""]])
+        E.fit_rows(t, 1, _last_data_row(t), 3)
+        글 = [E.cell_text(E.raw_cells(r)[0]) for r in t.rows]
+        self.assertEqual(글.count("특이사항 (Comment)"), 1)

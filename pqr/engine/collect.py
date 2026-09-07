@@ -329,6 +329,28 @@ def unread_files(got, log=None):
     return rows
 
 
+def _change_by_claude(path, folder, log, note):
+    """글자 없는 스캔 변경요청서를 이 PC 의 Claude Code 로 읽는다 — 못 읽으면 None."""
+    say = log or (lambda *a: None)
+    try:
+        from . import claude_cli
+        if not claude_cli.available():
+            return None
+    except Exception:
+        return None
+    try:
+        got = claude_cli.read_change(path, folder, say)
+    except Exception as error:
+        note("12", path, "스캔 변경요청서를 Claude 로도 읽지 못했습니다 — %s" % error)
+        return None
+    if not (got.get("title") or got.get("description") or got.get("actions")):
+        return None
+    m = re.search(r"(CC-\d{6}-\d{2})", os.path.basename(path))
+    if m and not got.get("doc_no"):
+        got["doc_no"] = m.group(1)
+    return got
+
+
 def collect(folder, product_name=None, log=None):
     log = log or (lambda *a: None)
     data = ProductData()
@@ -544,8 +566,15 @@ def collect(folder, product_name=None, log=None):
             if not cc.get("doc_no"):                 # 문서번호를 못 읽으면 파일 이름의 것 — '[None]' 이 나가면 안 된다
                 cc["doc_no"] = m.group(1) if m else os.path.splitext(os.path.basename(p))[0]
             if not (cc.get("title") or "").strip() and not cc.get("actions"):
-                cc["unread"] = True                  # 제목도 조치도 없으면 못 읽은 것과 같다 — 노랑으로
-                note("12", p, "변경요청서에서 변경사항·조치사항을 읽지 못해 문서번호만 적었습니다 — 직접 채우세요")
+                # 글자가 없는 스캔본이다 — 시험일지와 같은 길로 Claude 에게 읽힌다
+                # (담당자 2026-09-07: "변경요청서 읽으면 돼 PDF 라서 못 읽는 거야?" — PDF 라서가 아니다).
+                읽음 = _change_by_claude(p, folder, log, note)
+                if 읽음 is not None:
+                    읽음.setdefault("doc_no", cc.get("doc_no"))
+                    cc = 읽음
+                else:
+                    cc["unread"] = True              # 못 읽은 것과 같다 — 노랑으로
+                    note("12", p, "변경요청서에서 변경사항·조치사항을 읽지 못해 문서번호만 적었습니다 — 직접 채우세요")
             data.changes.append(cc)
         except Exception as e:                       # 글자 없는 스캔本·서식이 다른 것 모두
             m = re.search(r"(CC-\d{6}-\d{2})", os.path.basename(p))
