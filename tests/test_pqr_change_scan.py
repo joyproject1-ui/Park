@@ -97,3 +97,34 @@ class 스캔_변경요청서(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class OCR_판독(unittest.TestCase):
+    """담당자 2026-09-07: "OCR 로 변환해서 읽으면 안 되는 거야?" — 된다, 한글 인식 모델이 있으면."""
+
+    def test_이름표_뒤의_글을_값으로_삼는다(self):
+        from pqr.engine.readers import change_ocr as X
+        got = X.parse(["변경관리 요청서", "문서번호 CC-240723-08", "변경명 포장자재 규격 변경",
+                       "변경사유", "원가 절감", "변경내용 PE병 두께 변경",
+                       "관련제품 한림포비돈점안액", "QA 규격서 개정", "QC팀 시험방법 확인"])
+        self.assertEqual(got["doc_no"], "CC-240723-08")
+        self.assertEqual(got["title"], "포장자재 규격 변경")
+        self.assertEqual(got["reason"], "원가 절감")          # 다음 줄에 있어도 찾는다
+        self.assertEqual(got["products"], "한림포비돈점안액")
+        self.assertEqual(got["actions"], [("QA", "규격서 개정"), ("QC", "시험방법 확인")])
+
+    def test_못_읽은_칸은_비워_둔다(self):
+        from pqr.engine.readers import change_ocr as X
+        got = X.parse(["변경관리 요청서", "...", "___"])
+        self.assertEqual((got["title"], got["reason"], got["actions"]), ("", "", []))
+
+    def test_한글_모델이_없으면_그_길은_쓰지_않는다(self):
+        from pqr.engine.readers import change_ocr as X
+        from pqr.engine import handwriting
+        old = handwriting.korean_engine
+        handwriting.korean_engine = lambda: None
+        try:
+            with self.assertRaises(RuntimeError):
+                X.read("/x/a.pdf")
+        finally:
+            handwriting.korean_engine = old

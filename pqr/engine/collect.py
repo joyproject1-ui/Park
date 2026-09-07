@@ -349,9 +349,20 @@ def _change_by_claude(path, folder, log, note):
             갈래.append(("이 PC 의 Claude Code", lambda: claude_cli.read_change(path, folder, say)))
     except Exception:
         pass
+    try:
+        # 마지막 보루 — 이 PC 의 OCR. 한글 인식 모델을 받아 둔 PC 에서만 쓴다
+        # (담당자 2026-09-07: "OCR 로 변환해서 읽으면 안 되는 거야?" — 딸려 오는 모델은
+        # 중국어·영어용이라 한글이 뭉개진다).
+        from . import handwriting
+        from .readers import change_ocr
+        if handwriting.korean_engine() is not None:
+            갈래.append(("이 PC 의 OCR(한글)", lambda: change_ocr.read(path, say)))
+    except Exception:
+        pass
     if not 갈래:
         note("12", path, "글자 없는 스캔 변경요청서입니다 — 이 PC 에 Claude(API 키)도 Claude Code 도 "
-                         "없어 읽지 못했습니다. 'PQR-Claude설치.bat' 을 실행하면 다음부터 읽습니다")
+                         "OCR 한글 모델도 없어 읽지 못했습니다. 'PQR-Claude설치.bat' 을 실행하면 "
+                         "다음부터 읽습니다")
         return None
     까닭 = []
     for 이름, 부르기 in 갈래:

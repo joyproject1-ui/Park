@@ -67,6 +67,58 @@ def _engine():
     return _OCR
 
 
+_KOREAN = "안 해 봄"                       # None = 못 쓴다, 그 밖 = 판독기
+
+
+def korean_engine():
+    """한글 인식 모델을 쓰는 판독기. 모델을 못 받으면 None.
+
+    담당자 2026-09-07: "OCR 로 변환해서 읽으면 안 되는 거야?" — 된다. 다만 프로그램에 딸려 오는
+    인식 모델은 중국어·영어용이라 한글이 '변경관리' → 'H百尼昆昆用' 처럼 뭉개진다. 한글 모델
+    (korean_PP-OCRv5_rec_mobile)은 처음 한 번 인터넷에서 받아야 하므로, 받지 못하는 PC 에서는
+    이 길을 건너뛴다.
+    """
+    global _KOREAN
+    if _KOREAN != "안 해 봄":
+        return _KOREAN
+    _KOREAN = None
+    try:
+        from rapidocr import RapidOCR, LangRec, ModelType, OCRVersion
+        _KOREAN = RapidOCR(params={"Rec.lang_type": LangRec.KOREAN,
+                                   "Rec.ocr_version": OCRVersion.PPOCRV5,
+                                   "Rec.model_type": ModelType.MOBILE})
+    except Exception:
+        _KOREAN = None
+    return _KOREAN
+
+
+def page_text(pdf_path, page_no, engine=None):
+    """한 쪽을 OCR 해 줄 단위 글로 — 위에서 아래, 왼쪽에서 오른쪽 차례."""
+    import numpy
+    got = (engine or korean_engine())
+    if got is None:
+        return []
+    out = got(numpy.array(render(pdf_path, DPI, page_no)))
+    boxes = list(zip(getattr(out, "boxes", None) or [], out.txts or []))
+    lines = []
+    for box, text in boxes:
+        try:
+            ys = [pt[1] for pt in box]
+            xs = [pt[0] for pt in box]
+            lines.append((round(float(min(ys)) / 20), float(min(xs)), str(text)))
+        except Exception:
+            lines.append((0, 0.0, str(text)))
+    lines.sort()
+    out_lines, last_y, buf = [], None, []
+    for y, _x, text in lines:
+        if last_y is not None and y != last_y:
+            out_lines.append(" ".join(buf)); buf = []
+        buf.append(text); last_y = y
+    if buf:
+        out_lines.append(" ".join(buf))
+    return out_lines
+
+
 def render(pdf_path, dpi=DPI, page_no=0):
     import pypdfium2 as pdfium
     pdf = pdfium.PdfDocument(pdf_path)
