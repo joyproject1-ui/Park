@@ -2621,9 +2621,10 @@ function versionNote(){
   if (!version) return "";
   const hw = SOURCE.handwriting_reader;
   const reader = hw === "api" || hw === true
-    ? ` · 손글씨 시험일지 판독: <b>Claude 비전(API)</b>`
+    ? ` · 손글씨 시험일지 판독: <b>Claude</b> — 한 장에 몇 초, 애매한 칸은 노랑/주황`
     : hw === "offline"
-      ? ` · 손글씨 시험일지 판독: <b>오프라인(RapidOCR)</b> — 애매한 칸은 노랑/주황`
+      ? ` · 손글씨 시험일지 판독: <b>이 PC(RapidOCR)</b> — 한 장에 10초~1분, 애매한 칸은 노랑/주황.`
+        + ` 빠르게 하려면 프로그램 폴더에 <code>API-KEY.txt</code> 를 두고 Claude API 키를 적어 두세요`
       : ` · 손글씨 시험일지 판독: <b style="color:#b91c1c">꺼짐</b> — 판독기가 설치되지 않았습니다`
         + (SOURCE.handwriting_why ? ` (<code>${esc(SOURCE.handwriting_why)}</code>)` : ``)
         + `. <code>PQR-업데이트.bat</code> 을 다시 실행하고, 그래도 꺼짐이면 프로그램 폴더의 <code>install-ocr-log.txt</code> 를 보내 주세요`

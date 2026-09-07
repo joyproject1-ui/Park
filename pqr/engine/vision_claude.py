@@ -1,9 +1,15 @@
 # -*- coding: utf-8 -*-
-"""손글씨 안정성 시험일지(스캔 PDF)를 Claude 비전으로 읽어 13항 표 값으로 만든다.
+"""손글씨 안정성 시험일지(스캔 PDF)를 Claude 로 읽는다 — PC 판독(RapidOCR)보다 훨씬 빠르고 정확하다.
 
-담당자 지시: "손글씨도 최대한 작성해 주고 헷갈리는 것만 문의해줘". 그래서 판독은 하되
-확신이 낮은 값은 issues(문의 목록)에 올리고 보고서에는 값 옆에 아무 표시도 하지 않는다 —
-문의 목록이 곧 확인 대상이다. ANTHROPIC_API_KEY 가 있어야 돌아간다.
+담당자 2026-09-07: "PC 로 판독하면 시간이 너무 오래 걸려 (24장에 40분) — Claude 로 판독하면 안 돼?"
+ANTHROPIC_API_KEY 가 있으면 이 길을 쓰고, 없으면 PC 판독으로 간다.
+
+read_logs() 가 돌려주는 꼴은 handwriting.read_folder() 와 똑같다 —
+[{"lot", "year", "pack", "store", "kind", "market", "mfg", "expiry",
+  "points": [{"period", "done", "assays": {성분: 값}, "unsure": [...]}], "source"}]
+그래서 13.1·13.3·경향 엑셀을 채우는 길과 판독 파일(json)이 PC 판독과 완전히 같다.
+
+값을 지어내지 않는다 — 확신이 낮은 칸은 unsure 에 담아 워드 노랑·엑셀 주황으로 표시된다.
 """
 import base64
 import io
@@ -12,183 +18,225 @@ import os
 import re
 
 MODEL = "claude-opus-5"
+DPI = 200
+WORKERS = 4                       # 쪽마다 따로 물어보므로 몇 장을 한꺼번에 — 24장이 2~3분
+LOW = 0.7                         # 이보다 낮은 확신은 '애매' 로 본다
 
 SCHEMA = {
     "type": "object",
     "properties": {
-        "product_name": {"type": "string"},
-        "lot": {"type": "string", "description": "제조번호 (예: OEV301)"},
-        "test_type": {"type": "string", "enum": ["시판후", "장기", "가속", "기타"]},
+        "product_name": {"type": "string", "description": "제품명. 없으면 빈 문자열"},
+        "lot": {"type": "string", "description": "제조번호 (예: OEV301). 없으면 빈 문자열"},
+        "test_type": {"type": "string", "enum": ["시판후", "장기", "가속", "기타"],
+                      "description": "시험구분. 표에 적힌 그대로 고른다"},
+        "market": {"type": "string", "enum": ["내수", "수출", ""],
+                   "description": "제품명에 '수출용' 이 있으면 수출, '내수용' 이면 내수, 아니면 빈 문자열"},
         "mfg_date": {"type": "string", "description": "제조일자 YYYY.MM.DD, 모르면 빈 문자열"},
-        "package": {"type": "string", "description": "포장형태 (예: 5g x Tube/갑)"},
-        "storage": {"type": "string"},
+        "expiry_date": {"type": "string", "description": "사용기한 YYYY.MM.DD, 모르면 빈 문자열"},
+        "package": {"type": "string", "description": "포장형태 (예: 5g/Tube). 없으면 빈 문자열"},
+        "storage": {"type": "string", "description": "보관조건 (예: 25±2°C, 60±5%RH). 없으면 빈 문자열"},
         "points": {
             "type": "array",
+            "description": "시점(세로 열) 하나가 하나. 시험하지 않은(사선·빈) 시점도 tested=false 로 담는다",
             "items": {
                 "type": "object",
                 "properties": {
                     "label": {"type": "string", "description": "시점: 초기, 3M, 6M, 9M, 12M, 18M, 24M, 36M …"},
                     "test_date": {"type": "string", "description": "시험일자 YYYY.MM.DD, 없으면 빈 문자열"},
-                    "assay": {"type": "string", "description": "함량 결과 (%), 없으면 빈 문자열"},
-                    "reviewer_date": {"type": "string", "description": "확인자/팀장 서명일 YYYY.MM.DD, 없으면 빈 문자열"},
+                    "reviewer_date": {"type": "string", "description": "그 시점 결재(확인자·팀장) 일자 YYYY.MM.DD, 없으면 빈 문자열"},
                     "tested": {"type": "boolean", "description": "그 시점에 시험 결과가 적혀 있으면 true"},
-                    "confidence": {"type": "number", "description": "0~1, 손글씨 판독 확신도"},
+                    "date_confidence": {"type": "number", "description": "0~1, 일자 판독 확신도"},
+                    "assays": {
+                        "type": "array",
+                        "description": "함량 등 숫자 결과. 성분이 둘이면 둘 다 담는다",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "name": {"type": "string", "description": "성분 이름. 표에 없으면 '함량'"},
+                                "value": {"type": "string", "description": "숫자 그대로 (예: 99.8). 없으면 빈 문자열"},
+                                "confidence": {"type": "number", "description": "0~1, 손글씨 판독 확신도"},
+                            },
+                            "required": ["name", "value", "confidence"],
+                            "additionalProperties": False,
+                        },
+                    },
                 },
-                "required": ["label", "test_date", "assay", "reviewer_date", "tested", "confidence"],
+                "required": ["label", "test_date", "reviewer_date", "tested", "date_confidence", "assays"],
                 "additionalProperties": False,
             },
         },
         "uncertain": {"type": "array", "items": {"type": "string"},
                       "description": "읽기 애매했던 곳을 사람이 확인할 수 있게 짧게 적는다"},
     },
-    "required": ["product_name", "lot", "test_type", "mfg_date", "package", "storage", "points", "uncertain"],
+    "required": ["product_name", "lot", "test_type", "market", "mfg_date", "expiry_date",
+                 "package", "storage", "points", "uncertain"],
     "additionalProperties": False,
 }
 
 PROMPT = (
     "이 이미지는 제약회사 안정성 시험 결과 기록지(손글씨 포함)입니다. 표의 머리(제품명·제조번호·시험구분·제조일자·"
-    "포장형태·보관조건)와, 시험일자 행·함량(%) 행·결재(담당자/팀장/확인자 서명일) 행을 시점(초기, 3M, 6M … 36M)별로 읽어 "
-    "JSON 으로 주세요. 사선으로 지워진 칸은 tested=false 입니다. 숫자는 보이는 그대로 적고, 확신이 낮은 값은 confidence 를 "
-    "낮게 주고 uncertain 에 이유를 적으세요. 값을 지어내지 마세요."
+    "사용기한·포장형태·보관조건)와, 시점(초기·3M·6M·9M·12M·18M·24M·36M)마다 시험일자 행·함량(%) 행·결재 서명일 행을 "
+    "읽어 JSON 으로 주세요. 사선으로 지워졌거나 비어 있는 시점은 tested=false 로 담습니다. "
+    "숫자는 보이는 그대로 적고, 지어내지 마세요. 확신이 낮으면 confidence 를 낮게 주고 uncertain 에 이유를 적으세요."
 )
 
 
-def _pages_png(path, resolution=150):
-    import pdfplumber
-    out = []
-    with pdfplumber.open(path) as pdf:
-        for page in pdf.pages:
-            im = page.to_image(resolution=resolution).original
-            buf = io.BytesIO()
-            im.convert("RGB").save(buf, format="PNG", optimize=True)
-            out.append(base64.standard_b64encode(buf.getvalue()).decode("ascii"))
-    return out
+def _client():
+    import anthropic
+    return anthropic.Anthropic()
+
+
+def _png(pdf_path, page_no):
+    from . import handwriting
+    image = handwriting.render(pdf_path, DPI, page_no)
+    buf = io.BytesIO()
+    image.save(buf, format="PNG", optimize=True)
+    return base64.standard_b64encode(buf.getvalue()).decode("ascii")
 
 
 def read_page(client, png_b64):
-    response = client.messages.create(
-        model=MODEL, max_tokens=16000,
-        output_config={"format": {"type": "json_schema", "schema": SCHEMA}},
-        messages=[{"role": "user", "content": [
-            {"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": png_b64}},
-            {"type": "text", "text": PROMPT},
-        ]}],
-    )
-    if response.stop_reason == "refusal":
-        raise RuntimeError("판독 거부: %s" % getattr(response.stop_details, "explanation", ""))
+    """한 쪽을 읽어 판독 결과(dict)를 돌려준다."""
+    body = dict(model=MODEL, max_tokens=16000,
+                output_config={"format": {"type": "json_schema", "schema": SCHEMA}},
+                messages=[{"role": "user", "content": [
+                    {"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": png_b64}},
+                    {"type": "text", "text": PROMPT},
+                ]}])
+    try:      # 안전 판정으로 거절되면 다른 모델이 이어 받게 한다 (서버 쪽 대체)
+        response = client.beta.messages.create(betas=["server-side-fallback-2026-07-01"],
+                                               fallbacks="default", **body)
+    except TypeError:                       # 라이브러리가 오래되어 그 값을 모르면 그냥 부른다
+        response = client.messages.create(**body)
+    if getattr(response, "stop_reason", "") == "refusal":
+        raise RuntimeError("판독 거부: %s" % getattr(getattr(response, "stop_details", None), "explanation", ""))
     text = next(b.text for b in response.content if b.type == "text")
     return json.loads(text)
 
 
-def _year(d):
-    m = re.match(r"(\d{4})", d or "")
-    return m.group(1) if m else ""
+# ---------------------------------------------------------------- 판독 결과를 판독 파일 꼴로
+_DATE = re.compile(r"(\d{4})[.\-/](\d{1,2})[.\-/](\d{1,2})")
 
 
-def _in_period(day, period):
-    y = _year(day)
-    return bool(y) and str(period.get("from", ""))[:4] <= y <= str(period.get("to", ""))[:4]
+def _date(text):
+    m = _DATE.search(str(text or ""))
+    return "%s.%02d.%02d" % (m.group(1), int(m.group(2)), int(m.group(3))) if m else ""
 
 
-def build_tables(records, data, period):
-    """판독 결과 → recipe._fill_stability 가 받는 stab 사전 + 문의 목록."""
-    issues, stab = [], {"post_dom": [], "post_exp": [], "long_dom": [], "long_exp": [],
-                        "trend_dom": [], "trend_exp": [], "points": {}}
-    export_lots = set(data.export)
-    by_lot = {}
-    for r in records:
-        by_lot.setdefault((r.get("lot") or "").strip(), []).append(r)
-    trend = {"dom": {}, "exp": {}}
-    for lot, recs in by_lot.items():
-        if not lot:
+def _period(label):
+    """'초기'·'Initial' → 'Initial', '3개월'·'3M' → '3M'."""
+    text = re.sub(r"\s+", "", str(label or "")).upper()
+    if not text:
+        return ""
+    if "초기" in text or text.startswith("INITIAL"):
+        return "Initial"
+    m = re.search(r"(\d{1,3})\s*(?:M|개월|MONTH)", text)
+    return "%dM" % int(m.group(1)) if m else text
+
+
+def _part(name, specs):
+    """성분 이름을 그 제품 성적서(COA)의 이름에 맞춘다 — 못 맞추면 읽은 이름 그대로."""
+    got = re.sub(r"[\s()（）]", "", str(name or ""))
+    if not specs:
+        return got or "함량"
+    for part in specs:
+        bare = re.sub(r"[\s()（）]", "", part)
+        if bare and (bare in got or got in bare):
+            return part
+    if len(specs) == 1 and got in ("함량", "", "ASSAY"):
+        return list(specs)[0]
+    return got or "함량"
+
+
+def to_log(rec, source, specs=None):
+    """read_page 결과 하나 → 판독 파일(handwriting) 꼴의 기록 하나. 읽은 시점이 없으면 None."""
+    lot = re.sub(r"\s+", "", str(rec.get("lot") or "")).upper()
+    if not lot:
+        return None
+    points = []
+    for p in rec.get("points") or []:
+        if not p.get("tested"):
             continue
-        rec = recs[0]
-        is_exp = lot in export_lots or "수출" in (rec.get("product_name") or "")
-        side = "exp" if is_exp else "dom"
-        pts = [p for r in recs for p in r.get("points", [])]
-        for p in pts:
-            if p.get("confidence", 1) < 0.7 and p.get("tested"):
-                issues.append(("13", lot, "%s 시점 판독 확신 낮음 (함량 %s, 일자 %s)" % (p.get("label"), p.get("assay"), p.get("test_date") or p.get("reviewer_date"))))
-        for u in rec.get("uncertain") or []:
-            issues.append(("13", lot, u))
-        done = [p for p in pts if p.get("tested")]
-        in_year = [p for p in done if _in_period(p.get("reviewer_date") or p.get("test_date"), period)]
-        year = _year(rec.get("mfg_date")) or "확인 필요"
-        pack = rec.get("package") or "확인 필요"
-        # 안정성 경향 파일(126-06)은 포장 규격마다 따로 만든다 — 그래서 여기서 나눠 담는다.
-        pack_key = "수출용" if is_exp else "내수용"
-        stab["points"].setdefault(pack_key, {})[lot] = {
-            p["label"]: p.get("assay") for p in done if p.get("assay")}
-        vals = [float(re.sub(r"[^\d.]", "", p["assay"])) for p in done if re.sub(r"[^\d.]", "", p.get("assay") or "")]
-        if vals:
-            key = (rec.get("test_type") or "기타", year)
-            trend[side].setdefault(key, []).extend(vals)
-        if rec.get("test_type") == "시판후":
-            last = in_year[-1] if in_year else None
-            if last:
-                labels = [p["label"] for p in pts]
-                final = labels and last["label"] == labels[-1] and all(p.get("tested") for p in pts)
-                stab["post_%s" % side].append((str(len(stab["post_%s" % side]) + 1), year, last["label"], lot, pack,
-                                               last.get("reviewer_date") or last.get("test_date") or "확인 필요",
-                                               "완료" if final else "진행중"))
-        elif rec.get("test_type") == "장기":
-            if in_year:
-                stab["long_%s" % side].append((str(len(stab["long_%s" % side]) + 1), year, lot, pack, "확인 필요",
-                                               [(p["label"], p.get("reviewer_date") or p.get("test_date") or "") for p in in_year]))
-                issues.append(("13.2", lot, "장기 안정성 실시 사유는 시험일지에 없음 — 확인 필요"))
-    notes = {"dom": [], "exp": []}
-    for side in ("dom", "exp"):
-        rows = []
-        for (kind, year), vals in sorted(trend[side].items(), key=lambda kv: (kv[0][0] != "시판후", kv[0][1])):
-            rows.append(("시판 후" if kind == "시판후" else "장기", year, "%.1f ~ %.1f" % (min(vals), max(vals))))
-        stab["trend_%s" % side] = rows
-    return stab, issues
+        period = _period(p.get("label"))
+        if not period:
+            continue
+        assays, unsure = {}, []
+        for a in p.get("assays") or []:
+            value = re.sub(r"[^\d.]", "", str(a.get("value") or ""))
+            if not value:
+                continue
+            part = _part(a.get("name"), specs)
+            try:
+                assays[part] = float(value)
+            except ValueError:
+                continue
+            if float(a.get("confidence") or 0) < LOW:
+                unsure.append(part)
+        done = _date(p.get("reviewer_date")) or _date(p.get("test_date"))
+        if not done or float(p.get("date_confidence") or 0) < LOW:
+            unsure.append("done")
+        if not assays and not done:
+            continue
+        points.append({"period": period, "done": done, "assays": assays, "unsure": sorted(set(unsure))})
+    if not points:
+        return None
+    from . import handwriting
+    points.sort(key=lambda p: handwriting.period_order(p["period"]))
+    mfg = _date(rec.get("mfg_date"))
+    name = str(rec.get("product_name") or "") + " " + os.path.basename(source)
+    market = rec.get("market") or ("수출" if "수출" in name else ("내수" if "내수" in name else ""))
+    kind = rec.get("test_type") if rec.get("test_type") in ("시판후", "장기") else "장기"
+    return {"lot": lot, "year": mfg[:4], "pack": (rec.get("package") or "").strip(),
+            "store": (rec.get("storage") or "").strip(), "kind": kind, "kind_sure": True,
+            "market": market, "market_hint": bool(market), "mfg": mfg,
+            "expiry": _date(rec.get("expiry_date")), "why": "", "points": points,
+            "notes": list(rec.get("uncertain") or []), "source": os.path.basename(source)}
+
+
+def read_logs(paths, specs=None, log=None, workers=WORKERS):
+    """스캔 PDF 들을 Claude 로 읽어 handwriting.read_folder 와 같은 꼴의 목록을 돌려준다."""
+    from concurrent.futures import ThreadPoolExecutor
+    from . import handwriting
+    say = log or (lambda *a: None)
+    client = _client()
+    jobs = []
+    for path in paths:
+        for page_no in range(handwriting.page_count(path)):
+            jobs.append((path, page_no))
+    say("    Claude 판독: %d장 (한 번에 %d장씩)" % (len(jobs), workers))
+    out, done = [], [0]
+
+    def one(job):
+        path, page_no = job
+        rec = read_page(client, _png(path, page_no))
+        return path, page_no, rec
+
+    with ThreadPoolExecutor(max_workers=max(1, workers)) as pool:
+        for path, page_no, rec in pool.map(one, jobs):
+            done[0] += 1
+            try:
+                got = to_log(rec, path, specs)
+            except Exception as error:
+                say("    판독 실패 %s p%d — %s" % (os.path.basename(path), page_no + 1, error))
+                continue
+            if got is None:
+                say("    %s p%d: 읽을 시점이 없어 건너뜀" % (os.path.basename(path), page_no + 1))
+                continue
+            say("    Claude 판독 %d/%d: %s p%d → %s %s·%s 시점 %d개 (애매 %d칸)"
+                % (done[0], len(jobs), os.path.basename(path), page_no + 1, got["lot"], got["kind"],
+                   got["market"] or "구분 없음", len(got["points"]),
+                   sum(len(p["unsure"]) for p in got["points"])))
+            out.append(got)
+    merged = []
+    handwriting.merge_logs(merged, out, log)          # 한 Lot 이 여러 쪽에 걸쳐 있으면 합친다
+    merged.sort(key=lambda r: (r.get("year") or "", r.get("lot") or ""))
+    return merged
 
 
 def read_stability_into(data, log=None):
-    """writer 가 부르는 훅: data.stability_files 의 스캔 PDF 를 읽어 data.stability 에 넣는다."""
-    log = log or (lambda *a: None)
-    files = [p for p, scanned in getattr(data, "stability_files", []) if scanned]
-    if not files:
-        return None
-    import anthropic
-    client = anthropic.Anthropic()
-    records = []
-    for path in files:
-        for i, png in enumerate(_pages_png(path), 1):
-            try:
-                rec = read_page(client, png)
-                records.append(rec)
-                log("  손글씨 판독: %s p%d → %s %s %d시점" % (os.path.basename(path), i, rec.get("lot"), rec.get("test_type"), len(rec.get("points", []))))
-            except Exception as error:
-                data.issues.append(("13", os.path.basename(path), "p%d 판독 실패: %s" % (i, error)))
-    period = getattr(data, "period", None) or {"from": "", "to": ""}
-    stab, issues = build_tables(records, data, period)
-    data.stability = stab
-    data.issues.extend(issues)
-    _save_records(data, records, log)
-    return stab
+    """writer 훅 — 13항 판독은 collect 에서 이미 끝냈으므로 여기서는 아무것도 하지 않는다.
 
-
-CACHE_NAME = "13. 안정성시험일지 판독.json"
-
-
-def _save_records(data, records, log=None):
-    """판독 결과를 제품 폴더에 남긴다 — 다음 번에는 다시 읽지 않는다.
-
-    시험일지를 압축으로 올리면 프로그램이 임시 폴더에 풀기 때문에, 거기 두면 다음
-    실행에서 사라진다. 제품 폴더에 두어야 담당자가 값을 손보고 다시 만들 수도 있다.
+    옛 판(2026-09 이전)은 이 훅이 data.stability(옛 꼴)를 만들었지만, 그 꼴로는 내수·수출이 갈린
+    2026 서식의 13.1.1·13.1.2·13.3.x 를 채우지 못한다. 지금은 collect 가 PC 판독과 같은 길로
+    Claude 판독을 받아 data.stability_logs 를 만든다.
     """
-    folder = getattr(data, "folder", "") or ""
-    if not records or not folder or not os.path.isdir(folder):
-        return
-    logs = getattr(data, "stability_logs", None) or records
-    path = os.path.join(folder, CACHE_NAME)
-    try:
-        with open(path, "w", encoding="utf-8") as handle:
-            json.dump(logs, handle, ensure_ascii=False, indent=2)
-        if log:
-            log("  손글씨 판독 결과를 %s 에 저장했습니다 — 다음부터는 이 파일을 씁니다"
-                % CACHE_NAME)
-    except OSError as error:
-        data.issues.append(("13", CACHE_NAME, "판독 결과를 저장하지 못했습니다 — %s" % error))
+    return None

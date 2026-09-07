@@ -478,58 +478,71 @@ def collect(folder, product_name=None, log=None):
             log("  [13] 판독 파일에 없는 시험일지 %d장을 새로 읽습니다: %s"
                 % (len(scanned), ", ".join(os.path.basename(p) for p in scanned)))
     if scanned:
+        # 성분 규격 — 판독한 함량 값에 성분 이름을 붙이는 데 쓴다
+        specs = {}
+        for recs in data.coa.values():
+            for a in (recs.get("924") or {}).get("assays") or []:
+                try:
+                    if a.get("part") and a["part"] not in specs:
+                        specs[a["part"]] = (float(a["lo"]), float(a["hi"]))
+                except (TypeError, ValueError, KeyError):
+                    pass
+        from . import handwriting
         try:
             from . import vision as vision_mod
             api_on = vision_mod.available()
         except Exception:
             api_on = False
-        if not api_on:
-            from . import handwriting
-            if handwriting.available():
-                specs = {}
-                for recs in data.coa.values():
-                    for a in (recs.get("924") or {}).get("assays") or []:
+        logs = []
+        # ① API 키가 있으면 Claude 로 읽는다 — PC 판독은 한 장에 1분이 걸려 24장이면 40분이다
+        # (담당자 2026-09-07: "PC 로 판독하면 시간이 너무 오래 걸려")
+        if api_on:
+            try:
+                from . import vision_claude
+                log("  [13] 손글씨 시험일지 %d장을 Claude 로 판독합니다" % len(scanned))
+                logs = vision_claude.read_logs(scanned, specs or None, log)
+            except Exception as error:
+                note("13", "", "Claude 판독에 실패해 PC 판독으로 넘어갑니다 — %s" % error)
+                logs = []
+        # ② 키가 없거나 Claude 가 막히면 PC 가 오프라인으로 읽는다
+        if not logs and handwriting.available():
+            log("  [13] 손글씨 시험일지 %d장을 오프라인으로 판독합니다%s"
+                % (len(scanned), "" if api_on else " (API 키 없음)"))
+            logs = handwriting.read_folder(scanned, specs or None, log)
+        if logs:
+            try:                                            # 지난 경향표가 있으면 그 값이 우선
+                # (trend_reader 는 파일 맨 위에서 가져온 것 — 여기서 다시 import 하면 함수 전체에서
+                #  지역 변수가 되어 아래 경향표 읽기가 'cannot access local variable' 로 넘어졌다,
+                #  담당자 PC 작성 기록 2026-09-06 08:14)
+                sheets = []
+                for tp in got.get("16", []) + got.get("13", []) + got.get("첨부", []):
+                    if (tp.lower().endswith(".xlsx") and not os.path.basename(tp).startswith("~$")
+                            and trend_reader.is_trend_file(tp)):
                         try:
-                            if a.get("part") and a["part"] not in specs:
-                                specs[a["part"]] = (float(a["lo"]), float(a["hi"]))
-                        except (TypeError, ValueError, KeyError):
+                            sheets += trend_reader.read_trend(tp)
+                        except Exception:
                             pass
-                log("  [13] 손글씨 시험일지 %d장을 오프라인으로 판독합니다 (API 키 없음)" % len(scanned))
-                logs = handwriting.read_folder(scanned, specs or None, log)
-                if logs:
-                    try:                                            # 지난 경향표가 있으면 그 값이 우선
-                        # (trend_reader 는 파일 맨 위에서 가져온 것 — 여기서 다시 import 하면 함수 전체에서
-                        #  지역 변수가 되어 아래 경향표 읽기가 'cannot access local variable' 로 넘어졌다,
-                        #  담당자 PC 작성 기록 2026-09-06 08:14)
-                        sheets = []
-                        for tp in got.get("16", []) + got.get("13", []) + got.get("첨부", []):
-                            if (tp.lower().endswith(".xlsx") and not os.path.basename(tp).startswith("~$")
-                                    and trend_reader.is_trend_file(tp)):
-                                try:
-                                    sheets += trend_reader.read_trend(tp)
-                                except Exception:
-                                    pass
-                        handwriting.merge_known(logs, sheets, log)
-                    except Exception:
-                        pass
-                    # 같은 Lot 이 두 줄로 실리지 않게 합친다 — 이미 읽은 값(담당자가 고친 판독 파일)이 우선
-                    handwriting.merge_logs(data.stability_logs, logs, log)
-                    data.stability_logs.sort(key=lambda r: (r.get("year") or "", r.get("lot") or ""))
-                    겹침 = {}
-                    for one in data.stability_logs:
-                        겹침.setdefault(one.get("lot"), set()).add(one.get("kind"))
-                    for lot, kinds in sorted(겹침.items()):
-                        if len(kinds) > 1:     # 같은 Lot 이 장기·시판 후 두 표에 들어간다 — 파일 이름을 확인해야 한다
-                            note("13", lot, "같은 Lot 이 %s 두 가지로 읽혔습니다 — 시험일지 파일 이름에 "
-                                            "'장기'·'시판 후' 를 바로 적어 주세요" % "·".join(sorted(kinds)))
-                    shaky = sum(len(p.get("unsure") or []) for one in logs for p in one["points"])
-                    note("13", "", "손글씨 시험일지 %d장을 오프라인으로 판독했습니다 — 애매한 칸 %d개는 "
-                                   "노랑(워드)·주황(엑셀)으로 표시했으니 시험일지와 대조하세요" % (len(logs), shaky))
-                    handwriting.save_cache(folder, data.stability_logs, log)   # 판독 파일에 새 일지를 보탠다
-            else:
-                note("13", "", "손글씨 시험일지를 읽을 판독기가 없습니다 — PQR-업데이트.bat 을 실행해 "
-                               "판독기(RapidOCR)를 설치하거나 API 키를 두세요")
-    # 이미 채워 둔 경향표(HLF-QC-126-06)는 13항·16항 어디에 있든 바탕으로 삼는다 —
+                handwriting.merge_known(logs, sheets, log)
+            except Exception:
+                pass
+            # 같은 Lot 이 두 줄로 실리지 않게 합친다 — 이미 읽은 값(담당자가 고친 판독 파일)이 우선
+            handwriting.merge_logs(data.stability_logs, logs, log)
+            data.stability_logs.sort(key=lambda r: (r.get("year") or "", r.get("lot") or ""))
+            겹침 = {}
+            for one in data.stability_logs:
+                겹침.setdefault(one.get("lot"), set()).add(one.get("kind"))
+            for lot, kinds in sorted(겹침.items()):
+                if len(kinds) > 1:     # 같은 Lot 이 장기·시판 후 두 표에 들어간다 — 파일 이름을 확인해야 한다
+                    note("13", lot, "같은 Lot 이 %s 두 가지로 읽혔습니다 — 시험일지 파일 이름에 "
+                                    "'장기'·'시판 후' 를 바로 적어 주세요" % "·".join(sorted(kinds)))
+            shaky = sum(len(p.get("unsure") or []) for one in logs for p in one["points"])
+            note("13", "", "손글씨 시험일지 %d장을 %s 로 판독했습니다 — 애매한 칸 %d개는 "
+                           "노랑(워드)·주황(엑셀)으로 표시했으니 시험일지와 대조하세요"
+                 % (len(logs), "Claude" if api_on else "PC", shaky))
+            handwriting.save_cache(folder, data.stability_logs, log)   # 판독 파일에 새 일지를 보탠다
+        elif not api_on and not handwriting.available():
+            note("13", "", "손글씨 시험일지를 읽을 판독기가 없습니다 — PQR-업데이트.bat 을 실행해 "
+                           "판독기(RapidOCR)를 설치하거나 API 키를 두세요")
     # 담당자가 손으로 옮겨 적어 둔 값이라 스캔 판독보다 믿을 만하다.
     for item in ("13", "16", "첨부"):
         for p in got.get(item, []):

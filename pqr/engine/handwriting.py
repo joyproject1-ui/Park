@@ -720,6 +720,15 @@ def refresh_cache(logs, version, paths, specs=None, log=None):
     return changed
 
 
+def period_order(period):
+    """시점 차례 — 'Initial'(초기) 가 맨 앞, 그다음 개월 수."""
+    text = str(period or "").strip()
+    if not text or text.lower().startswith(("initial", "초기")):
+        return (0, 0)
+    digits = re.sub(r"\D", "", text)
+    return (1, int(digits)) if digits else (2, 0)
+
+
 def merge_logs(old, new, log=None):
     """새로 읽은 시험일지(new)를 이미 있는 판독 결과(old)에 합친다 — 같은 Lot 은 한 줄로.
 
@@ -749,7 +758,7 @@ def merge_logs(old, new, log=None):
             if point.get("period") not in 가진:
                 짝.setdefault("points", []).append(point)
                 새로 += 1
-        짝["points"].sort(key=lambda p: (len(p.get("period") or ""), p.get("period") or ""))
+        짝["points"].sort(key=lambda p: period_order(p.get("period")))
         for key in ("pack", "store", "mfg", "expiry", "year"):
             if not 짝.get(key) and one.get(key):
                 짝[key] = one[key]
