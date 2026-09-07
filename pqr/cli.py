@@ -357,6 +357,65 @@ def cmd_doctor(args):
     return 0
 
 
+def cmd_install_claude(args):
+    """이 PC 에 Claude Code(claude 명령)를 깔아 13항 손글씨를 이 PC 안에서 읽게 합니다.
+
+    담당자 2026-09-07: "설치하려면 어떻게 해야 돼?" — 명령을 외우지 않아도 되게 두 번 클릭
+    파일(PQR-Claude설치.bat)이 이것을 부른다. npm 이 없으면 어디서 무엇을 받아야 하는지 알려 준다.
+    """
+    import shutil
+    import subprocess
+    from .engine import claude_cli
+
+    _print("Claude Code 설치 도우미")
+    _print("=" * 58)
+    already = claude_cli._exe()
+    if already:
+        _print("  이미 깔려 있습니다: %s" % already)
+        _print("  대시보드에서 '안정성 판독 🔍' 를 누르면 이 PC 안에서 Claude 가 시험일지를 읽습니다.")
+        return 0
+    npm = shutil.which("npm") or shutil.which("npm.cmd")
+    if not npm:
+        _print("  [X] npm(Node.js)이 없습니다 — 먼저 Node.js 를 까셔야 합니다.")
+        _print("      1) https://nodejs.org 에서 LTS 를 받아 설치하세요 (다음·다음·완료).")
+        _print("      2) 설치가 끝나면 이 창을 닫고 PQR-Claude설치.bat 을 다시 두 번 누르세요.")
+        _print("         (새로 깐 프로그램은 새 창부터 잡힙니다)")
+        return 1
+    _print("  npm: %s" % npm)
+    _print("  Claude Code 를 내려받아 깝니다 — 몇 분 걸립니다. 창을 닫지 마세요.")
+    try:
+        run = subprocess.run([npm, "install", "-g", "@anthropic-ai/claude-code"],
+                             stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=60 * 20)
+    except (OSError, subprocess.TimeoutExpired) as error:
+        _print("  [X] 설치하지 못했습니다 — %s" % error)
+        return 1
+    text = (run.stdout or b"").decode("utf-8", "replace")
+    for line in text.splitlines()[-8:]:
+        _print("    %s" % line)
+    if run.returncode != 0:
+        _print("  [X] 설치가 끝나지 못했습니다. 위 글을 그대로 알려 주시면 그 길을 뚫겠습니다.")
+        _print("      (회사 망에서 막히면 사내 프록시 설정이 필요할 수 있습니다)")
+        return 1
+    got = claude_cli._exe()
+    if not got:
+        _print("  설치는 됐는데 이 창에서는 아직 claude 를 찾지 못합니다 — 창을 닫았다 다시 여세요.")
+        _print("  그래도 못 찾으면 명령 프롬프트에서  where claude  를 쳐서 나온 경로 한 줄을")
+        _print("  프로그램 폴더의 '%s' 에 적어 두세요." % claude_cli.HINT_FILE)
+        return 1
+    _print("  [O] 깔렸습니다: %s" % got)
+    try:                                   # 다음 실행에서 헤매지 않게 경로를 적어 둔다
+        with open(os.path.join(_program_root(), claude_cli.HINT_FILE), "w", encoding="utf-8") as handle:
+            handle.write(got + "\n")
+    except OSError:
+        pass
+    _print("")
+    _print("  마지막 한 걸음 — 로그인:")
+    _print("    이 창에서  claude  를 치고 Enter 하면 브라우저가 열립니다. 늘 쓰시는 계정으로")
+    _print("    로그인한 뒤 창을 닫으면 됩니다. 그다음 대시보드의 '안정성 판독 🔍' 한 번이면")
+    _print("    손글씨 시험일지를 Claude 가 이 PC 안에서 읽습니다 (사외로 나가지 않습니다).")
+    return 0
+
+
 def cmd_update(args):
     """최신 버전을 내려받아 프로그램 파일을 바꿉니다.
 
@@ -633,6 +692,10 @@ def build_parser():
     doctor_cmd = subparsers.add_parser(
         "doctor", help="이 PC 에서 무엇이 되고 무엇이 막혔는지 알아봅니다")
     doctor_cmd.set_defaults(func=cmd_doctor)
+
+    claude_cmd = subparsers.add_parser(
+        "install-claude", help="이 PC 에 Claude Code 를 깔아 13항 손글씨를 여기서 읽게 합니다")
+    claude_cmd.set_defaults(func=cmd_install_claude)
 
     update_cmd = subparsers.add_parser(
         "update", help="프로그램을 최신 버전으로 바꿉니다 (입력 폴더는 건드리지 않습니다)")

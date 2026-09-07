@@ -33,6 +33,25 @@ class claude_찾기(unittest.TestCase):
         self.assertTrue(any(".local" in p for p in places))
 
 
+class 설치_도우미(unittest.TestCase):
+    def test_이미_깔려_있으면_그대로_알린다(self):
+        # 담당자 2026-09-07: "설치하려면 어떻게 해야 돼?" — 두 번 클릭 파일이 이 명령을 부른다
+        from pqr import cli
+        import tempfile
+        fake = os.path.join(tempfile.mkdtemp(prefix="pqr-claude-"), "claude.exe")
+        with open(fake, "w", encoding="utf-8") as handle:
+            handle.write("")
+        old = os.environ.get("PQR_CLAUDE_EXE")
+        os.environ["PQR_CLAUDE_EXE"] = fake
+        try:
+            self.assertEqual(cli.cmd_install_claude(None), 0)
+        finally:
+            if old is None:
+                del os.environ["PQR_CLAUDE_EXE"]
+            else:
+                os.environ["PQR_CLAUDE_EXE"] = old
+
+
 class 답에서_JSON_꺼내기(unittest.TestCase):
     def test_코드_표시와_설명이_붙어_있어도_꺼낸다(self):
         text = '읽었습니다.\n```json\n{"logs": [{"lot": "OEX101"}]}\n```\n확인하세요.'
