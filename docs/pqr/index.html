@@ -558,6 +558,16 @@ tbody tr:hover{background:var(--accent-soft)}
 .star-get{display:inline-block;margin-top:6px;padding:4px 10px;border-radius:6px;background:#b91c1c;
   color:#fff;text-decoration:none;font-weight:600}
 .star-get:hover{background:#991b1b}
+/* 작성 주의사항 목록 */
+.note-find{margin-left:auto;padding:5px 10px;border:1px solid var(--line);border-radius:8px;
+  font-size:12px;min-width:220px;background:var(--surface);color:var(--ink)}
+.note-group{margin:0 0 14px}
+.note-group h3{margin:0 0 6px;font-size:13px;color:var(--ink-2)}
+.note-rule{padding:8px 10px;border:1px solid var(--line);border-left:3px solid var(--accent);
+  border-radius:8px;margin:0 0 6px;background:var(--surface);font-size:12px;line-height:1.6}
+.note-rule b{color:var(--ink)}
+.note-rule .how{display:block;margin-top:4px;color:var(--ink-2)}
+.note-rule code{background:var(--surface-3);border-radius:4px;padding:1px 4px;font-size:11px}
 .footnote{padding:0 6px;line-height:1.7}
 </style>
 
@@ -769,6 +779,22 @@ tbody tr:hover{background:var(--accent-soft)}
 
       <!-- ============ PQR 작성 시 참고 사항 ============ -->
       <section class="view" id="v-upload" hidden>
+        <!-- 작성 주의사항 — 담당자가 준 지시를 그대로 보여 준다 (담당자 2026-09-07:
+             "오늘 수정 요청한 모든 PQR 관련 내용도 PQR 작성 주의사항에 반영해야 돼").
+             지시는 지시 대장(standing-orders.md) 한 곳에만 적고 화면은 그것을 읽는다. -->
+        <div class="card">
+          <div class="card-head">
+            <h2>작성 주의사항</h2>
+            <span class="pill" id="note-count">0개</span>
+            <span class="muted" id="note-updated"></span>
+            <input id="note-find" class="note-find" type="search" placeholder="찾기 (예: 금속성이물, 13항, 들여쓰기)">
+          </div>
+          <div class="card-body">
+            <p class="muted" style="margin:0 0 8px">담당자가 준 지시를 모두 모아 둔 것입니다 —
+              <b>모든 제품·모든 PQR 에 그대로 적용</b>됩니다. 새 지시는 이 목록에 한 줄씩 늘어납니다.</p>
+            <div id="note-body"></div>
+          </div>
+        </div>
         <div class="card">
           <div class="card-head">
             <h2>참고 문서</h2>
@@ -1416,6 +1442,44 @@ function reportButton(d){
   }
   return html;
 }
+/* 작성 주의사항 — 담당자 지시 대장을 그대로 읽어 보여 줍니다.
+   담당자 2026-09-07: "오늘 수정 요청한 모든 PQR 관련 내용도 PQR 작성 주의사항에 반영해야 돼." */
+let NOTES = null;
+async function loadNotes(){
+  if (NOTES) return NOTES;
+  try {
+    const r = await fetch("api/notes", { cache:"no-store" });
+    NOTES = await r.json();
+  } catch (e) { NOTES = { ok:false, groups:[] }; }
+  return NOTES;
+}
+function renderNotes(){
+  const box = $("#note-body"); if (!box) return;
+  const data = NOTES || { ok:false, groups:[] };
+  if (!data.ok){
+    box.innerHTML = `<p class="muted">작성 주의사항을 읽지 못했습니다 — 프로그램을 새로 받아 주세요
+      (<code>PQR-업데이트.bat</code>).</p>`;
+    return;
+  }
+  const q = ($("#note-find").value || "").trim().toLowerCase();
+  const hit = r => !q || (r.rule + " " + r.how + " " + r.where).toLowerCase().includes(q);
+  let shown = 0;
+  box.innerHTML = data.groups.map(g => {
+    const rules = g.rules.filter(hit);
+    shown += rules.length;
+    if (!rules.length) return "";
+    return `<div class="note-group"><h3>${esc(g.title)} <span class="muted">${rules.length}개</span></h3>`
+      + rules.map(r => `<div class="note-rule">${md(r.rule)}`
+          + (r.how ? `<span class="how">${md(r.how)}</span>` : ``) + `</div>`).join("") + `</div>`;
+  }).join("") || `<p class="muted">찾는 말이 든 주의사항이 없습니다.</p>`;
+  $("#note-count").textContent = (q ? `${shown} / ${data.count}` : data.count) + "개";
+  $("#note-updated").textContent = data.updated ? `마지막 갱신 ${data.updated}` : "";
+}
+/* 지시 대장은 마크다운이다 — **굵게** 와 `코드` 만 살려서 보여 준다 (그 밖의 글자는 그대로) */
+function md(text){
+  return esc(text || "").replace(/\*\*(.+?)\*\*/g, "<b>$1</b>").replace(/`([^`]+)`/g, "<code>$1</code>");
+}
+
 /* 안정성 판독 — 13 폴더의 손글씨 시험일지를 읽어 '13. 안정성시험일지 판독.json' 을 만듭니다.
    이 단추를 누른 뒤 '보고서 작성' 을 누르면 13항이 채워집니다 (담당자 2026-09-07). */
 async function readStability(code, button, allowPc){
@@ -2385,6 +2449,7 @@ $("#up-submit").addEventListener("click", submitUpload);
 $("#up-dataset").addEventListener("change", updatePathHint);
 $("#up-file").addEventListener("change", e=>pickFile(e.target.files[0]));
 $("#ref-file").addEventListener("change", e=>uploadReference(Array.from(e.target.files)));
+$("#note-find").addEventListener("input", renderNotes);
 $("#ref-add").addEventListener("click", ()=>{ const p=$("#ref-file"); p.value=""; p.click(); });
 $("#ref-folder").addEventListener("click", ()=>openReference(""));
 /* 참고 문서는 끌어다 놓아도 올라갑니다 — 탐색기에서 바로 던지는 편이 빠릅니다. */
@@ -2573,7 +2638,7 @@ function render(){
   else if (cfg.sec==="v-items"){ renderMatrix(rows); }
   else if (cfg.sec==="v-trend"){ renderTrend(); }
   else if (cfg.sec==="v-lead"){ renderLead(rows); }
-  else if (cfg.sec==="v-upload"){ renderUpload(); }
+  else if (cfg.sec==="v-upload"){ renderUpload(); loadNotes().then(renderNotes); }
   else if (cfg.sec==="v-todo"){ renderTodo(cfg.todo); }
   updateBadges();
 }

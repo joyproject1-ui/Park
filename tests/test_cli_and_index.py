@@ -1,4 +1,5 @@
 import io
+import os
 import shutil
 import tempfile
 import unittest
@@ -83,3 +84,26 @@ class CliTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class 작성_주의사항_화면(unittest.TestCase):
+    """담당자 2026-09-07: "오늘 수정 요청한 모든 PQR 관련 내용도 PQR 작성 주의사항에 반영해야 돼."
+    지시는 지시 대장 한 곳에만 적고, 대시보드가 그것을 읽어 보여 준다."""
+
+    def test_지시_대장을_장별로_읽어_준다(self):
+        from pqr.server import Handler
+        got = Handler._handle_notes(Handler)
+        self.assertTrue(got["ok"])
+        self.assertGreater(got["count"], 50)
+        titles = [g["title"] for g in got["groups"]]
+        self.assertIn("0. 늘 지키는 것", titles)
+        rules = [r["rule"] for g in got["groups"] for r in g["rules"]]
+        self.assertTrue(any("금속성이물" in r for r in rules))      # 오늘 지시가 들어 있다
+        self.assertTrue(any("안정성 판독" in r for r in rules))
+        self.assertFalse(any(set(r) <= set("-: ") for r in rules))  # 표 구분선은 섞이지 않는다
+
+    def test_화면이_그_목록을_그린다(self):
+        here = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        text = io.open(os.path.join(here, "docs", "pqr", "index.html"), encoding="utf-8").read()
+        for mark in ("api/notes", "note-body", "note-find", "renderNotes"):
+            self.assertIn(mark, text)

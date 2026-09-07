@@ -777,6 +777,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._handle_final_view()
         if path == "/api/reading-request":
             return self._handle_reading_request()
+        if path == "/api/notes":
+            return self._json(200, self._handle_notes())
         if path == "/api/progress":
             return self._handle_progress()
         if path == "/favicon.ico":
@@ -798,6 +800,39 @@ class Handler(BaseHTTPRequestHandler):
                                 "started": state["started"], "elapsed": int(time.time() - state["started"]),
                                 "count": len(steps), "last": recent[-1] if recent else "",
                                 "recent": recent[-4:]})
+
+    NOTES_FILE = os.path.join("references", "standing-orders.md")
+
+    def _handle_notes(self):
+        """'PQR 작성 시 참고 사항' 화면에 띄울 작성 주의사항 — 담당자 지시 대장을 그대로 읽습니다.
+
+        담당자 2026-09-07: "오늘 수정 요청한 모든 PQR 관련 내용도 PQR 작성 주의사항에 반영해야 돼."
+        지시는 `.claude/skills/pqr/references/standing-orders.md` 한 곳에만 적고, 화면은 그것을 보여
+        준다 — 두 곳에 나눠 적으면 한쪽이 반드시 뒤처진다.
+        """
+        here = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        path = os.path.join(here, ".claude", "skills", "pqr", self.NOTES_FILE)
+        if not os.path.isfile(path):
+            return {"ok": False, "error": "지시 대장 파일을 찾지 못했습니다", "groups": []}
+        groups, current = [], None
+        with open(path, encoding="utf-8") as handle:
+            for line in handle:
+                line = line.rstrip("\n")
+                if line.startswith("## "):
+                    current = {"title": line[3:].strip(), "rules": []}
+                    groups.append(current)
+                    continue
+                if not line.startswith("|") or current is None:
+                    continue
+                cells = [c.strip() for c in line.strip().strip("|").split("|")]
+                if len(cells) < 2 or set(cells[0]) <= set("-: ") or cells[0] == "지시":
+                    continue
+                current["rules"].append({"rule": cells[0], "how": cells[1],
+                                         "where": cells[2] if len(cells) > 2 else ""})
+        groups = [g for g in groups if g["rules"]]
+        return {"ok": True, "groups": groups,
+                "count": sum(len(g["rules"]) for g in groups),
+                "updated": _dt.datetime.fromtimestamp(os.path.getmtime(path)).strftime("%Y-%m-%d %H:%M")}
 
     def _handle_reading_request(self):
         """13항 판독 요청 묶음(zip)을 브라우저로 내려보낸다 — 대화창에 끌어다 놓기 쉽게.
