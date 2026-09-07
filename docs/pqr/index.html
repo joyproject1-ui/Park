@@ -1418,15 +1418,36 @@ function reportButton(d){
 }
 /* 안정성 판독 — 13 폴더의 손글씨 시험일지를 읽어 '13. 안정성시험일지 판독.json' 을 만듭니다.
    이 단추를 누른 뒤 '보고서 작성' 을 누르면 13항이 채워집니다 (담당자 2026-09-07). */
-async function readStability(code, button){
+async function readStability(code, button, allowPc){
   const original = button.textContent;
   button.textContent = "판독 중…"; button.disabled = true;
-  const watcher = watchProgress(code, button);
+  const watcher = watchProgress(code, button, "안정성 판독");
   try {
     const response = await fetch("api/read-stability", { method:"POST",
-      headers:{ "Content-Type":"application/json" }, body: JSON.stringify({ product: code }) });
+      headers:{ "Content-Type":"application/json" },
+      body: JSON.stringify({ product: code, allow_pc: !!allowPc }) });
     clearInterval(watcher);
     const payload = await response.json();
+    // 이 PC 판독기밖에 없으면 바로 시작하지 않는다 — 한 장에 몇 분이라 스무 장이면 한 시간이다
+    // (담당자 2026-09-07: "시간이 너무 걸려서 PC 로 안 읽기로 한 거 아냐?")
+    if (!payload.ok && payload.need === "pc"){
+      button.textContent = original; button.disabled = false;
+      const zip = (payload.zip || [])[0] || "";
+      const go = confirm(`이 PC 에는 Claude(API 키)도, Claude Code 도 없습니다.\n\n`
+        + `이 PC 판독기로 읽으면 시험일지 ${payload.pages}장에 ${payload.minutes}분쯤 걸립니다.\n`
+        + `그래도 지금 이 PC 로 읽을까요?\n\n`
+        + `[취소] 를 누르면 Claude 에게 맡기는 길을 알려 드립니다 (몇 분이면 끝납니다).`);
+      if (go) return readStability(code, button, true);
+      showToast(`<div class="star-note"><b>13항 판독을 Claude 에게 맡기는 두 길</b>`
+        + `<br>① 이 PC 에서 <b>Cowork·Claude Code</b> 를 쓰신다면 — 제품 폴더를 열고`
+        + ` "13 폴더의 안정성 시험일지를 읽어 <code>13. 안정성시험일지 판독.json</code> 을 만들어 줘" 라고 시키세요.`
+        + `<br>② 웹 대화라면 — 아래 묶음을 받아 대화창에 올리고, 받은 json 을 제품 폴더에 두세요.`
+        + (zip ? `<br><code>${esc(zip)}</code>`
+              + `<br><a class="star-get" href="api/reading-request?product=${encodeURIComponent(code)}" download>⬇ 판독 요청 묶음 내려받기</a>` : ``)
+        + `<hr><span class="muted">이 PC 가 알아서 읽게 하려면: 이 PC 에 Claude Code 를 깔거나(빠름),`
+        + ` 프로그램 폴더에 <code>API-KEY.txt</code> 를 두세요.</span></div>`);
+      return;
+    }
     if (payload.ok){
       showToast(`🔍 <b>안정성 시험일지 ${payload.pages}장을 읽었습니다</b> — ${esc(payload.how||"")}`
         + `<br>${payload.lots} Lot · 읽기 애매한 칸 ${payload.unsure}개(보고서에 노랑·주황으로 표시됩니다)`
@@ -1670,21 +1691,35 @@ $("#rd-submit").addEventListener("click", ()=>{
 });
 /* 작성 중에는 2초마다 서버에 어느 단계인지 물어 단추와 안내에 보인다 — 첫 작성은 손글씨
    시험일지를 한 장씩 판독하느라 몇 분이 걸려 담당자가 멈춘 줄 알았다(2026-09). */
-function watchProgress(code, button){
+function watchProgress(code, button, label){
+  label = label || "보고서 작성";
   const t0 = Date.now();
+  let reader = "";                       // 지금 무엇이 시험일지를 읽고 있는지 (담당자 2026-09-07:
+                                         // "PC 가 읽는 것이지 Claude 로 읽는 것 아닌지?")
   const tick = async ()=>{
     const sec = Math.round((Date.now() - t0) / 1000);
     const clock = sec >= 60 ? `${Math.floor(sec/60)}분 ${sec%60}초` : `${sec}초`;
-    button.textContent = `작성 중… ${clock}`;
+    button.textContent = `${label} 중… ${clock}`;
     try {
       const r = await fetch(`api/progress?product=${encodeURIComponent(code)}`, { cache:"no-store" });
       const p = await r.json();
       if (p && p.running && p.last) {
-        const hint = /시험일지 판독 중/.test(p.last)
-          ? `<br><span class="muted">손글씨 시험일지는 PC 가 직접 읽습니다 — 한 장에 1분쯤 걸리고, 다음 작성부터는 판독 결과 파일을 써서 빠릅니다.</span>` : ``;
-        showToast(`⏳ 보고서 작성 중 (${clock}) — ${esc(p.last)}` + hint);
+        for (const line of (p.recent || [])){
+          if (/Claude \(API 키\)/.test(line)) reader = "api";
+          else if (/Claude Code/.test(line)) reader = "cli";
+          else if (/PC 의 판독기|이 PC 로 판독|PC 판독/.test(line)) reader = "pc";
+        }
+        const hint = /시험일지 판독|판독 중/.test(p.last)
+          ? `<br><span class="muted">` + (
+              reader === "api" ? `<b>Claude(API 키)</b> 가 읽고 있습니다 — 한 장에 몇 초.`
+            : reader === "cli" ? `<b>이 PC 의 Claude Code</b> 가 읽고 있습니다 — 한 장에 1~2분.`
+            : `<b>이 PC 의 판독기(RapidOCR)</b> 가 읽고 있습니다 — 한 장에 1분쯤. Claude 가 읽게 하려면 `
+              + `이 PC 에 Claude Code 를 깔거나 프로그램 폴더에 <code>API-KEY.txt</code> 를 두세요.`)
+            + ` 읽은 결과는 <code>13. 안정성시험일지 판독.json</code> 에 남아 다음부터는 빠릅니다.</span>`
+          : ``;
+        showToast(`⏳ ${label} 중 (${clock}) — ${esc(p.last)}` + hint);
       }
-    } catch (e) { /* 진행 조회 실패는 무시 — 작성은 계속된다 */ }
+    } catch (e) { /* 진행 조회 실패는 무시 — 하던 일은 계속된다 */ }
   };
   tick();
   return setInterval(tick, 2000);
@@ -2676,13 +2711,14 @@ function versionNote(){
   const reader = hw === "api" || hw === true
     ? ` · 손글씨 시험일지 판독: <b>Claude(API 키)</b> — 한 장에 몇 초, 애매한 칸은 노랑/주황`
     : hw === "cli"
-      ? ` · 손글씨 시험일지 판독: <b>이 PC 의 Claude Code</b> — '보고서 작성' 이 알아서 읽습니다`
-        + ` (한 장에 1~2분, 애매한 칸은 노랑/주황)`
+      ? ` · 손글씨 시험일지 판독: <b>이 PC 의 Claude Code</b> — '안정성 판독 🔍' 나 '보고서 작성' 이`
+        + ` 알아서 읽습니다 (한 장에 1~2분, 애매한 칸은 노랑/주황)`
     : hw === "offline"
-      ? ` · 손글씨 시험일지 판독: <b>Claude 대화</b> — 보고서를 만들 때 제품 폴더에`
-        + ` <code>13. Claude 판독 요청 …zip</code> 이 생깁니다. 그것을 Claude 에 올리고 받은`
-        + ` <code>13. 안정성시험일지 판독.json</code> 을 폴더에 두고 재작성하세요`
-        + ` (이 PC 로 직접 읽으려면 <code>PC 판독 사용.txt</code>, 자동으로 하려면 <code>API-KEY.txt</code>)`
+      ? ` · 손글씨 시험일지 판독: <b>이 PC 의 판독기(RapidOCR)</b> — '안정성 판독 🔍' 를 누르면`
+        + ` 이 PC 가 읽습니다 (한 장에 1분쯤, 애매한 칸은 노랑/주황).`
+        + ` <b>Claude</b> 로 읽게 하려면 이 PC 에 Claude Code 를 깔거나 프로그램 폴더에 <code>API-KEY.txt</code> 를 두세요`
+        + ` — 또는 제품 폴더의 <code>13. Claude 판독 요청 …zip</code> 을 Claude 대화에 올리고 받은`
+        + ` <code>13. 안정성시험일지 판독.json</code> 을 폴더에 두고 재작성하셔도 됩니다`
       : ` · 손글씨 시험일지 판독: <b style="color:#b91c1c">꺼짐</b> — 판독기가 설치되지 않았습니다`
         + (SOURCE.handwriting_why ? ` (<code>${esc(SOURCE.handwriting_why)}</code>)` : ``)
         + `. <code>PQR-업데이트.bat</code> 을 다시 실행하고, 그래도 꺼짐이면 프로그램 폴더의 <code>install-ocr-log.txt</code> 를 보내 주세요`

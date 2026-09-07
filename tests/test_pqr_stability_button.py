@@ -34,7 +34,7 @@ class 판독_단추(unittest.TestCase):
         stability_read.how = lambda folder=None: ("pc", "시험용 판독기")
         handwriting.read_folder = lambda paths, specs=None, log=None: logs
         try:
-            got = stability_read.make_reading(self.folder, "QC1-7007")
+            got = stability_read.make_reading(self.folder, "QC1-7007", allow_pc=True)
         finally:
             stability_read.how, handwriting.read_folder = old_how, old_read
         self.assertEqual((got["ok"], got["lots"], got["unsure"], got["pages"]), (True, 1, 1, 1))
@@ -54,12 +54,27 @@ class 판독_단추(unittest.TestCase):
             {"lot": "OEX101", "year": "2024", "kind": "장기",
              "points": [{"period": "12M", "done": "2025.09.09", "assays": {"오플록사신": 50.0}, "unsure": []}]}]
         try:
-            stability_read.make_reading(self.folder)
+            stability_read.make_reading(self.folder, allow_pc=True)
         finally:
             stability_read.how, handwriting.read_folder = old_how, old_read
         got = handwriting.load_cache(self.folder)
         self.assertEqual(got[0]["points"][0]["done"], "2025.01.02")
         self.assertEqual(got[0]["points"][0]["assays"]["오플록사신"], 99.9)
+
+
+    def test_이_PC_판독기밖에_없으면_묻고_묶음을_만들어_둔다(self):
+        # 담당자 2026-09-07: "시간이 너무 걸려서 PC 로 안 읽기로 한 거 아냐?"
+        self._scan("퀴노비드안연고 장기 안정성시험일지 OEX101.pdf")
+        old_how = stability_read.how
+        stability_read.how = lambda folder=None: ("pc", "이 PC 의 판독기")
+        try:
+            got = stability_read.make_reading(self.folder, "퀴노비드안연고")
+        finally:
+            stability_read.how = old_how
+        self.assertEqual((got["ok"], got["need"], got["pages"]), (False, "pc", 1))
+        self.assertEqual(got["minutes"], stability_read.MINUTES_PER_PAGE)
+        self.assertTrue(got["zip"] and got["zip"][0].startswith("13. Claude 판독 요청"))
+        self.assertTrue(os.path.isfile(os.path.join(self.folder, got["zip"][0])))
 
 
 if __name__ == "__main__":

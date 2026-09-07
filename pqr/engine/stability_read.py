@@ -8,8 +8,11 @@
 따로 떼어 단추 하나로 돌리고, 끝난 뒤 보고서를 만들게 한다. 만들어 둔 판독 파일에는
 covers_all 을 적어 두므로 '보고서 작성' 은 시험일지를 다시 읽지 않는다.
 
-차례: ① API 키(Claude) → ② 이 PC 의 Claude Code → ③ 이 PC 판독기(RapidOCR).
-단추를 누른 것 자체가 '이 PC 로 읽어도 좋다' 는 뜻이라 ③ 에 'PC 판독 사용.txt' 를 묻지 않는다.
+차례: ① API 키(Claude) → ② 이 PC 의 Claude Code. 이 PC 판독기(RapidOCR)는 한 장에 1~3분이라
+(20장에 71분, 담당자 2026-09-07: "시간이 너무 걸려서 PC 로 안 읽기로 한 거 아냐?") 저 혼자 시작하지
+않는다 — 담당자가 "그래도 이 PC 로 읽겠다" 고 한 번 더 고를 때(allow_pc)만 돌린다. 고르지 않으면
+Claude 대화에 올릴 판독 요청 묶음(zip)을 만들어 준다.
+
 값을 지어내지 않는다 — 애매한 칸은 unsure 에 남아 보고서에서 노랑·주황으로 표시된다.
 """
 import os
@@ -45,7 +48,7 @@ def specs_of(folder, log=None):
 
 
 def how(folder=None):
-    """지금 이 PC 에서 쓸 수 있는 판독 길 — ("api"|"cli"|"pc"|"", 설명)."""
+    """지금 이 PC 에서 쓸 수 있는 판독 길 — ("api"|"cli"|"pc"|"", 설명). 빠른 길이 먼저."""
     try:
         from . import vision as vision_mod
         if vision_mod.available():
@@ -67,8 +70,15 @@ def how(folder=None):
     return "", "이 PC 에는 판독기가 없습니다"
 
 
-def make_reading(folder, product="", log=None):
-    """13 폴더를 읽어 판독 파일을 만든다. {"ok", "how", "lots", "unsure", "path", "pages", "why"}"""
+MINUTES_PER_PAGE = 3          # 이 PC 판독기(RapidOCR) 실측: 20장에 71분
+
+
+def make_reading(folder, product="", log=None, allow_pc=False):
+    """13 폴더를 읽어 판독 파일을 만든다.
+
+    돌려주는 값: {"ok", "how", "lots", "unsure", "path", "pages"} 또는
+    {"ok": False, "need": "pc"|"", "pages", "minutes", "zip": [묶음 이름], "why"}
+    """
     say = log or (lambda *a: None)
     from . import handwriting
     folder = os.path.abspath(folder)
@@ -77,10 +87,20 @@ def make_reading(folder, product="", log=None):
         return {"ok": False, "why": "13 폴더에 손글씨 시험일지(스캔 PDF)가 없습니다 — 먼저 (r) 13. 안정성 시험에 올려 주세요.",
                 "pages": 0}
     kind, label = how(folder)
+    if kind == "pc" and not allow_pc:
+        # 이 PC 판독기는 느리다 — 담당자가 한 번 더 고를 때만 돌린다. 그동안 쓸 묶음을 만들어 둔다.
+        from . import handreq
+        made = handreq.make_request(folder, paths, product or "", say)
+        return {"ok": False, "need": "pc", "pages": len(paths),
+                "minutes": len(paths) * MINUTES_PER_PAGE, "zip": [name for name, _ in made],
+                "why": "이 PC 에는 Claude(API 키)도, Claude Code 도 없습니다. 이 PC 판독기로 읽으면 "
+                       "시험일지 %d장에 %d분쯤 걸립니다." % (len(paths), len(paths) * MINUTES_PER_PAGE)}
     if not kind:
-        return {"ok": False, "pages": len(paths),
-                "why": "이 PC 에서 쓸 수 있는 판독기가 없습니다 — PQR-업데이트.bat 을 실행하거나, "
-                       "이 PC 에 Claude Code 를 깔거나, 판독 요청 묶음을 Claude 대화에 올려 주세요."}
+        from . import handreq
+        made = handreq.make_request(folder, paths, product or "", say)
+        return {"ok": False, "need": "", "pages": len(paths), "zip": [name for name, _ in made],
+                "why": "이 PC 에서 쓸 수 있는 판독기가 없습니다 — 이 PC 에 Claude Code 를 깔거나, "
+                       "만들어 둔 판독 요청 묶음을 Claude 대화에 올려 주세요."}
     say("13항 안정성 판독: 시험일지 %d장 — %s" % (len(paths), label))
     specs = specs_of(folder, log) or None
     if kind == "api":

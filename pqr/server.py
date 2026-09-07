@@ -995,7 +995,8 @@ class Handler(BaseHTTPRequestHandler):
         steps = []
         self.workspace.progress[code] = {"steps": steps, "started": time.time(), "running": True}
         try:
-            got = stability_read.make_reading(folder, code, log=steps.append)
+            got = stability_read.make_reading(folder, code, log=steps.append,
+                                              allow_pc=bool(body.get("allow_pc")))
         except Exception as error:
             steps.append("판독 실패: %s" % error)
             got = {"ok": False, "why": str(error)}
