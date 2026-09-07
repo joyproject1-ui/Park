@@ -187,20 +187,27 @@ def drop_na_in_diag_cells(document):
 
 
 def highlight(document, needle="확인 필요", color="yellow"):
-    """그 글이 든 런에 형광펜을 칠한다. 칠한 런 수를 돌려준다.
+    """프로그램이 적어 둔 그 글에 형광펜을 칠한다. 칠한 런 수를 돌려준다.
 
     담당자 지시(2026-09): "확인 필요 내용은 노랑 마크를 칠해줘" — 채우지 못해 담당자가
     직접 봐야 하는 칸을 한눈에 찾게 한다.
+
+    **그 낱말로 시작하는 줄만** 칠한다. 자료에서 옮겨 온 글에 그 낱말이 들어 있을 수 있기
+    때문이다 — 12항 변경사항의 '1.3 … 교정 주기 설정 → QA팀 확인 필요' 가 노랗게 칠해졌다
+    (담당자 2026-09-07: "본문에 노랑 마크는 왜 한 거지?"). 프로그램이 적는 자리는 언제나
+    그 낱말로 시작한다('확인 필요', '확인 필요 — 변경요청서를 읽지 못했습니다').
     """
     n = 0
-    for run in document.element.body.iter(qn("w:r")):
-        text = "".join(t.text or "" for t in run.findall(qn("w:t")))
-        if needle not in text:
+    for para in document.element.body.iter(qn("w:p")):
+        text = "".join(t.text or "" for t in para.iter(qn("w:t"))).strip()
+        if not text.startswith(needle):
             continue
-        rpr = run.get_or_add_rPr()
-        el = get_or_add(rpr, "highlight")
-        el.set(qn("w:val"), color)
-        n += 1
+        for run in para.iter(qn("w:r")):
+            if needle not in "".join(t.text or "" for t in run.findall(qn("w:t"))):
+                continue
+            el = get_or_add(get_or_add(run, "rPr"), "highlight")
+            el.set(qn("w:val"), color)
+            n += 1
     return n
 
 

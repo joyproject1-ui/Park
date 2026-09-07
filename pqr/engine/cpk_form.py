@@ -186,7 +186,73 @@ def _patch_chart(xml, columns, count):
         block = _NUMCACHE.sub(cache, block, count=1)
         return _STRCACHE.sub("", block, count=1) if "<c:strCache>" in block and "<c:numCache>" in block else block
 
-    return re.sub(r"<c:cat>.*?</c:cat>", one_cat, xml, flags=re.S)
+    return _legend_outside(re.sub(r"<c:cat>.*?</c:cat>", one_cat, xml, flags=re.S))
+
+
+_LEGEND = re.compile(r"<c:legend>.*?</c:legend>", re.S)
+_LAYOUT = re.compile(r"<c:layout>.*?</c:layout>", re.S)
+_PLOT_LAYOUT = re.compile(r"(<c:plotArea>\s*)<c:layout>.*?</c:layout>", re.S)
+
+
+def _legend_outside(xml):
+    """범례를 그래프 밖(오른쪽)으로 — 그림을 가리지 않게.
+
+    담당자 2026-09-07: "Cpk 범례표가 그래프를 가리네." 옛 .xls 를 .xlsx 로 바꾸면서 범례에
+    '손으로 정한 자리'(manualLayout)가 붙어 그래프 한가운데에 얹혔다. 그 자리 지정을 지우면
+    legendPos(오른쪽)대로 엑셀이 알아서 바깥에 놓고, 그림 영역도 그만큼 줄여 준다.
+    """
+    def one(m):
+        block = _LAYOUT.sub("", m.group(0), count=1)          # 손으로 정한 범례 자리를 지운다
+        block = re.sub(r'<c:legendPos val="[^"]*"/>', '<c:legendPos val="r"/>', block, count=1)
+        if "<c:legendPos" not in block:
+            block = block.replace("<c:legend>", '<c:legend><c:legendPos val="r"/>', 1)
+        block = re.sub(r'<c:overlay val="[^"]*"/>', '<c:overlay val="0"/>', block, count=1)
+        return block
+
+    xml = _LEGEND.sub(one, xml, count=1)
+    # 그림 영역이 판을 꽉 채우게 정해져 있으면(w 0.96) 범례 자리가 없다 — 그 지정도 지운다
+    return _PLOT_LAYOUT.sub(lambda m: m.group(1), xml, count=1)
+
+
+_ANCHOR = re.compile(r"<xdr:twoCellAnchor.*?</xdr:twoCellAnchor>", re.S)
+_FROM = re.compile(r"(<xdr:from>.*?<xdr:row>)(\d+)(</xdr:row>\s*<xdr:rowOff>)(\d+)(</xdr:rowOff>)", re.S)
+_TO = re.compile(r"(<xdr:to>.*?<xdr:row>)(\d+)(</xdr:row>\s*<xdr:rowOff>)(\d+)(</xdr:rowOff>)", re.S)
+_COL = re.compile(r"<xdr:(from|to)>\s*<xdr:col>(\d+)</xdr:col>", re.S)
+
+
+def _patch_drawing(xml, count):
+    """빈 결과값 칸을 가로지르는 사선을 올해 줄 수에 맞춘다 — 빈칸이 남지 않게.
+
+    담당자 2026-09-07: "사선은 빈 공간을 모두 커버해야 돼." 서식의 사선은 그 해 줄 수에 맞춰
+    그어져 있어, 올해 Lot 이 더 적으면 사선 위로 빈 줄이 남는다. 사선은 결과값 열(B)에 그어진
+    직선이므로 그 도형의 자리만 '첫 빈 줄 ~ 마지막 줄' 로 다시 잡는다. 빈 줄이 없으면 지운다.
+    """
+    first_empty = FIRST_DATA_ROW + max(count, 0)          # 1-기준: 값이 끝난 다음 줄
+    last_row = FIRST_DATA_ROW + ROWS - 1
+
+    def one(m):
+        block = m.group(0)
+        if "graphicFrame" in block:                        # 그래프는 건드리지 않는다
+            return block
+        cols = [int(c) for _, c in _COL.findall(block)]
+        if len(cols) < 2 or cols[0] > 1 or cols[1] > 2:    # 결과값 열(B)에 그은 도형만
+            return block
+        rows = [int(r) for r in re.findall(r"<xdr:row>(\d+)</xdr:row>", block)]
+        if len(rows) < 2 or rows[1] - rows[0] < 2:         # 여러 줄을 가로지르는 사선만
+            return block
+        if first_empty > last_row:                         # 빈 줄이 없다 — 사선을 지운다
+            return ""
+        block = _FROM.sub(lambda f: "%s%d%s0%s" % (f.group(1), first_empty - 1, f.group(3), f.group(5)),
+                          block, count=1)
+        block = _TO.sub(lambda t: "%s%d%s0%s" % (t.group(1), last_row, t.group(3), t.group(5)),
+                        block, count=1)
+        return block
+
+    return _ANCHOR.sub(one, xml)
+
+
+def _drawing_names(names):
+    return [n for n in names if re.match(r"xl/drawings/drawing\d+\.xml$", n)]
 
 
 def _sheet_name(names):
@@ -279,6 +345,8 @@ def fill(form, dst, cells, values, today=None):
         columns[col] = [v] * len(values) if v is not None else []
     for chart in _chart_names(names):
         blobs[chart] = _patch_chart(blobs[chart].decode("utf-8"), columns, len(values)).encode("utf-8")
+    for drawing in _drawing_names(names):                  # 빈 줄을 가로지르는 사선 자리
+        blobs[drawing] = _patch_drawing(blobs[drawing].decode("utf-8"), len(values)).encode("utf-8")
     # 5) 열 때 다시 계산하게
     book = blobs["xl/workbook.xml"].decode("utf-8")
     if "<calcPr" in book:

@@ -1,6 +1,7 @@
 """Cpk 계산 파일 — 전년도 서식(.xlsx)의 칸 값만 갈아 끼운다 (담당자 2026-09-06:
 "Cpk 는 전년도 양식으로 작성하되 2026년 PQR 작성본 내용을 참고해서 업데이트하면 돼")."""
 import os
+import re
 import sys
 import tempfile
 import unittest
@@ -66,6 +67,48 @@ class 서식_채우기(unittest.TestCase):
         vs = wv.worksheets[0]
         self.assertIsNone(vs["P9"].value)                               # σ=0 — 지난해 값이 남지 않는다
         self.assertIsNone(vs["I11"].value)
+
+
+class 그래프_차림새(unittest.TestCase):
+    """담당자 2026-09-07: "Cpk 범례표가 그래프를 가리네", "사선은 빈 공간을 모두 커버해야 돼"."""
+
+    def setUp(self):
+        self.dir = tempfile.mkdtemp(prefix="pqr-cpkchart-")
+
+    def _make(self, values):
+        import zipfile
+        dst = os.path.join(self.dir, "out.xlsx")
+        cpk_form.fill(UNI, dst, {"C4": "퀴노비드안연고 (내수용)", "K5": "입자도(㎛)", "P6": 75}, values, "2026.09.07")
+        with zipfile.ZipFile(dst) as z:
+            names = z.namelist()
+            chart = z.read([n for n in names if n.startswith("xl/charts/chart")][0]).decode("utf-8")
+            drawing = z.read([n for n in names if n.startswith("xl/drawings/drawing")][0]).decode("utf-8")
+        return chart, drawing
+
+    def test_범례는_그래프_밖_오른쪽(self):
+        chart, _ = self._make([61.0, 48.0, 54.0])
+        legend = re.search(r"<c:legend>.*?</c:legend>", chart, re.S).group(0)
+        self.assertIn('<c:legendPos val="r"/>', legend)
+        self.assertNotIn("manualLayout", legend)             # 손으로 정한 자리를 지운다
+        self.assertIn('<c:overlay val="0"/>', legend)
+        plot = chart[chart.index("<c:plotArea>"):chart.index("<c:plotArea>") + 60]
+        self.assertNotIn("<c:layout>", plot)                 # 그림이 판을 꽉 채우지 않게
+
+    def test_사선은_첫_빈줄부터_마지막_줄까지(self):
+        _, drawing = self._make([61.0] * 17)
+        line = [b for b in re.findall(r"<xdr:twoCellAnchor.*?</xdr:twoCellAnchor>", drawing, re.S)
+                if "<xdr:col>1</xdr:col>" in b and "prst=\"line\"" in b]
+        self.assertEqual(len(line), 1)
+        rows = [int(r) for r in re.findall(r"<xdr:row>(\d+)</xdr:row>", line[0])]
+        # 0-기준: 값 17줄이면 10+17-1 = 26 (1-기준 27줄) 부터 마지막 줄(44)까지
+        self.assertEqual(rows, [cpk_form.FIRST_DATA_ROW + 17 - 1,
+                                cpk_form.FIRST_DATA_ROW + cpk_form.ROWS - 1])
+
+    def test_빈_줄이_없으면_사선을_지운다(self):
+        _, drawing = self._make([61.0] * cpk_form.ROWS)
+        line = [b for b in re.findall(r"<xdr:twoCellAnchor.*?</xdr:twoCellAnchor>", drawing, re.S)
+                if "<xdr:col>1</xdr:col>" in b and "prst=\"line\"" in b]
+        self.assertEqual(line, [])
 
 
 if __name__ == "__main__":
