@@ -208,6 +208,33 @@ def _lot_from_name(name):
     return m.group(1) if m else None
 
 
+def same_files_once(paths, log=None):
+    """내용이 같은 시험일지는 하나만 남긴다 — 담당자가 같은 일지를 이름만 바꿔 여러 번 올려 두는 일이 잦다.
+
+    담당자 PC 2026-09-07: 13 폴더에 24개가 있었지만 실제 문서는 여덟 가지였다(같은 일지가
+    '…시험일지 OEV301.pdf'·'[OG-22-1]…_QEV301_36M.pdf'·'…시험일지.pdf' 로 세 번). 한 장에 몇 분이라
+    같은 것을 다시 읽으면 그만큼 그냥 기다리게 된다.
+    """
+    import hashlib
+    out, seen, 같은것 = [], {}, 0
+    for path in paths:
+        try:
+            with open(path, "rb") as handle:
+                key = hashlib.md5(handle.read()).hexdigest()
+        except OSError:
+            out.append(path)
+            continue
+        if key in seen:
+            같은것 += 1
+            continue
+        seen[key] = path
+        out.append(path)
+    if 같은것 and log:
+        log("  [13] 내용이 같은 시험일지 %d장은 한 번만 읽습니다 (%d장 → %d장)"
+            % (같은것, len(paths), len(out)))
+    return out
+
+
 def unread_scans(logs, scanned):
     """판독 파일(logs)에 아직 없는 시험일지 — 판독 결과는 읽은 일지 이름(source)을 들고 있다.
     어느 일지를 읽었는지 모르는 옛 판독 파일(source 없음)이면 아무것도 새로 읽지 않는다."""
@@ -456,9 +483,12 @@ def collect(folder, product_name=None, log=None):
     # (담당자 2026-09: "API 안 하고 json 없이 최대한 판독, 애매한 것만 노랑"). 깨끗이 읽힌 값만
     # 쓰고 나머지는 '애매' 로 남겨 보고서가 노랑·주황으로 칠한다. 결과는 판독 파일로 저장해
     # 다음부터는 그것을 쓴다 — 담당자가 값을 손보면 그 값이 우선이다.
-    scanned = [p for p, is_scan in data.stability_files if is_scan]
+    scanned = same_files_once([p for p, is_scan in data.stability_files if is_scan], log)
     cache = getattr(data, "stability_cache", None)
-    if scanned and data.stability_logs and cache and cache[0].endswith(handwriting_cache_name()):
+    # 새로 읽을 일지가 있으면 옛 판독 파일 보완은 건너뛴다 — 어차피 새로 읽으면서 채워진다.
+    # (담당자 PC 2026-09-07: 24장을 보완으로 한 번, 새로 한 번 — 두 번 읽어 한 시간이 넘었다)
+    보완할것 = [] if getattr(data, "stability_all_read", False) else unread_scans(data.stability_logs, scanned)
+    if scanned and not 보완할것 and data.stability_logs and cache and cache[0].endswith(handwriting_cache_name()):
         # 옛 판독기가 만든 판독 파일 — 애매한 칸만 새 판독기로 다시 읽어 예상값을 채운다
         # (담당자 2026-09-06: "주황색 부분에 너의 예상값을 기재하지 않았어" — 업데이트 전 판독 파일을 그대로 썼다)
         try:
@@ -559,8 +589,10 @@ def collect(folder, product_name=None, log=None):
             data.stability_logs.sort(key=lambda r: (r.get("year") or "", r.get("lot") or ""))
             겹침 = {}
             for one in data.stability_logs:
-                겹침.setdefault(one.get("lot"), set()).add(one.get("kind"))
+                # 구분이 없는 옛 판독 기록도 있다 — 글자로 맞춰 둔다(없으면 '' )
+                겹침.setdefault(str(one.get("lot") or ""), set()).add(str(one.get("kind") or ""))
             for lot, kinds in sorted(겹침.items()):
+                kinds = {k for k in kinds if k}
                 if len(kinds) > 1:     # 같은 Lot 이 장기·시판 후 두 표에 들어간다 — 파일 이름을 확인해야 한다
                     note("13", lot, "같은 Lot 이 %s 두 가지로 읽혔습니다 — 시험일지 파일 이름에 "
                                     "'장기'·'시판 후' 를 바로 적어 주세요" % "·".join(sorted(kinds)))

@@ -223,3 +223,46 @@ class 사람이_만든_판독_파일(unittest.TestCase):
         one = {"lot": "OEX101", "kind": "장기", "points": [], "source": "a.pdf"}
         data = self._collect(self._folder({"logs": [one], "reader_version": 3}))
         self.assertFalse(data.stability_all_read)
+
+
+class 같은_일지_한_번만(unittest.TestCase):
+    """이름만 다른 같은 시험일지는 한 번만 읽는다 (담당자 PC 2026-09-07: 24장 가운데 여덟 가지뿐)."""
+
+    def setUp(self):
+        import tempfile
+        self.dir = tempfile.mkdtemp(prefix="pqr-same-")
+
+    def _pdf(self, name, body):
+        path = os.path.join(self.dir, name)
+        with open(path, "wb") as fh:
+            fh.write(body)
+        return path
+
+    def test_내용이_같으면_하나만(self):
+        from pqr.engine import collect
+        a = self._pdf("시험일지 OEV301.pdf", b"%PDF-1.4 same")
+        b = self._pdf("[OG-22-1]_QEV301_36M.pdf", b"%PDF-1.4 same")
+        c = self._pdf("다른 일지.pdf", b"%PDF-1.4 other")
+        self.assertEqual(collect.same_files_once([a, b, c]), [a, c])
+
+    def test_없는_파일도_버리지_않는다(self):
+        from pqr.engine import collect
+        self.assertEqual(collect.same_files_once(["/없는/파일.pdf"]), ["/없는/파일.pdf"])
+
+
+class 구분이_없는_옛_기록(unittest.TestCase):
+    """kind 가 없는 판독 기록이 섞여도 넘어지지 않는다 (담당자 PC 2026-09-07 멈춤)."""
+
+    def test_kind_가_없어도_작성이_이어진다(self):
+        import json
+        import tempfile
+        from pqr.engine import collect
+        folder = tempfile.mkdtemp(prefix="pqr-nokind-")
+        logs = [{"lot": "OEV301", "points": [{"period": "12M", "done": "2025.03.10",
+                                              "assays": {"오플록사신": 101.2}, "unsure": []}]},
+                {"lot": "OEV301", "kind": "장기",
+                 "points": [{"period": "24M", "done": "2025.04.10", "assays": {}, "unsure": []}]}]
+        with open(os.path.join(folder, "13. 안정성시험일지 판독.json"), "w", encoding="utf-8") as fh:
+            json.dump({"logs": logs, "reader_version": 3, "covers_all": True}, fh, ensure_ascii=False)
+        data = collect.collect(folder, product_name="퀴노비드안연고", log=lambda *a: None)
+        self.assertEqual(len(data.stability_logs), 2)
