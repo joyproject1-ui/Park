@@ -550,6 +550,11 @@ tbody tr:hover{background:var(--accent-soft)}
 .modal{border-radius:18px}
 .tip{border-radius:10px;padding:9px 12px;box-shadow:var(--shadow-lg)}
 .issue-list li{margin:2px 0}
+/* ★ 문의(먼저 해야 하는 일) — 13항 판독 요청 묶음 안내가 목록에 묻히지 않게 */
+.star-note{margin:8px 0;padding:8px 10px;border:1px solid #fca5a5;border-left:4px solid #b91c1c;
+  border-radius:6px;background:#fef2f2;color:#7f1d1d;text-align:left;font-size:12px;line-height:1.55}
+.star-note code{background:#fff;border:1px solid #fecaca;border-radius:4px;padding:1px 4px}
+.star-note hr{border:0;border-top:1px solid #fecaca;margin:6px 0}
 .footnote{padding:0 6px;line-height:1.7}
 </style>
 
@@ -1671,7 +1676,15 @@ async function makeReport(code, button){
           + `<br>전년도 PQR 을 <b>.docx</b> 로 16 항목에 올리면 그 표 구성을 물려받아 완성합니다.</span>`
         : `✅ 결재본 양식으로 제출용 보고서를 완성했습니다 — 제품 폴더가 열립니다`
           + `<br><span class="muted">기준 본: ${esc(base.previous || "")} · 올린 자료 값으로 채우고 회사 조판 규칙을 적용했습니다.</span>`;
+      // ★ 로 시작하는 문의는 그냥 두면 목록에 묻힌다 — 맨 위에 눈에 띄게 (담당자 2026-09-07:
+      // "안정성은 여전히 작성이 안 됐네" — 13항 판독 요청 묶음 안내를 못 보고 지나쳤다)
+      const stars = issues.filter(i => String(i[2]||"").startsWith("★"));
       head = head
+        + (stars.length
+            ? `<div class="star-note">` + stars.map(i =>
+                `<b>[${esc(i[0])}항] 먼저 해 주세요</b><br>${esc(String(i[2]).replace(/^★\s*/, ""))}`
+                + (i[1] ? `<br><code>${esc(i[1])}</code>` : ``)).join(`<hr>`) + `</div>`
+            : ``)
         + (issues.length
             ? `<br><b>확인 필요 ${issues.length}건</b> — 제품 폴더의 <code>PQR 문의 목록</code> 파일에도 있습니다:`
               + `<ul class="issue-list">` + issues.slice(0,6).map(i=>`<li>[${esc(i[0])}항] ${esc(i[1] ? i[1]+" — " : "")}${esc(i[2])}</li>`).join("")
