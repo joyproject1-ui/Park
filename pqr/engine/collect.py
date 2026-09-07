@@ -396,10 +396,13 @@ def collect(folder, product_name=None, log=None):
     for p in got.get("3", []):
         if p.lower().endswith(".pdf"):
             try:
-                if is_scanned(p):
-                    note("3", p, "글자 정보가 없는 PDF — 허가증 값은 결재본 값을 유지, 원본 확인 필요")
-                else:
+                # 스캔 허가증은 문의로 올리지 않는다 — 값은 결재본 것이 맞고, 해마다 같은 글이
+                # 목록만 채운다 (담당자 2026-09-07: "허가증은 빼자, 의미가 없네").
+                if not is_scanned(p):
                     data.license = license_reader.read_license(p)
+                else:
+                    log("  [3] %s — 글자 없는 스캔본이라 허가 정보는 결재본 값을 그대로 씁니다"
+                        % os.path.basename(p))
             except PdfTextError as e:
                 note("3", p, str(e))
     # 10.x 마스터
