@@ -1100,11 +1100,14 @@ def fill(document, data, product, period, today=None, log=None):
         for tbl, lots in ((t821[0], dom), (t821[1] if len(t821) > 1 else None, exp)):
             if tbl is None:
                 continue
+            # 표에 이름이 없으면 소제목('8.2.1.1 포비돈 K-25')의 이름을 쓴다 — 담당자 2026-09-07:
+            # "원료명에 왜 사선이야, 포비돈 K-25 라고 기재하면 되잖아"
+            titled = _heading_material_name(document, tbl)
             recs = []
             for code, test, ls in data.raw_tests:
                 mine = [l for l in lots if l in ls]
                 if mine:
-                    recs.append((code, names.get(code, ""), test, mine))
+                    recs.append((code, names.get(code) or titled, test, mine))
             missing = sorted({c for c, item, _t, _l in recs if not item})
             if missing:
                 issues.append(("8.2.1", ", ".join(missing),
@@ -2480,6 +2483,20 @@ def _note_133_lots(table, notes):
     kept = [l for l in E.cell_text(cell).split("\n")[1:]
             if l.strip() and l.strip() != "N/A" and not l.strip().startswith(LOT_NOTE)]
     E.set_cell_plain(cell, "특이사항 (Comment)", *(kept + [line]))
+
+
+def _heading_material_name(document, table):
+    """표 바로 앞 소제목 '8.2.1.1 포비돈 K-25' 의 원료명. 소제목이 원료명을 들고 있지 않으면 빈 값."""
+    from .locate import headings_of_tables
+    try:
+        index = [t._tbl for t in document.tables].index(table._tbl)
+    except ValueError:
+        return ""
+    for head in headings_of_tables(document).get(index, []):
+        m = re.match(r"^\s*8\.2\.1\.\d+\.?\s*(.+)$", head)
+        if m and m.group(1).strip() and not re.match(r"^(주원료|원료|시험결과)", m.group(1).strip()):
+            return m.group(1).strip()
+    return ""
 
 
 def _declared_lots(table):

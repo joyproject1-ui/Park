@@ -100,3 +100,31 @@ class 판독_파일에_없는_일지(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class 제목_뒤_쪽_나눔(unittest.TestCase):
+    """담당자 2026-09-07: "16항 결론은 왜 다음 페이지로 밀렸는지? 21페이지에 작성되도록 해"."""
+
+    def _doc(self):
+        import docx
+        from docx.oxml.ns import qn
+        from pqr.engine.docedit import get_or_add
+        d = docx.Document()
+        d.add_paragraph("16. 결론")
+        d.add_paragraph("")
+        body = d.add_paragraph("한림포비돈점안액에 대한 제품품질평가 결과 …")
+        get_or_add(body._p.get_or_add_pPr(), "pageBreakBefore")
+        d.add_paragraph("17. 참고 자료")
+        other = d.add_paragraph("- 제품표준서")
+        d.add_paragraph("아무 글")
+        late = d.add_paragraph("떨어진 문단")
+        get_or_add(late._p.get_or_add_pPr(), "pageBreakBefore")
+        return d, body, late
+
+    def test_제목_바로_뒤_본문의_쪽_나눔만_뗀다(self):
+        from docx.oxml.ns import qn
+        from pqr.engine import docedit as E
+        d, body, late = self._doc()
+        self.assertEqual(E.drop_break_after_headings(d), 1)
+        self.assertIsNone(body._p.pPr.find(qn("w:pageBreakBefore")))
+        self.assertIsNotNone(late._p.pPr.find(qn("w:pageBreakBefore")))   # 제목 뒤가 아닌 것은 그대로

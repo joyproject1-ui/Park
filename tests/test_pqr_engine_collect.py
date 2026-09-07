@@ -83,3 +83,40 @@ class StabilityGroupTest(unittest.TestCase):
         got = _grouped({"내수용": {"OEV301": {"Initial": 100.5}},
                         "수출용": {"OZW101": {"Initial": 97.3}}})
         self.assertEqual(sorted(k for k, _ in got), ["내수용", "수출용"])
+
+
+class 다른_제품_공_기록서(unittest.TestCase):
+    """담당자 PC 2026-09-07: 한림포비돈점안액 폴더에 올로원스점안액 3ml 기록서가 있어 5mL 자재가 표에 들어갔다."""
+
+    def test_다른_제품_이름이_든_기록서는_가려낸다(self):
+        from pqr.engine.collect import other_product_record as other
+        self.assertTrue(other("6. PK-ONEBEE-1 올로원스점안액3ml (다회용).xlsx", "한림포비돈점안액"))
+        self.assertTrue(other("6. 올로원스점안액(미얀마) 포장기록서 rev2.pdf", "한림포비돈점안액"))
+
+    def test_이_제품_이름이_있거나_제품_이름이_없으면_쓴다(self):
+        from pqr.engine.collect import other_product_record as other
+        self.assertFalse(other("6. 한림포비돈점안액 포장기록서.docx", "한림포비돈점안액"))
+        self.assertFalse(other("6. 제조기록서 rev3.docx", "한림포비돈점안액"))
+        self.assertFalse(other("6. 퀴노비드안연고(수출용) 포장.docx", "퀴노비드안연고(내수용)"))
+        self.assertFalse(other("6. 아무 기록서.docx", ""))
+
+
+class 변경요청서_문서번호(unittest.TestCase):
+    """읽었는데 문서번호가 비면 '[None]' 이 나갔다 (담당자 2026-09-07: "변경관리 내용도 기재 안 했네")."""
+
+    def test_문서번호는_파일_이름에서_제목이_없으면_못_읽음으로(self):
+        import tempfile
+        from pqr.engine import collect as C, readers
+        folder = tempfile.mkdtemp(prefix="pqr-cc-")
+        path = os.path.join(folder, "12.CC-240723-08.pdf")
+        with open(path, "wb") as handle:
+            handle.write(b"%PDF-1.4")
+        old = readers.change.read_change
+        readers.change.read_change = lambda p: {"doc_no": None, "title": "", "actions": [], "products": ""}
+        try:
+            data = C.collect(folder, product_name="한림포비돈점안액")
+        finally:
+            readers.change.read_change = old
+        self.assertEqual([c["doc_no"] for c in data.changes], ["CC-240723-08"])
+        self.assertTrue(data.changes[0].get("unread"))
+        self.assertTrue(any(i[0] == "12" and "문서번호만" in i[2] for i in data.issues))

@@ -277,7 +277,53 @@ def _rebuild_chart(xml_bytes, sheet, lots, lcl, ucl):
         el = etree.fromstring('<root xmlns:c="%s" xmlns:a="%s">%s</root>'
                               % (NS_C, NS_A, b))[0]
         line.insert(pos + off, el)
+    _scale_axis(root, lcl, ucl)
     return etree.tostring(root, xml_declaration=True, encoding="UTF-8", standalone=True)
+
+
+def axis_range(lcl, ucl):
+    """세로축 (최소, 최대) — 관리 규격 위아래로 폭의 1/4 씩 여유. 한쪽만 있으면 그쪽 기준 10%."""
+    try:
+        lo = float(lcl) if lcl not in (None, "") else None
+        hi = float(ucl) if ucl not in (None, "") else None
+    except (TypeError, ValueError):
+        return None, None
+    if lo is None and hi is None:
+        return None, None
+    if lo is not None and hi is not None and hi > lo:
+        pad = (hi - lo) / 4.0
+    else:
+        base = abs(hi if lo is None else lo) or 1.0
+        pad = base * 0.1
+    lo2 = (lo if lo is not None else hi) - pad
+    hi2 = (hi if hi is not None else lo) + pad
+    import math
+    unit = 0.1 if (hi2 - lo2) < 20 else 1.0             # 아래는 내리고 위는 올려 규격이 안에 들게
+    lo2 = math.floor(lo2 / unit + 1e-9) * unit
+    hi2 = math.ceil(hi2 / unit - 1e-9) * unit
+    return round(lo2, 1), round(hi2, 1)
+
+
+def _scale_axis(root, lcl, ucl):
+    """세로축의 최소·최대를 관리 규격에 맞춘다 — 서식 시트의 축(함량 90~110)이 그대로 남으면
+    pH 7.4 같은 값은 축 밖으로 나가 선이 안 보인다 (담당자 2026-09-07: "안정성도 그래프가 안 그려졌어")."""
+    lo, hi = axis_range(lcl, ucl)
+    for ax in root.iter(C + "valAx"):
+        scaling = ax.find(C + "scaling")
+        if scaling is None:
+            scaling = etree.SubElement(ax, C + "scaling")
+            ax.insert(0, scaling)
+        for tag in ("max", "min"):
+            for old in scaling.findall(C + tag):
+                scaling.remove(old)
+        if lo is None or hi is None:
+            continue                                  # 규격이 없으면 엑셀이 알아서 잡게 둔다
+        orient = scaling.find(C + "orientation")
+        at = list(scaling).index(orient) + 1 if orient is not None else 0
+        mx = etree.Element(C + "max"); mx.set("val", repr(hi))
+        mn = etree.Element(C + "min"); mn.set("val", repr(lo))
+        scaling.insert(at, mx)
+        scaling.insert(at + 1, mn)
 
 
 def _sheet_part(data, sheet_name):
@@ -503,6 +549,13 @@ def _save(data, names, out):
             zout.writestr(n, data[n])
     zout.close()
     return out
+
+
+def sheet_names(form):
+    """서식 파일의 시트 이름 — 차례대로."""
+    data, _names = _open(form)
+    wb = etree.fromstring(data["xl/workbook.xml"])
+    return [sh.get("name") for sh in wb.iter("{%s}sheet" % NS_S)]
 
 
 def _open(form):

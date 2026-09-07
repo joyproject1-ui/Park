@@ -376,6 +376,45 @@ def write_stability_workbook(folder, data, product, today, input_dir=None, repor
 FORM_SHEETS = ("함량", "A", "B", "기타", "총", "pH", "삼투압")
 
 
+def pick_form_sheets(parts, names):
+    """시험항목마다 (서식 시트, 새 시트 이름) — [(form_sheet, name)].
+
+    담당자 PC 2026-09-07: pH 값을 '함량' 시트에 넣어 시트 이름이 '함량(pH)' 가 되고 축이 90~110 이라
+    선이 안 보였다. 이름이 같은 시트(pH·보존제·삼투압)가 서식에 있으면 그것을, 함량 성분은 '함량'
+    부터 차례로 쓴다. 한 시트를 두 번 쓰지 않는다.
+    """
+    names = [n for n in (names or []) if n]
+    order = [n for n in FORM_SHEETS if n in names] + [n for n in names if n not in FORM_SHEETS]
+    if not order:
+        order = list(FORM_SHEETS)
+    used, out = set(), []
+    for part, item in parts:
+        text = "%s %s" % (part or "", item or "")
+        kind = None
+        for word in ("pH", "보존제", "삼투압"):
+            if word.lower() in text.lower():
+                kind = word
+                break
+        pick = None
+        if kind and kind in order and kind not in used:
+            pick = kind
+        if pick is None:
+            for n in order:
+                if n not in used and n not in ("pH", "보존제", "삼투압"):
+                    pick = n
+                    break
+        if pick is None:
+            pick = next((n for n in order if n not in used), None)
+        if pick is None:
+            break
+        used.add(pick)
+        label = kind if kind else "함량(%s)" % part
+        if kind == "보존제" and part and part != "보존제":
+            label = "보존제(%s)" % part
+        out.append((pick, label))
+    return out
+
+
 def _assay_limits(data):
     """{성분: (하한, 상한)} — 완제 성적서의 함량 규격. 제품마다 다르므로 여기서 읽는다."""
     out = {}
@@ -464,7 +503,11 @@ def _trend_file(form, folder, data, product, today, report_path, seed, logs, suf
         return []
 
     sheets, added = [], 0
-    for i, (part, item, lo, hi, old_lots) in enumerate(parts[:len(FORM_SHEETS)]):
+    try:
+        picks = pick_form_sheets([(p, it) for p, it, _lo, _hi, _ol in parts], stability_xlsx.sheet_names(form))
+    except Exception:
+        picks = [(FORM_SHEETS[i], "함량(%s)" % p) for i, (p, _it, _lo, _hi, _ol) in enumerate(parts[:len(FORM_SHEETS)])]
+    for i, (part, item, lo, hi, old_lots) in enumerate(parts[:len(picks)]):
         rows = []
         seen, unsure = {}, {}
         for lot, values in old_lots:              # 지난 경향표의 차례를 지킨다
@@ -490,7 +533,7 @@ def _trend_file(form, folder, data, product, today, report_path, seed, logs, suf
             shaky = set(shaky) - known_before
             if shaky:
                 unsure[lot] = shaky
-        sheets.append({"form_sheet": FORM_SHEETS[i], "name": "함량(%s)" % part, "item": item,
+        sheets.append({"form_sheet": picks[i][0], "name": picks[i][1], "item": item,
                        "lots": [(lot, seen[lot]) for lot in rows], "unsure": unsure,
                        "lcl": float(lo if lo is not None else 90),
                        "ucl": float(hi if hi is not None else 110)})

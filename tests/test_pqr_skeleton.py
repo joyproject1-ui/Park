@@ -155,3 +155,24 @@ class 연도_옮기기(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class 참고_자료_제품표준서(unittest.TestCase):
+    """공양식 17항에 다른 제품의 제품표준서가 남아 있으면 전년도 결재본 것으로 (담당자 PC 2026-09-07)."""
+
+    def test_다른_제품_이름이면_전년도_줄로_바꾼다(self):
+        form = _doc([("17. 참고 자료", None), ("- 제품표준서 MF-5008 퀴노비드점안액", None), ("- QC-126 제품품질평가규정", None)])
+        prev = _doc([("17. 참고 자료", None), ("- 제품표준서 MF-5017 한림포비돈점안액", None)])
+        self.assertTrue(carry.adopt_references(form, prev, "한림포비돈점안액"))
+        self.assertEqual([p.text for p in form.paragraphs][1], "- 제품표준서 MF-5017 한림포비돈점안액")
+
+    def test_이_제품_이름이면_그대로(self):
+        form = _doc([("17. 참고 자료", None), ("- 제품표준서 MF-5017 한림포비돈점안액", None)])
+        prev = _doc([("17. 참고 자료", None), ("- 제품표준서 MF-0000 딴제품점안액", None)])
+        self.assertFalse(carry.adopt_references(form, prev, "한림포비돈점안액"))
+        self.assertEqual([p.text for p in form.paragraphs][1], "- 제품표준서 MF-5017 한림포비돈점안액")
+
+    def test_전년도에도_없으면_건드리지_않는다(self):
+        form = _doc([("17. 참고 자료", None), ("- 제품표준서 MF-5008 퀴노비드점안액", None)])
+        prev = _doc([("17. 참고 자료", None), ("- QC-126", None)])
+        self.assertFalse(carry.adopt_references(form, prev, "한림포비돈점안액"))

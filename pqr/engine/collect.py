@@ -244,6 +244,27 @@ def unread_scans(logs, scanned):
     return [p for p in scanned if os.path.basename(p) not in known]
 
 
+FORM_WORDS = ("점안액", "안연고", "점안제", "연고", "크림", "겔", "캡슐", "시럽", "주사", "정")
+
+
+def _core_name(name):
+    """제품 이름의 알맹이 — '한림포비돈점안액(내수용)' → '한림포비돈'."""
+    name = re.sub(r"\(.*?\)|\s+", "", name or "")
+    for word in FORM_WORDS:
+        if word in name:
+            return name.split(word)[0]
+    return name
+
+
+def other_product_record(file_name, product_name):
+    """공 기록서 파일 이름이 다른 제품 것인가 — 이 제품 이름은 없고 다른 '…점안액' 꼴 이름이 있으면."""
+    core = _core_name(product_name)
+    if not core or core in re.sub(r"\s+", "", file_name or ""):
+        return False
+    others = re.findall(r"([가-힣A-Za-z]{2,})(?:%s)" % "|".join(FORM_WORDS), file_name or "")
+    return any(o != core for o in others)
+
+
 def handwriting_cache_name():
     from . import handwriting
     return handwriting.CACHE_NAME
@@ -333,6 +354,13 @@ def collect(folder, product_name=None, log=None):
                 records.append(batch_record.read(p))
             except Exception as e:                        # 서식이 달라 못 읽어도 작성은 계속
                 note("6", p, "공 기록서를 읽지 못함: %s" % e)
+    # 다른 제품의 공 기록서가 섞여 오면(담당자 PC 2026-09-07: 한림포비돈점안액 폴더에 '올로원스점안액 3ml'
+    # 기록서) 그 제품의 자재(PE병 5mL 등)와 포장단위가 표에 들어간다 — 이름이 다른 제품 것이면 쓰지 않고 알린다.
+    wrong = [r for r in records if other_product_record(r["file"], product_name)]
+    for r in wrong:
+        note("6", r["file"], "★ 다른 제품의 공 기록서로 보여 쓰지 않았습니다 — 이 제품(%s)의 제조·충전·포장 "
+                             "기록서를 올려 주세요" % (product_name or ""))
+    records = [r for r in records if r not in wrong]
     if records:
         exp = [r for r in records if "수출용" in r["file"]]
         dom = [r for r in records if r not in exp] or records
@@ -504,7 +532,14 @@ def collect(folder, product_name=None, log=None):
         if not p.lower().endswith(".pdf"):
             continue
         try:
-            data.changes.append(change.read_change(p))
+            cc = change.read_change(p)
+            m = re.search(r"(CC-\d{6}-\d{2})", os.path.basename(p))
+            if not cc.get("doc_no"):                 # 문서번호를 못 읽으면 파일 이름의 것 — '[None]' 이 나가면 안 된다
+                cc["doc_no"] = m.group(1) if m else os.path.splitext(os.path.basename(p))[0]
+            if not (cc.get("title") or "").strip() and not cc.get("actions"):
+                cc["unread"] = True                  # 제목도 조치도 없으면 못 읽은 것과 같다 — 노랑으로
+                note("12", p, "변경요청서에서 변경사항·조치사항을 읽지 못해 문서번호만 적었습니다 — 직접 채우세요")
+            data.changes.append(cc)
         except Exception as e:                       # 글자 없는 스캔本·서식이 다른 것 모두
             m = re.search(r"(CC-\d{6}-\d{2})", os.path.basename(p))
             data.changes.append({"doc_no": m.group(1) if m else os.path.splitext(os.path.basename(p))[0],

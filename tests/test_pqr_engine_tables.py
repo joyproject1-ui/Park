@@ -231,3 +231,47 @@ class 건열멸균기(unittest.TestCase):
         t.rows[1].cells[2].text = "MAINMIXER"
         self.assertEqual(drop_equipment(t, DRY_HEAT, keep=("디겐타",), name="엔클안연고"), 0)
         self.assertEqual(len(t.rows), 2)
+
+
+class 수율표_공정_칸_폭(unittest.TestCase):
+    """담당자 2026-09-07: "수율현황표는 조제·충전·포장(내수)·포장(수출) 4개의 칸이 동일한 넓이로"."""
+
+    def test_앞글자로_맞춘_네_칸이_같은_폭이_된다(self):
+        import docx
+        from docx.oxml.ns import qn
+        from pqr.engine import docedit as E
+        d = docx.Document()
+        t = d.add_table(rows=3, cols=7)
+        head = ["연번", "공정", "조제", "충전", "포장(내수)", "포장(베트남)", "비고"]
+        for j, v in enumerate(head):
+            E.set_cell(t.rows[1].cells[j], v)
+        grid = t._tbl.find(qn("w:tblGrid")).findall(qn("w:gridCol"))
+        for g, w in zip(grid, (612, 1145, 1488, 1488, 2782, 1683, 780)):
+            g.set(qn("w:w"), str(w))
+        self.assertEqual(E.equal_columns(t, ("조제", "충전", "포장"), prefix=True), 4)
+        widths = [int(g.get(qn("w:w"))) for g in t._tbl.find(qn("w:tblGrid")).findall(qn("w:gridCol"))]
+        self.assertEqual(widths[2:6], [1861, 1860, 1860, 1860])           # 합 7441 은 그대로
+        self.assertEqual(widths[:2] + widths[6:], [612, 1145, 780])
+
+
+class 주원료_이름은_소제목에서(unittest.TestCase):
+    """담당자 2026-09-07: "원료명에 왜 사선이야, 포비돈 K-25 라고 기재하면 되잖아"."""
+
+    def test_소제목의_원료명을_돌려준다(self):
+        import docx
+        from pqr.engine import docedit as E
+        from pqr.engine.recipe_ointment import _heading_material_name
+        d = docx.Document()
+        d.add_paragraph("8.2.1 주원료")
+        d.add_paragraph("8.2.1.1 포비돈 K-25")
+        t = d.add_table(rows=2, cols=4)
+        E.set_cell(t.rows[0].cells[0], "No.")
+        self.assertEqual(_heading_material_name(d, t), "포비돈 K-25")
+
+    def test_소제목이_없으면_빈_값(self):
+        import docx
+        from pqr.engine.recipe_ointment import _heading_material_name
+        d = docx.Document()
+        d.add_paragraph("8.2.1 주원료")
+        t = d.add_table(rows=1, cols=4)
+        self.assertEqual(_heading_material_name(d, t), "")

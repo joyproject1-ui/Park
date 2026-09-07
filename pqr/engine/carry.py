@@ -776,3 +776,31 @@ def adopt_skeleton(document, old_document, period=None, log=None):
     if log and moved:
         log("공양식이 빈 뼈대뿐인 항은 전년도 결재본의 표를 옮겨 심음: %s" % ", ".join(moved))
     return moved
+
+
+def adopt_references(document, old_document, product_name, log=None):
+    """17항 '- 제품표준서 MF-… 제품명' 줄이 다른 제품 것이면 전년도 결재본의 줄로 바꾼다 → 바꿨으면 True.
+
+    담당자 PC 2026-09-07: 한림포비돈점안액 공양식의 17항에 '제품표준서 MF-5008 퀴노비드점안액' 이 그대로
+    남아 있었다(공양식을 다른 제품 것에서 복사해 만든 흔적). 전년도 결재본에는 'MF-5017 한림포비돈점안액'.
+    """
+    from .collect import _core_name
+    core = _core_name(product_name)
+    if not core:
+        return False
+    mine = None
+    for para in document.paragraphs:
+        text = para.text.strip()
+        if text.startswith(("- 제품표준서", "-제품표준서", "제품표준서")):
+            mine = para
+            break
+    if mine is None or core in re.sub(r"\s+", "", mine.text):
+        return False
+    for para in old_document.paragraphs:
+        text = para.text.strip()
+        if "제품표준서" in text and core in re.sub(r"\s+", "", text):
+            _set_para_text(mine._p, text if text.startswith("-") else "- " + text)
+            if log:
+                log("17항 제품표준서: 공양식의 다른 제품 이름을 전년도 결재본 것으로 바꿈 — %s" % text)
+            return True
+    return False

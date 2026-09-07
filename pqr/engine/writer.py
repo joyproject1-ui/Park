@@ -202,6 +202,20 @@ def _check_attachments(made_dir, attachments, started, data, log):
         log("  ★ 예전 첨부가 남아 있음: %s" % name)
 
 
+def _flag_wrong_reference(document, product_name, data):
+    """17항 제품표준서 줄이 다른 제품 이름이면 문의로 남긴다 — 전년도 결재본에서도 못 찾았을 때."""
+    from .collect import _core_name
+    core = _core_name(product_name)
+    if not core:
+        return
+    for para in document.paragraphs:
+        text = para.text.strip()
+        if text.startswith(("- 제품표준서", "-제품표준서", "제품표준서")) and core not in re.sub(r"\s+", "", text):
+            data.issues.append(("17", "", "제품표준서 줄이 이 제품 이름이 아닙니다(%s) — 이 제품의 제품표준서 번호로 고치세요"
+                                % text.lstrip("- ")))
+            return
+
+
 def write_report(folder, product, period, out_path, today=None, recipe=None, log=None, vision=None,
                  ignore_previous=False):
     """folder: 제품 폴더 · product: {"code","name","group"} · period: {"from","to"} · out_path: 저장할 .docx
@@ -335,6 +349,8 @@ def write_report(folder, product, period, out_path, today=None, recipe=None, log
                 # 전년도 결재본의 그 항을 먼저 옮겨 심는다 — 담당자 PC 2026-09-07 한림포비돈점안액:
                 # 공양식이 바탕이 되면서 9·10.2 가 통째로 사선이 됐다 ("도대체 왜 작성이 안 되는 거야?").
                 carry_module.adopt_skeleton(document, old_document, period, log_)
+                if not carry_module.adopt_references(document, old_document, product.get("name"), log_):
+                    _flag_wrong_reference(document, product.get("name"), data)
                 carry_module.carry(document, old_document, log_)
                 data.pv_reasons = carry_module.pv_reasons(old_document)
                 # 올해 안정성 시험일지를 읽지 못했을 때 13항을 빈칸으로 두지 않으려고 미리 읽어 둔다

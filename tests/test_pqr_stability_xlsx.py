@@ -350,3 +350,52 @@ class TrendSeedTest(unittest.TestCase):
     def test_평가_기간을_넘어선_시점은_넣지_않는다(self):
         sheets = self._sheets(self._seed(), self._logs())
         self.assertNotIn("24M", dict(sheets[0]["lots"])["OGW701"])          # 2026 완료분
+
+
+CHART_AXIS = CHART.replace(
+    "</c:lineChart>",
+    '</c:lineChart><c:valAx><c:axId val="2"/><c:scaling><c:orientation val="minMax"/>'
+    '<c:max val="110"/><c:min val="90"/></c:scaling></c:valAx>')
+
+
+class 세로축(unittest.TestCase):
+    """서식의 축(함량 90~110)이 남으면 pH 7.4 는 축 밖 — 관리 규격에 맞춘다 (담당자 2026-09-07: "그래프가 안 그려졌어")."""
+
+    def test_규격_위아래로_폭의_사분의_일씩(self):
+        self.assertEqual(S.axis_range(6.0, 8.0), (5.5, 8.5))
+        self.assertEqual(S.axis_range(90, 110), (85, 115))
+
+    def test_한쪽만_있으면_그쪽_기준_십퍼센트(self):
+        self.assertEqual(S.axis_range(6.5, None), (5.8, 7.2))
+        self.assertEqual(S.axis_range(None, None), (None, None))
+
+    def test_차트의_최소_최대를_바꾼다(self):
+        out = S._rebuild_chart(CHART_AXIS.encode("utf-8"), "pH", [("A", {"Initial": 7.4})], 6.0, 8.0).decode("utf-8")
+        self.assertIn('<c:min val="5.5"/>', out)
+        self.assertIn('<c:max val="8.5"/>', out)
+        self.assertNotIn('val="110"', out.split("<c:valAx>")[1])
+
+    def test_규격이_없으면_축을_엑셀에_맡긴다(self):
+        out = S._rebuild_chart(CHART_AXIS.encode("utf-8"), "pH", [("A", {})], None, None).decode("utf-8")
+        axis = out.split("<c:valAx>")[1]
+        self.assertNotIn("<c:min", axis)
+        self.assertNotIn("<c:max", axis)
+
+
+class 서식_시트_고르기(unittest.TestCase):
+    def test_pH_와_보존제는_제_시트로_함량은_함량_시트로(self):
+        from pqr.engine.excel_attach import pick_form_sheets
+        got = pick_form_sheets([("pH", "pH"), ("보존제", "보존제 (%)"), ("포비돈 K-25", "함량 - 포비돈 K-25(%)")],
+                               ["pH", "함량", "보존제"])
+        self.assertEqual(got, [("pH", "pH"), ("보존제", "보존제"), ("함량", "함량(포비돈 K-25)")])
+
+    def test_성분이_여럿이면_함량_A_B_차례로(self):
+        from pqr.engine.excel_attach import pick_form_sheets
+        got = pick_form_sheets([("겐타마이신", "함량"), ("플루오로메톨론", "함량")],
+                               ["함량", "A", "B", "기타", "총", "pH", "삼투압"])
+        self.assertEqual([g[0] for g in got], ["함량", "A"])
+
+    def test_서식에_pH_시트가_없으면_함량_시트라도_쓴다(self):
+        from pqr.engine.excel_attach import pick_form_sheets
+        got = pick_form_sheets([("pH", "pH")], ["함량", "A"])
+        self.assertEqual(got, [("함량", "pH")])

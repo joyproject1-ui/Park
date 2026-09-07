@@ -243,6 +243,8 @@ def apply(document, log=None, product_title=None, edms=None):
     log("칸 안 빈 줄 정리: %d" % 빈줄)
     for ti in _tables_under(document, ("7.",)):
         log("7항 비고 사선 합치기: %d" % E.merge_remark_column(T[ti]))
+        # 조제·충전·포장(내수)·포장(수출) 네 칸은 같은 폭 (담당자 2026-09-07)
+        log("7항 공정 칸 폭 같게: %d" % E.equal_columns(T[ti], ("조제", "충전", "포장"), prefix=True))
     같게 = 0
     for ti in _tables_under(document, ("10.2", "10.3", "10.4", "10.5")):
         같게 += E.equal_columns(T[ti], ("IQ", "OQ", "PQ"))
@@ -318,6 +320,7 @@ def apply(document, log=None, product_title=None, edms=None):
     log("표 앞 문단 다음과 함께: %d" % E.keep_paras_before_tables(document))
     log("윗첨자 각주 번호: %d" % len(E.superscript_note_marks(document)))
     log("빈 쪽 방지 정리: %s" % E.tidy_page_breaks(document))
+    log("제목 뒤 본문의 쪽 나눔 제거: %d" % E.drop_break_after_headings(document))
     log("항 사이 한 줄 띄움: %d" % E.space_before_sections(document))
     log("각주 내어쓰기: %d" % E.hanging_indent_notes(document))
     try:

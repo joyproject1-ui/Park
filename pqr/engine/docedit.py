@@ -1224,6 +1224,36 @@ def slash_empty_summary(table, n_summary=5, rows=None):
     return made
 
 
+def drop_break_after_headings(document):
+    """제목 바로 뒤(빈 문단 건너) 본문 문단에 붙은 '앞에서 쪽 나눔'(pageBreakBefore)을 뗀다 → 뗀 수.
+
+    담당자 2026-09-07: "16항 결론은 왜 다음 페이지로 밀렸는지? 21페이지에 작성되도록 해" — 제목
+    '16. 결론' 은 21쪽 맨 위에 홀로 남고 본문은 22쪽으로 갔다. 본문 문단이 쪽 나눔을 물려받은
+    탓이다. 제목이 이미 쪽을 나누므로(또는 '다음과 함께' 이므로) 본문은 제목 뒤에 붙어야 한다.
+    """
+    import re as _re
+    body = document.element.body
+    items = [el for el in body if el.tag in (qn("w:p"), qn("w:tbl"))]
+    n = 0
+    for i, el in enumerate(items):
+        if el.tag != qn("w:p"):
+            continue
+        txt = "".join(t.text or "" for t in el.iter(qn("w:t"))).strip()
+        if not _re.match(r"^\d{1,2}(\.\d+)*\.?\s*\S", txt) or len(txt) > 60:
+            continue
+        j = i + 1
+        while j < len(items) and items[j].tag == qn("w:p") and is_blank_para(items[j]):
+            j += 1
+        if j >= len(items) or items[j].tag != qn("w:p"):
+            continue
+        pr = items[j].find(qn("w:pPr"))
+        pbb = pr.find(qn("w:pageBreakBefore")) if pr is not None else None
+        if pbb is not None:
+            pr.remove(pbb)
+            n += 1
+    return n
+
+
 def keep_headings_with_next(document):
     """본문 항 제목('7. 수율 현황', '7.1. 내수용' 등)에 '다음과 함께'를 걸어
     제목만 쪽 맨 아래에 남지 않게 한다."""
@@ -2142,17 +2172,22 @@ def merge_remark_column(table, header="비고", first_data=1):
     return n
 
 
-def equal_columns(table, names):
-    """머리글 이름이 names 인 열들의 폭을 같게 맞춘다 (10.2~10.5 의 IQ·OQ·PQ)."""
+def equal_columns(table, names, prefix=False):
+    """머리글 이름이 names 인 열들의 폭을 같게 맞춘다 (10.2~10.5 의 IQ·OQ·PQ).
+
+    prefix=True 면 앞글자로 맞춘다 — 7항 수율표의 조제·충전·포장(내수)·포장(베트남) 네 칸
+    (담당자 2026-09-07: "수율현황표는 칸 크기를 동일하게, 4개의 칸이 동일한 넓이로").
+    """
     width = grid_width(table)
     if not table.rows or not width:
         return 0
     자리 = {}
+    wanted = [re.sub(r"\s+", "", n).upper() for n in names]
     for row in table.rows[:4]:
         for i, cell in grid_cells(row, width).items():
             글 = re.sub(r"\s+", "", cell_text(cell)).upper()
-            if 글 in names:
-                자리[글] = i
+            if 글 in wanted or (prefix and 글 and any(글.startswith(n) for n in wanted)):
+                자리[(글, i)] = i
     cols = sorted(자리.values())
     if len(cols) < 2:
         return 0
