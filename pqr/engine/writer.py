@@ -228,9 +228,13 @@ def write_report(folder, product, period, out_path, today=None, recipe=None, log
     """
     lines = []
     blank = []
+    started_at = time.time()
 
     def log_(msg):
-        lines.append(msg)
+        # 줄마다 걸린 시각을 적는다 — 어느 단계가 오래 걸렸는지 기록만 보면 알 수 있게
+        # (담당자 2026-09-08: "보고서 작성 시간이 기존보다 오래 걸리는 이유가 있는지?").
+        sec = time.time() - started_at
+        lines.append("[%d:%02d] %s" % (int(sec // 60), int(sec % 60), msg))
         if log:
             log(msg)
 

@@ -329,13 +329,53 @@ def unread_files(got, log=None):
     return rows
 
 
+# 이름이 '12.' 로 시작하면 12항 자료로 셈해진다 — 우리가 남긴 글은 'PQR' 로 시작한다
+CHANGE_CACHE = "PQR 변경요청서 판독.json"
+
+
+def _change_cache_key(path):
+    try:
+        st = os.stat(path)
+        return "%s|%d|%d" % (os.path.basename(path), st.st_size, int(st.st_mtime))
+    except OSError:
+        return os.path.basename(path)
+
+
+def _change_cache(folder):
+    try:
+        with open(os.path.join(folder or "", CHANGE_CACHE), encoding="utf-8") as handle:
+            got = json.load(handle)
+        return got if isinstance(got, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def _save_change_cache(folder, got):
+    if not folder or not os.path.isdir(folder):
+        return
+    try:
+        with open(os.path.join(folder, CHANGE_CACHE), "w", encoding="utf-8") as handle:
+            json.dump(got, handle, ensure_ascii=False, indent=2)
+    except OSError:
+        pass
+
+
 def _change_by_claude(path, folder, log, note):
     """글자 없는 스캔 변경요청서를 Claude 로 읽는다 — 못 읽으면 None.
 
     담당자 2026-09-07: "못 읽으면 다른 방법을 사용해서라도 읽게 해야지, 공란으로 두면 안 돼."
-    빠른 길부터: ① API 키(Claude) → ② 이 PC 의 Claude Code.
+    빠른 길부터: ① API 키(Claude) → ② 이 PC 의 Claude Code → ③ 이 PC 의 OCR(한글).
+
+    한 번 읽은 것은 제품 폴더의 판독 파일에 남긴다 — 판독은 몇 분이 걸리므로 재작성 때마다
+    다시 읽으면 안 된다 (담당자 2026-09-08: "보고서 작성 시간이 기존보다 오래 걸리는 이유가?").
     """
     say = log or (lambda *a: None)
+    key, cache = _change_cache_key(path), _change_cache(folder)
+    if key in cache:
+        got = dict(cache[key])
+        got["actions"] = [tuple(a) for a in got.get("actions") or []]
+        say("    [12] %s — 지난 판독 결과를 그대로 씁니다 (%s)" % (os.path.basename(path), CHANGE_CACHE))
+        return got
     갈래 = []
     try:
         from . import vision as vision_mod, vision_claude
@@ -353,17 +393,13 @@ def _change_by_claude(path, folder, log, note):
         # 마지막 보루 — 이 PC 의 OCR. 한글 인식 모델을 받아 둔 PC 에서만 쓴다
         # (담당자 2026-09-07: "OCR 로 변환해서 읽으면 안 되는 거야?" — 딸려 오는 모델은
         # 중국어·영어용이라 한글이 뭉개진다).
-        from . import handwriting
         from .readers import change_ocr
-        if handwriting.korean_engine() is not None:
-            갈래.append(("이 PC 의 OCR(한글)", lambda: change_ocr.read(path, say)))
+        # korean_engine() 은 처음 한 번 모델을 내려받으려 하므로 여기서 부르지 않는다 —
+        # 앞 갈래가 이미 읽었으면 그 시도조차 하지 않게, 실제로 이 길을 탈 때 부른다.
+        갈래.append(("이 PC 의 OCR(한글)", lambda: change_ocr.read(path, say)))
     except Exception:
         pass
-    if not 갈래:
-        note("12", path, "글자 없는 스캔 변경요청서입니다 — 이 PC 에 Claude(API 키)도 Claude Code 도 "
-                         "OCR 한글 모델도 없어 읽지 못했습니다. 'PQR-Claude설치.bat' 을 실행하면 "
-                         "다음부터 읽습니다")
-        return None
+    claude_있음 = any(이름 != "이 PC 의 OCR(한글)" for 이름, _ in 갈래)
     까닭 = []
     for 이름, 부르기 in 갈래:
         try:
@@ -375,9 +411,14 @@ def _change_by_claude(path, folder, log, note):
             m = re.search(r"(CC-\d{6}-\d{2})", os.path.basename(path))
             if m and not got.get("doc_no"):
                 got["doc_no"] = m.group(1)
+            cache[key] = dict(got, actions=[list(a) for a in got.get("actions") or []])
+            _save_change_cache(folder, cache)     # 다음 작성부터는 이 값을 그대로 쓴다
             return got
         까닭.append("%s: 읽어 낸 것이 없음" % 이름)
-    note("12", path, "스캔 변경요청서를 Claude 로도 읽지 못했습니다 — %s" % " / ".join(까닭))
+    도움 = ("" if claude_있음 else
+            " 이 PC 에 Claude(API 키)도 Claude Code 도 없습니다 — 'PQR-Claude설치.bat' 을 실행하면 "
+            "다음부터 읽습니다.")
+    note("12", path, "스캔 변경요청서를 읽지 못했습니다 — %s%s" % (" / ".join(까닭) or "쓸 수 있는 판독기가 없습니다", 도움))
     return None
 
 

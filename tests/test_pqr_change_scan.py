@@ -128,3 +128,61 @@ class OCR_판독(unittest.TestCase):
                 X.read("/x/a.pdf")
         finally:
             handwriting.korean_engine = old
+
+
+class 판독_결과_되쓰기(unittest.TestCase):
+    """판독은 몇 분이 걸린다 — 한 번 읽은 것은 제품 폴더에 남겨 재작성 때 다시 읽지 않는다
+    (담당자 2026-09-08: "보고서 작성 시간이 기존보다 오래 걸리는 이유가?")."""
+
+    def setUp(self):
+        import tempfile
+        self.dir = tempfile.mkdtemp(prefix="pqr-cc-")
+        self.pdf = os.path.join(self.dir, "12.CC-240723-08.pdf")
+        with open(self.pdf, "wb") as handle:
+            handle.write(b"%PDF-1.4 scan")
+        self.notes = []
+
+    def _note(self, item, path, why):
+        self.notes.append((item, why))
+
+    def _once(self, reader):
+        import types
+        import pqr.engine as pkg
+        old = getattr(pkg, "claude_cli", None)
+        pkg.claude_cli = types.SimpleNamespace(available=lambda: True, read_change=reader)
+        sys.modules["pqr.engine.claude_cli"] = pkg.claude_cli
+        try:
+            return C._change_by_claude(self.pdf, self.dir, None, self._note)
+        finally:
+            if old is None:
+                delattr(pkg, "claude_cli"); sys.modules.pop("pqr.engine.claude_cli", None)
+            else:
+                pkg.claude_cli = old; sys.modules["pqr.engine.claude_cli"] = old
+
+    def test_두_번째부터는_다시_읽지_않는다(self):
+        calls = {"n": 0}
+
+        def reader(*a, **kw):
+            calls["n"] += 1
+            return {"doc_no": "", "title": "포장자재 변경", "description": "", "reason": "",
+                    "products": "", "approved": "", "actions": [("QA", "규격서 개정")]}
+        first = self._once(reader)
+        self.assertEqual(first["title"], "포장자재 변경")
+        self.assertTrue(os.path.isfile(os.path.join(self.dir, C.CHANGE_CACHE)))
+        second = self._once(reader)                      # 두 번째 — 판독기를 부르지 않는다
+        self.assertEqual(calls["n"], 1)
+        self.assertEqual(second["title"], "포장자재 변경")
+        self.assertEqual(second["actions"], [("QA", "규격서 개정")])
+
+    def test_파일이_바뀌면_다시_읽는다(self):
+        calls = {"n": 0}
+
+        def reader(*a, **kw):
+            calls["n"] += 1
+            return {"doc_no": "", "title": "바뀐 변경명", "description": "", "reason": "",
+                    "products": "", "approved": "", "actions": []}
+        self._once(reader)
+        with open(self.pdf, "ab") as handle:
+            handle.write(b" more")                       # 크기가 달라지면 다른 파일로 본다
+        self._once(reader)
+        self.assertEqual(calls["n"], 2)
