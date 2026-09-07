@@ -75,10 +75,15 @@ def available():
 
 
 def _ask(exe, prompt, folder, log=None):
-    """claude -p 로 한 번 물어보고 답 글을 돌려준다."""
-    cmd = [exe, "-p", prompt, "--output-format", "json", "--restricted",
+    """claude -p 로 한 번 물어보고 답 글을 돌려준다.
+
+    물음은 표준 입력으로 넣는다 — Windows 에서 claude 는 .cmd 라 명령줄로 넘기면 cmd.exe 가
+    큰따옴표·%·& 를 제 나름대로 해석해 물음이 깨진다.
+    """
+    cmd = [exe, "-p", "--output-format", "json", "--restricted",
            "--allowedTools", "Read", "Glob", "--add-dir", os.path.abspath(folder)]
-    got = subprocess.run(cmd, cwd=folder, capture_output=True, timeout=TIMEOUT)
+    got = subprocess.run(cmd, cwd=folder, input=prompt.encode("utf-8"),
+                         capture_output=True, timeout=TIMEOUT)
     out = (got.stdout or b"").decode("utf-8", "replace")
     err = (got.stderr or b"").decode("utf-8", "replace").strip()
     if got.returncode != 0:
@@ -88,8 +93,8 @@ def _ask(exe, prompt, folder, log=None):
     except ValueError:
         return out
     if isinstance(envelope, dict):
-        if envelope.get("is_error"):
-            raise RuntimeError(str(envelope.get("result") or envelope)[:300])
+        if envelope.get("is_error") or envelope.get("subtype") not in (None, "success"):
+            raise RuntimeError(str(envelope.get("result") or envelope.get("subtype") or envelope)[:300])
         return str(envelope.get("result") or "")
     return out
 
