@@ -372,8 +372,8 @@ def cmd_install_claude(args):
     already = claude_cli._exe()
     if already:
         _print("  이미 깔려 있습니다: %s" % already)
-        _print("  대시보드에서 '안정성 판독 🔍' 를 누르면 이 PC 안에서 Claude 가 시험일지를 읽습니다.")
-        return 0
+        _remember_claude(already)
+        return _check_login(already)
     npm = shutil.which("npm") or shutil.which("npm.cmd")
     if not npm:
         _print("  [X] npm(Node.js)이 없습니다 — 먼저 Node.js 를 까셔야 합니다.")
@@ -403,17 +403,52 @@ def cmd_install_claude(args):
         _print("  프로그램 폴더의 '%s' 에 적어 두세요." % claude_cli.HINT_FILE)
         return 1
     _print("  [O] 깔렸습니다: %s" % got)
-    try:                                   # 다음 실행에서 헤매지 않게 경로를 적어 둔다
+    _remember_claude(got)
+    return _check_login(got)
+
+
+def _remember_claude(path):
+    """찾은 경로를 프로그램 폴더에 적어 둔다 — 다음 실행에서 헤매지 않게."""
+    from .engine import claude_cli
+    try:
         with open(os.path.join(_program_root(), claude_cli.HINT_FILE), "w", encoding="utf-8") as handle:
-            handle.write(got + "\n")
+            handle.write(path + "\n")
     except OSError:
         pass
+
+
+def _check_login(exe):
+    """정말로 쓸 수 있는지 한마디 물어본다 — 깔려 있어도 로그인 전이면 판독이 안 된다.
+
+    담당자 2026-09-07: "방법 A 로 완료된 거야?" — 깔렸다는 말만으로는 알 수 없어서, 프로그램이
+    실제로 한 번 불러 보고 되는지/무엇이 모자란지 알려 준다.
+    """
+    import subprocess
     _print("")
-    _print("  마지막 한 걸음 — 로그인:")
-    _print("    이 창에서  claude  를 치고 Enter 하면 브라우저가 열립니다. 늘 쓰시는 계정으로")
-    _print("    로그인한 뒤 창을 닫으면 됩니다. 그다음 대시보드의 '안정성 판독 🔍' 한 번이면")
-    _print("    손글씨 시험일지를 Claude 가 이 PC 안에서 읽습니다 (사외로 나가지 않습니다).")
-    return 0
+    _print("  정말로 쓸 수 있는지 한 번 불러 봅니다 (10~60초)…")
+    try:
+        run = subprocess.run([exe, "-p", "--output-format", "json"],
+                             input="1+1은? 숫자만 답하세요.".encode("utf-8"),
+                             stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=180)
+    except (OSError, subprocess.TimeoutExpired) as error:
+        _print("  [X] 부르지 못했습니다 — %s" % error)
+        _print("      이 창에서  claude  를 치고 Enter 해 보세요.")
+        return 1
+    text = (run.stdout or b"").decode("utf-8", "replace")
+    if run.returncode == 0:
+        _print("  [O] 됩니다 — 로그인까지 끝났습니다.")
+        _print("")
+        _print("  이제 대시보드에서 '안정성 판독 🔍' 를 누르면 손글씨 시험일지를 Claude 가")
+        _print("  이 PC 안에서 읽습니다 (한 장 1~2분, 사외로 나가지 않습니다).")
+        _print("  판독이 끝나면 '보고서 작성' 을 누르세요 — 13항이 채워집니다.")
+        return 0
+    _print("  [X] 아직 쓸 수 없습니다. 나온 글:")
+    for line in " ".join(text.split()).split(". ")[:4]:
+        _print("      %s" % line[:200])
+    _print("")
+    _print("  대개 로그인 전이라 그렇습니다 — 이 창에서  claude  를 치고 Enter 하면")
+    _print("  브라우저가 열립니다. 늘 쓰시는 계정으로 로그인한 뒤 이 파일을 다시 두 번 누르세요.")
+    return 1
 
 
 def cmd_update(args):

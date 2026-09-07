@@ -43,9 +43,14 @@ class 설치_도우미(unittest.TestCase):
             handle.write("")
         old = os.environ.get("PQR_CLAUDE_EXE")
         os.environ["PQR_CLAUDE_EXE"] = fake
+        seen = []
+        keep = cli._check_login
+        cli._check_login = lambda exe: seen.append(exe) or 0
         try:
             self.assertEqual(cli.cmd_install_claude(None), 0)
+            self.assertEqual(seen, [fake])        # 깔려 있어도 정말 되는지 한 번 불러 본다
         finally:
+            cli._check_login = keep
             if old is None:
                 del os.environ["PQR_CLAUDE_EXE"]
             else:
