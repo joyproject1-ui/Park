@@ -195,3 +195,31 @@ class 같은_lot_합치기(unittest.TestCase):
         old = [self._one("OEV301", "시판후", ["12M"])]
         added = handwriting.merge_logs(old, [self._one("OEX101", "장기", ["3M"])])
         self.assertEqual((added, len(old)), (1, 2))
+
+
+class 사람이_만든_판독_파일(unittest.TestCase):
+    """covers_all 이 적힌 판독 파일이면 PDF 를 다시 읽지 않는다 (담당자 2026-09-07: API 키 없이 Claude 로 판독)."""
+
+    def _folder(self, payload):
+        import json
+        import tempfile
+        folder = tempfile.mkdtemp(prefix="pqr-13-")
+        with open(os.path.join(folder, "13. 안정성시험일지 판독.json"), "w", encoding="utf-8") as fh:
+            json.dump(payload, fh, ensure_ascii=False)
+        return folder
+
+    def _collect(self, folder):
+        from pqr.engine import collect
+        return collect.collect(folder, product_name="퀴노비드안연고", log=lambda *a: None)
+
+    def test_covers_all_이면_더_읽지_않는다(self):
+        one = {"lot": "OEX101", "kind": "장기", "market": "내수", "year": "2024",
+               "points": [{"period": "12M", "done": "2025.03.10", "assays": {"오플록사신": 101.2}, "unsure": []}]}
+        data = self._collect(self._folder({"logs": [one], "reader_version": 3, "covers_all": True}))
+        self.assertTrue(data.stability_all_read)
+        self.assertEqual([r["lot"] for r in data.stability_logs], ["OEX101"])
+
+    def test_covers_all_이_없으면_평소대로(self):
+        one = {"lot": "OEX101", "kind": "장기", "points": [], "source": "a.pdf"}
+        data = self._collect(self._folder({"logs": [one], "reader_version": 3}))
+        self.assertFalse(data.stability_all_read)

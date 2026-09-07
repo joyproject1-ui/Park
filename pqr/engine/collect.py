@@ -44,6 +44,7 @@ class ProductData(object):
         self.stability_files = []   # 스캔 PDF (손글씨) — 비전 판독 대상
         self.stability_logs = []    # 13항 시험일지 판독 결과 (비전 또는 담당자가 적은 .json)
         self.stability_cache = None   # (판독 파일 경로, reader_version) — 옛 판독기 결과면 애매한 칸을 다시 읽는다
+        self.stability_all_read = False  # 판독 파일에 covers_all 이 있으면 시험일지 PDF 를 더 읽지 않는다
         self.stability_trend = []   # 이미 채워 둔 안정성 경향표(HLF-QC-126-06) 를 다시 읽은 것
         self.pv_reasons = {}        # {제조번호: 밸리데이션 실시 사유} — 전년도 결재본 10.1 에서
         self.prev_stability = {}    # 전년도 결재본의 13.1 · 13.3 표 (올해 시험일지를 못 읽었을 때)
@@ -444,6 +445,11 @@ def collect(folder, product_name=None, log=None):
                 data.stability_logs += got_json if isinstance(got_json, list) else got_json.get("logs", [])
                 log("  [13] %s — 안정성 시험일지 판독 결과 %d Lot" % (os.path.basename(p), len(data.stability_logs)))
                 data.stability_cache = (p, 0 if isinstance(got_json, list) else got_json.get("reader_version", 0))
+                # 사람이(또는 이 대화의 Claude 가) 13 폴더 전체를 읽어 만든 판독 파일이면 PDF 를 더 읽지 않는다
+                # (담당자 2026-09-07: "API 키를 발급받지 않고 Claude 로 확인할 수는 없나?")
+                if not isinstance(got_json, list) and got_json.get("covers_all"):
+                    data.stability_all_read = True
+                    log("  [13] 이 판독 파일이 13항 자료 전부라고 적혀 있어(covers_all) 시험일지를 더 읽지 않습니다")
             except Exception as error:
                 note("13", p, "안정성 판독 파일을 읽지 못했습니다 — %s" % error)
     # 판독 파일(.json)도 없고 Claude 비전(API 키)도 없으면 PC 에서 오프라인으로 손글씨를 읽는다
@@ -472,7 +478,9 @@ def collect(folder, product_name=None, log=None):
     # 판독 파일이 있어도 거기에 없는 시험일지(뒤에 올린 장기·수출용 일지)는 읽는다 — 판독 파일은 읽은 일지의
     # 이름(source)을 들고 있다. 담당자 2026-09-06: "시험 기간은 안정성 시험일지 보면 확인 가능하잖아" —
     # 시판 후 일지만 읽은 판독 파일이 있어 장기 일지가 통째로 안 읽혔다.
-    if data.stability_logs:
+    if getattr(data, "stability_all_read", False):
+        scanned = []
+    elif data.stability_logs:
         scanned = unread_scans(data.stability_logs, scanned)
         if scanned:
             log("  [13] 판독 파일에 없는 시험일지 %d장을 새로 읽습니다: %s"

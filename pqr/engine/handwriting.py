@@ -670,10 +670,13 @@ def save_cache(folder, logs, log=None):
     if not folder or not os.path.isdir(folder):
         return None
     path = os.path.join(folder, CACHE_NAME)
-    payload = {"설명": "프로그램이 손글씨 안정성 시험일지를 오프라인(RapidOCR)으로 읽은 결과입니다. "
+    payload = {"설명": "프로그램이 손글씨 안정성 시험일지를 읽은 결과입니다. "
                      "unsure 에 적힌 성분·done 은 읽기 애매해 보고서에 노랑/주황으로 표시됩니다. "
-                     "값을 확인해 고치고 unsure 에서 지우면 다음 재작성부터 그 값이 그대로 쓰입니다.",
+                     "값을 확인해 고치고 unsure 에서 지우면 다음 재작성부터 그 값이 그대로 쓰입니다. "
+                     "13 폴더 전체를 사람이 읽어 채운 파일이라면 covers_all 을 true 로 두세요 — "
+                     "그러면 시험일지 PDF 를 다시 읽지 않습니다.",
                "reader_version": READER_VERSION,
+               "covers_all": False,
                "logs": logs}
     try:
         with open(path, "w", encoding="utf-8") as handle:
