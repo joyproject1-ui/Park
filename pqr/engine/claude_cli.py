@@ -56,15 +56,62 @@ PROMPT = """다음 안정성 시험일지(손글씨 스캔 PDF)를 모두 읽고
 """
 
 
+HINT_FILE = "CLAUDE 경로.txt"          # 프로그램 폴더에 두면 그 경로를 쓴다
+
+
+def _program_dir():
+    return os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+
+def _hint():
+    """담당자가 알려 준 claude 경로 — 환경변수 PQR_CLAUDE_EXE 또는 프로그램 폴더의 'CLAUDE 경로.txt'."""
+    got = (os.environ.get("PQR_CLAUDE_EXE") or "").strip().strip('"')
+    if got:
+        return got
+    path = os.path.join(_program_dir(), HINT_FILE)
+    try:
+        with open(path, encoding="utf-8-sig") as handle:
+            for line in handle:
+                line = line.strip().strip('"')
+                if line and not line.startswith("#"):
+                    return line
+    except OSError:
+        pass
+    return ""
+
+
+def places():
+    """claude 를 찾아볼 자리 — 어디를 뒤졌는지 진단 화면에 그대로 보여 준다.
+
+    Windows 는 설치 방법마다 자리가 다르고(네이티브 설치·npm 전역·Claude 앱), 새로 깔았다면
+    이미 떠 있는 창의 PATH 에는 아직 없다 (담당자 2026-09-07: "이 PC 로 Claude Code 로 작업하고
+    있는데 없다는 게 무슨 말이냐" — 프로그램은 PATH 만 보고 있었다).
+    """
+    out = []
+    for base in (os.path.expanduser("~/.local/bin"),
+                 os.path.expandvars(r"%USERPROFILE%\.local\bin"),
+                 os.path.expandvars(r"%APPDATA%\npm"),
+                 os.path.expandvars(r"%LOCALAPPDATA%\Programs\claude"),
+                 os.path.expandvars(r"%LOCALAPPDATA%\Microsoft\WindowsApps"),
+                 os.path.expanduser("~/.claude/local"),
+                 os.path.expanduser("~/.bun/bin"), "/usr/local/bin", "/opt/homebrew/bin"):
+        if not base or "%" in base:
+            continue
+        for name in ("claude.exe", "claude.cmd", "claude.bat", "claude"):
+            out.append(os.path.join(base, name))
+    return out
+
+
 def _exe():
-    for name in ("claude", "claude.cmd", "claude.exe"):
+    hint = _hint()
+    if hint and os.path.isfile(hint):
+        return hint
+    for name in ("claude", "claude.cmd", "claude.exe", "claude.bat"):
         got = shutil.which(name)
         if got:
             return got
-    # npm 전역 설치 자리 (Windows)
-    for guess in (os.path.expandvars(r"%APPDATA%\npm\claude.cmd"),
-                  os.path.expanduser("~/.local/bin/claude")):
-        if guess and os.path.isfile(guess):
+    for guess in places():
+        if os.path.isfile(guess):
             return guess
     return ""
 

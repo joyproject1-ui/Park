@@ -8,6 +8,31 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from pqr.engine import claude_cli as C                                # noqa: E402
 
 
+class claude_찾기(unittest.TestCase):
+    def test_담당자가_적어_둔_경로를_먼저_쓴다(self):
+        # 담당자 2026-09-07: "이 PC 로 Claude Code 로 작업하고 있는데 없다는 게 무슨 말이냐"
+        # — PATH 에 없어도 'CLAUDE 경로.txt' 나 PQR_CLAUDE_EXE 로 짚어 줄 수 있다.
+        import tempfile
+        fake = os.path.join(tempfile.mkdtemp(prefix="pqr-claude-"), "claude.exe")
+        with open(fake, "w", encoding="utf-8") as handle:
+            handle.write("")
+        old = os.environ.get("PQR_CLAUDE_EXE")
+        os.environ["PQR_CLAUDE_EXE"] = fake
+        try:
+            self.assertEqual(C._exe(), fake)
+            self.assertTrue(C.available())
+        finally:
+            if old is None:
+                del os.environ["PQR_CLAUDE_EXE"]
+            else:
+                os.environ["PQR_CLAUDE_EXE"] = old
+
+    def test_찾아본_자리를_알려_준다(self):
+        places = C.places()
+        self.assertTrue(any(p.endswith("claude.exe") for p in places))
+        self.assertTrue(any(".local" in p for p in places))
+
+
 class 답에서_JSON_꺼내기(unittest.TestCase):
     def test_코드_표시와_설명이_붙어_있어도_꺼낸다(self):
         text = '읽었습니다.\n```json\n{"logs": [{"lot": "OEX101"}]}\n```\n확인하세요.'

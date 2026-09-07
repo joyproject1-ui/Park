@@ -170,10 +170,21 @@ def report():
     except Exception:
         cli = ""
     lines.append(_line(bool(cli), "이 PC 의 Claude Code (claude)",
-                       cli if cli else "없음 — 깔면 '보고서 작성' 이 이 PC 안에서 시험일지를 읽습니다 "
-                                       "(API 키 없이, 구독 그대로). 설치: Node.js 18 이상을 깔고 "
-                                       "명령 프롬프트에서  npm install -g @anthropic-ai/claude-code  → "
-                                       "claude 를 한 번 실행해 로그인"))
+                       cli if cli else "찾지 못했습니다 — 아래 '찾아본 자리' 참고"))
+    if not cli:
+        try:
+            from .engine import claude_cli as _cc
+            lines.append("      찾아본 자리: PATH 의 claude/claude.cmd/claude.exe 와")
+            for guess in _cc.places()[:12]:
+                lines.append("        %s" % guess)
+            lines.append("      · 브라우저나 Claude 앱에서 쓰는 화면은 이 PC 의 명령(claude)과 다릅니다.")
+            lines.append("      · 이미 깔려 있다면 명령 프롬프트에서  where claude  로 경로를 확인해,")
+            lines.append("        그 경로 한 줄을 프로그램 폴더의 '%s' 에 적어 두면 그것을 씁니다." % _cc.HINT_FILE)
+            lines.append("      · 새로 깔았다면 창을 닫았다 다시 여세요(PATH 는 새 창부터 반영됩니다).")
+            lines.append("      · 없다면: Node.js 18 이상을 깔고  npm install -g @anthropic-ai/claude-code")
+            lines.append("        → claude 를 한 번 실행해 로그인하면 '안정성 판독' 이 이 PC 안에서 돕니다.")
+        except Exception:
+            pass
     lines.append(_line(offline, "오프라인 판독기 (RapidOCR)",
                        "설치됨 — 깨끗이 읽힌 값만 쓰고 애매한 칸은 노랑/주황으로 표시합니다" if offline
                        else "없음 — %s / PQR-업데이트.bat 을 다시 실행하고 'install-log.txt' 를 보내 주세요"
