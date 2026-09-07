@@ -330,25 +330,44 @@ def unread_files(got, log=None):
 
 
 def _change_by_claude(path, folder, log, note):
-    """글자 없는 스캔 변경요청서를 이 PC 의 Claude Code 로 읽는다 — 못 읽으면 None."""
+    """글자 없는 스캔 변경요청서를 Claude 로 읽는다 — 못 읽으면 None.
+
+    담당자 2026-09-07: "못 읽으면 다른 방법을 사용해서라도 읽게 해야지, 공란으로 두면 안 돼."
+    빠른 길부터: ① API 키(Claude) → ② 이 PC 의 Claude Code.
+    """
     say = log or (lambda *a: None)
+    갈래 = []
+    try:
+        from . import vision as vision_mod, vision_claude
+        if vision_mod.available():
+            갈래.append(("Claude(API 키)", lambda: vision_claude.read_change(path, say)))
+    except Exception:
+        pass
     try:
         from . import claude_cli
-        if not claude_cli.available():
-            return None
+        if claude_cli.available():
+            갈래.append(("이 PC 의 Claude Code", lambda: claude_cli.read_change(path, folder, say)))
     except Exception:
+        pass
+    if not 갈래:
+        note("12", path, "글자 없는 스캔 변경요청서입니다 — 이 PC 에 Claude(API 키)도 Claude Code 도 "
+                         "없어 읽지 못했습니다. 'PQR-Claude설치.bat' 을 실행하면 다음부터 읽습니다")
         return None
-    try:
-        got = claude_cli.read_change(path, folder, say)
-    except Exception as error:
-        note("12", path, "스캔 변경요청서를 Claude 로도 읽지 못했습니다 — %s" % error)
-        return None
-    if not (got.get("title") or got.get("description") or got.get("actions")):
-        return None
-    m = re.search(r"(CC-\d{6}-\d{2})", os.path.basename(path))
-    if m and not got.get("doc_no"):
-        got["doc_no"] = m.group(1)
-    return got
+    까닭 = []
+    for 이름, 부르기 in 갈래:
+        try:
+            got = 부르기()
+        except Exception as error:
+            까닭.append("%s: %s" % (이름, error))
+            continue
+        if got.get("title") or got.get("description") or got.get("actions"):
+            m = re.search(r"(CC-\d{6}-\d{2})", os.path.basename(path))
+            if m and not got.get("doc_no"):
+                got["doc_no"] = m.group(1)
+            return got
+        까닭.append("%s: 읽어 낸 것이 없음" % 이름)
+    note("12", path, "스캔 변경요청서를 Claude 로도 읽지 못했습니다 — %s" % " / ".join(까닭))
+    return None
 
 
 def collect(folder, product_name=None, log=None):
@@ -576,8 +595,14 @@ def collect(folder, product_name=None, log=None):
                     cc["unread"] = True              # 못 읽은 것과 같다 — 노랑으로
                     note("12", p, "변경요청서에서 변경사항·조치사항을 읽지 못해 문서번호만 적었습니다 — 직접 채우세요")
             data.changes.append(cc)
-        except Exception as e:                       # 글자 없는 스캔本·서식이 다른 것 모두
+        except Exception as e:                       # 서식이 아주 다르거나 파일이 깨진 것
             m = re.search(r"(CC-\d{6}-\d{2})", os.path.basename(p))
+            읽음 = _change_by_claude(p, folder, log, note)      # 여기서도 Claude 에게 맡긴다
+            if 읽음 is not None:
+                if m and not 읽음.get("doc_no"):
+                    읽음["doc_no"] = m.group(1)
+                data.changes.append(읽음)
+                continue
             data.changes.append({"doc_no": m.group(1) if m else os.path.splitext(os.path.basename(p))[0],
                                  "title": "", "unread": True, "actions": [], "products": ""})
             note("12", p, "변경요청서를 읽지 못해 문서번호만 적었습니다 — 변경사항·조치사항을 직접 채우세요 (%s)" % e)

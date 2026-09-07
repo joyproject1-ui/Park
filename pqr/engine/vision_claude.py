@@ -240,3 +240,76 @@ def read_stability_into(data, log=None):
     Claude 판독을 받아 data.stability_logs 를 만든다.
     """
     return None
+
+# ---------------------------------------------------------------- 변경요청서(스캔) 판독
+CHANGE_PROMPT = """이 변경요청서(스캔 이미지)를 읽고 JSON 만 출력하세요.
+보이는 대로만 적고, 안 보이면 빈 값으로 둡니다 — 지어내지 않습니다.
+"actions" 는 '변경 실행 계획' 표의 부서별 조치사항입니다."""
+
+CHANGE_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "doc_no": {"type": "string"},
+        "title": {"type": "string"},
+        "description": {"type": "string"},
+        "reason": {"type": "string"},
+        "products": {"type": "string"},
+        "approved": {"type": "string"},
+        "actions": {"type": "array", "items": {
+            "type": "object",
+            "properties": {"team": {"type": "string"}, "action": {"type": "string"}},
+            "required": ["team", "action"], "additionalProperties": False}},
+    },
+    "required": ["doc_no", "title", "description", "reason", "products", "approved", "actions"],
+    "additionalProperties": False,
+}
+
+
+def _change_page(client, png_b64):
+    body = dict(model=MODEL, max_tokens=8000,
+                output_config={"format": {"type": "json_schema", "schema": CHANGE_SCHEMA}},
+                messages=[{"role": "user", "content": [
+                    {"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": png_b64}},
+                    {"type": "text", "text": CHANGE_PROMPT},
+                ]}])
+    try:
+        response = client.beta.messages.create(betas=["server-side-fallback-2026-07-01"],
+                                               fallbacks="default", **body)
+    except TypeError:
+        response = client.messages.create(**body)
+    if getattr(response, "stop_reason", "") == "refusal":
+        raise RuntimeError("판독 거부")
+    return json.loads(next(b.text for b in response.content if b.type == "text"))
+
+
+def read_change(path, log=None, pages=3):
+    """글자 없는 스캔 변경요청서를 Claude(API 키)로 읽는다 — readers.change.read_change 와 같은 꼴.
+
+    담당자 2026-09-07: "못 읽으면 다른 방법을 사용해서라도 읽게 해야지, 공란으로 두면 안 돼."
+    변경명·변경내용은 앞쪽에, 실행 계획은 그다음 쪽에 있으므로 앞 몇 쪽만 읽는다.
+    """
+    say = log or (lambda *a: None)
+    from . import handwriting
+    client = _client()
+    n = min(pages, handwriting.page_count(path) or 1)
+    out = {"doc_no": "", "title": "", "description": "", "reason": "", "products": "",
+           "approved": "", "attachments": "", "target_date": "", "all_dates": [], "actions": []}
+    seen = set()
+    for page_no in range(1, n + 1):
+        try:
+            got = _change_page(client, _png(path, page_no))
+        except Exception as error:
+            say("    [12] %d쪽을 읽지 못했습니다 — %s" % (page_no, error))
+            continue
+        for key in ("doc_no", "title", "description", "reason", "products", "approved"):
+            if not out[key] and str(got.get(key) or "").strip():
+                out[key] = str(got[key]).strip()
+        for one in got.get("actions") or []:
+            team = str((one or {}).get("team") or "").strip()
+            act = str((one or {}).get("action") or "").strip()
+            if act and (team, act) not in seen:
+                seen.add((team, act))
+                out["actions"].append((team, act))
+    say("    [12] %s — Claude(API 키)로 읽음: %s (조치 %d건)"
+        % (os.path.basename(path), out["title"] or "제목 못 읽음", len(out["actions"])))
+    return out
