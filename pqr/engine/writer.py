@@ -7,6 +7,7 @@
 """
 import os
 import re
+import time
 import shutil
 import tempfile
 import zipfile
@@ -165,6 +166,42 @@ def blank_sections(document):
     return blank
 
 
+ATTACH_MARKS = ("HLF-QC-126-06 안정성 시험 경향 분석 결과", "Cpk 계산 파일")
+
+
+def _check_attachments(made_dir, attachments, started, data, log):
+    """첨부가 정말 이번에 새로 쓰였는지 확인하고, 예전 파일이 남아 있으면 알린다.
+
+    담당자 2026-09-07: "안정성 Lot No 가 워드 파일과 엑셀 파일이 상이해 — 다시는 실수하지 않게
+    조치해 줘." 엑셀을 열어 둔 채 재작성하면 덮어쓰지 못하는데, 그것을 모르면 본문과 첨부가
+    어긋난 채 결재로 올라간다. 그래서 ① 새로 쓰이지 않은 첨부와 ② 이번에 만들지 않았는데
+    폴더에 남아 있는 같은 종류의 파일을 문의 목록 맨 앞에 ★ 로 올린다.
+    """
+    fresh = set()
+    for name, path in attachments:
+        try:
+            if os.path.getmtime(path) < started:
+                data.issues.insert(0, ("첨부", name, "★ 이 첨부가 이번 작성에서 새로 쓰이지 않았습니다 — "
+                                                     "엑셀에서 열려 있는지 확인하고, 닫은 뒤 다시 작성하세요"))
+                log("  ★ 첨부가 새로 쓰이지 않음: %s" % name)
+        except OSError:
+            continue
+        fresh.add(os.path.normcase(os.path.abspath(path)))
+    try:
+        here = os.listdir(made_dir)
+    except OSError:
+        return
+    for name in sorted(here):
+        if not any(mark in name for mark in ATTACH_MARKS):
+            continue
+        path = os.path.normcase(os.path.abspath(os.path.join(made_dir, name)))
+        if path in fresh:
+            continue
+        data.issues.insert(0, ("첨부", name, "★ 이번에 만들지 않은 예전 첨부가 폴더에 남아 있습니다 — "
+                                             "본문과 값이 다를 수 있으니 지우거나 확인하세요"))
+        log("  ★ 예전 첨부가 남아 있음: %s" % name)
+
+
 def write_report(folder, product, period, out_path, today=None, recipe=None, log=None, vision=None,
                  ignore_previous=False):
     """folder: 제품 폴더 · product: {"code","name","group"} · period: {"from","to"} · out_path: 저장할 .docx
@@ -267,7 +304,6 @@ def write_report(folder, product, period, out_path, today=None, recipe=None, log
         # 최신 양식을 바탕으로 쓸 때 전년도 결재본은 참고 자료다 — 해마다 바뀌지 않는 값
         # (원료 규격·제조단위·포장단위·제조원)만 빈 칸에 먼저 이어받고, 그 위에 올해 자료를 덮는다.
         from . import carry as carry_module
-        import time
         try:
             prev_docx = os.path.join(work, "prev.docx")
             last = None
@@ -365,6 +401,7 @@ def write_report(folder, product, period, out_path, today=None, recipe=None, log
         log_("목차 쪽 번호 계산 실패: %s — Ctrl+A, F9 로 갱신하세요" % error)
     # 첨부 엑셀 — Cpk 계산 파일 4종(결재본 것을 물려받아 값 갱신) + 안정성 경향 분석
     attachments = []
+    started = time.time() - 1                      # 이번 실행에서 새로 쓰였는지 재는 기준
     try:
         from . import excel_attach
         day = today.strftime("%Y.%m.%d") if hasattr(today, "strftime") else re.sub(r"-", ".", str(today or ""))[:10]
@@ -376,6 +413,7 @@ def write_report(folder, product, period, out_path, today=None, recipe=None, log
             input_dir=os.path.dirname(os.path.abspath(folder)), report_path=out_path,
             product_dir=folder)
         log_("첨부 엑셀: %s" % ", ".join(n for n, _ in attachments))
+        _check_attachments(os.path.dirname(out_path), attachments, started, data, log_)
     except Exception as error:
         import traceback
         data.issues.append(("첨부", "", "첨부 엑셀 생성 실패: %s" % error))

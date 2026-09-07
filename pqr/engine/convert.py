@@ -346,6 +346,62 @@ def to_pdf(src, dst):
     raise ConvertError("보고서를 화면에 띄우려면 Word 또는 LibreOffice 가 필요합니다.")
 
 
+# ---------- 쪽 맨 위의 빈 줄 지우기 ----------
+# 담당자 2026-09-07: "이렇게 오른쪽처럼 del 키 눌러서 빈 공간 없게 만들어 줘."
+# 쪽이 어디서 나뉘는지는 Word 만 안다 — 그래서 목차 쪽수를 다시 계산할 때 함께 한다.
+# 표와 표 사이의 빈 문단은 지우지 않는다(지우면 두 표가 하나로 붙는다).
+TOP_BLANKS_VBS = (
+    'For i = d.Paragraphs.Count To 2 Step -1\n'
+    '  Set p = d.Paragraphs(i)\n'
+    '  If Len(Replace(Replace(p.Range.Text, Chr(13), ""), " ", "")) = 0 Then\n'
+    '    If Not p.Range.Information(12) Then\n'
+    '      If p.Range.Information(3) > d.Paragraphs(i - 1).Range.Information(3) Then\n'
+    '        prevT = d.Paragraphs(i - 1).Range.Information(12)\n'
+    '        nextT = False\n'
+    '        If i < d.Paragraphs.Count Then nextT = d.Paragraphs(i + 1).Range.Information(12)\n'
+    '        If Not (prevT And nextT) Then p.Range.Delete\n'
+    '      End If\n'
+    '    End If\n'
+    '  End If\n'
+    'Next\n'
+)
+TOP_BLANKS_PS = (
+    "  for ($i = $d.Paragraphs.Count; $i -ge 2; $i--) {\n"
+    "    $p = $d.Paragraphs.Item($i)\n"
+    "    if ($p.Range.Text.Trim([char]13, ' ') -eq '') {\n"
+    "      if (-not $p.Range.Information(12)) {\n"
+    "        if ($p.Range.Information(3) -gt $d.Paragraphs.Item($i-1).Range.Information(3)) {\n"
+    "          $prevT = $d.Paragraphs.Item($i-1).Range.Information(12)\n"
+    "          $nextT = $false\n"
+    "          if ($i -lt $d.Paragraphs.Count) { $nextT = $d.Paragraphs.Item($i+1).Range.Information(12) }\n"
+    "          if (-not ($prevT -and $nextT)) { $p.Range.Delete() | Out-Null }\n"
+    "        }\n"
+    "      }\n"
+    "    }\n"
+    "  }\n"
+)
+
+WD_PAGE, WD_IN_TABLE = 3, 12        # wdActiveEndPageNumber · wdWithInTable
+
+
+def _drop_top_blanks(doc):
+    """쪽 맨 위에 홀로 남은 빈 문단을 지운다 (pywin32 판)."""
+    n = doc.Paragraphs.Count
+    for i in range(n, 1, -1):
+        para = doc.Paragraphs(i)
+        if para.Range.Text.replace("\r", "").replace(" ", "").strip():
+            continue
+        if para.Range.Information(WD_IN_TABLE):
+            continue
+        if para.Range.Information(WD_PAGE) <= doc.Paragraphs(i - 1).Range.Information(WD_PAGE):
+            continue                                  # 쪽 맨 위가 아니다
+        prev_t = doc.Paragraphs(i - 1).Range.Information(WD_IN_TABLE)
+        next_t = doc.Paragraphs(i + 1).Range.Information(WD_IN_TABLE) if i < n else False
+        if prev_t and next_t:
+            continue                                  # 표와 표 사이 — 지우면 두 표가 붙는다
+        para.Range.Delete()
+
+
 # ---------- 목차 쪽수 등 필드 다시 계산 ----------
 def _fields_via_vbscript(path):
     return _vbscript(
@@ -365,6 +421,11 @@ def _fields_via_vbscript(path):
         '      s.Fields.Update\n'
         '    Loop\n'
         '  Next\n'
+        'Next\n'
+        + TOP_BLANKS_VBS +
+        'd.Repaginate\n'
+        'For Each s In d.StoryRanges\n'
+        '  s.Fields.Update\n'
         'Next\n'
         'd.Save\n'
         'If Err.Number <> 0 Then d.Close 0 : w.Quit : WScript.Quit 1\n'
@@ -388,6 +449,9 @@ def _fields_via_powershell(path):
         "      while ($r -ne $null) { $r.Fields.Update() | Out-Null; $r = $r.NextStoryRange }\n"
         "    }\n"
         "  }\n"
+        + TOP_BLANKS_PS +
+        "  $d.Repaginate()\n"
+        "  foreach ($s in $d.StoryRanges) { $s.Fields.Update() | Out-Null }\n"
         "  $d.Save()\n"
         "  $d.Close(0)\n"
         "} finally { $w.Quit() }\n" % _ps_path(path))
@@ -408,6 +472,10 @@ def _fields_via_pywin32(path):
                     while here is not None:
                         here.Fields.Update()
                         here = here.NextStoryRange
+            _drop_top_blanks(doc)
+            doc.Repaginate()
+            for story in doc.StoryRanges:
+                story.Fields.Update()
             doc.Save()
         finally:
             doc.Close(0)

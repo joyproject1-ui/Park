@@ -178,7 +178,8 @@ def write_cpk_files(folder, data, previous_path, today, lots=None, product_name=
         cells = dict(job["cells"], K4=today)
         why = []
         if src:
-            dst = os.path.join(folder, name)
+            dst = free_path(os.path.join(folder, name), data, log)
+            name = os.path.basename(dst)
             try:                                  # Excel·LibreOffice 가 있으면 .xls 서식을 그대로 채운다
                 xls_fill.fill(src, dst, cells, vals)
                 out.append((name, dst))
@@ -189,7 +190,8 @@ def write_cpk_files(folder, data, previous_path, today, lots=None, product_name=
         else:
             why.append("전년도 결재본(16항 압축)에 '%s Cpk 계산 파일' 이 없음" % word)
         name = re.sub(r"\.xls$", ".xlsx", name)
-        dst = os.path.join(folder, name)
+        dst = free_path(os.path.join(folder, name), data, log)
+        name = os.path.basename(dst)
         # 서식의 칸 값만 갈아 끼운다 — 그래프·로고·수식이 그대로 남는다(담당자 2026-09-06:
         # "Cpk 는 전년도 양식으로 작성하되 2026년 PQR 작성본 내용을 참고해서 업데이트하면 돼").
         # 전년도 파일을 .xlsx 로 바꿀 수 있으면 그것을, 아니면 프로그램이 지닌 빈 서식을 쓴다.
@@ -299,6 +301,30 @@ def written_by(report_path):
                     return name
             return ""
     return ""
+
+
+def free_path(dst, data=None, log=None):
+    """덮어쓸 수 없는 파일이면 다른 이름을 돌려준다 — 엑셀에서 열어 둔 채 재작성한 경우.
+
+    담당자 2026-09-07: 워드는 새 판독으로 다시 쓰였는데 경향 엑셀에는 새 Lot(OEY301·302)이 없었다.
+    파일이 엑셀에 열려 있으면 덮어쓰지 못하는데, 그때 조용히 지나가면 예전 파일이 그대로 남아
+    본문과 첨부가 어긋난다. 그래서 다른 이름으로 만들고 문의 목록에 알린다.
+    """
+    if not os.path.exists(dst):
+        return dst
+    try:
+        with open(dst, "r+b"):
+            return dst
+    except OSError:
+        stem, ext = os.path.splitext(dst)
+        alt = "%s (새로 만든 것)%s" % (stem, ext)
+        why = ("이 파일이 엑셀에서 열려 있어 덮어쓰지 못했습니다 — '%s' 로 만들었습니다. "
+               "엑셀을 닫고 다시 작성하면 원래 이름으로 만들어집니다." % os.path.basename(alt))
+        if data is not None:
+            data.issues.insert(0, ("첨부", os.path.basename(dst), "★ " + why))
+        if log:
+            log("  ★ %s — %s" % (os.path.basename(dst), why))
+        return alt
 
 
 def _grouped(points):
@@ -477,7 +503,8 @@ def _trend_file(form, folder, data, product, today, report_path, seed, logs, suf
                                         "옮겼습니다 — 올해 시점을 직접 채우세요"))
 
     name = "HLF-QC-126-06 안정성 시험 경향 분석 결과 - %s%s.xlsx" % (product.get("name") or "", suffix)
-    dst = os.path.join(folder, name)
+    dst = free_path(os.path.join(folder, name), data)
+    name = os.path.basename(dst)
     stability_xlsx.build_multi(form, dst, (product.get("name") or "") + suffix, sheets,
                                prepared_by=written_by(report_path), prepared_on=today)
     return [(name, dst)]

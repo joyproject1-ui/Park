@@ -266,3 +266,33 @@ class 구분이_없는_옛_기록(unittest.TestCase):
             json.dump({"logs": logs, "reader_version": 3, "covers_all": True}, fh, ensure_ascii=False)
         data = collect.collect(folder, product_name="퀴노비드안연고", log=lambda *a: None)
         self.assertEqual(len(data.stability_logs), 2)
+
+
+class 경향표_특이사항(unittest.TestCase):
+    """13.3 특이사항에 어느 해가 어느 Lot 인지 적는다 (담당자 2026-09-07)."""
+
+    def _trend(self, logs):
+        d = _form()
+        _fill_stability26(d, logs, {"from": "2025-01-01", "to": "2025-12-31"}, {"오플록사신": "90.0 ~ 110.0%"},
+                          (lambda *a: None), [], {}, carry.stability_packs(_prev()),
+                          carry.stability_entries(_prev()), "PQR25.docx")
+        return E.cell_text(E.raw_cells(_tables(d, "13.3")[0].rows[-1])[0])
+
+    def test_연도마다_제조번호를_적고_담당자_글은_남긴다(self):
+        text = self._trend([{"lot": "OEV301", "year": "2022", "kind": "시판후", "market": "내수",
+                             "market_hint": True, "pack": "5g tube/갑", "store": STORE,
+                             "points": [{"period": "36M", "done": "2025.03.10", "assays": {"오플록사신": 99.1}}]}])
+        lines = text.split("\n")
+        self.assertEqual(lines[0], "특이사항 (Comment)")
+        self.assertIn("- 경향을 분석하였음.", lines)                       # 서식에 있던 글은 그대로
+        note = [l for l in lines if l.startswith("* 해당 연도의 제조번호")]
+        self.assertEqual(len(note), 1)
+        self.assertIn("장기: 20241) OEX101, 20242) OEXO01, 20253) OEY301", note[0])
+        self.assertIn("시판 후: 2022 OEV301", note[0])
+
+    def test_다시_써도_줄이_하나만_남는다(self):
+        logs = [{"lot": "OEV301", "year": "2022", "kind": "시판후", "market": "내수", "market_hint": True,
+                 "pack": "5g tube/갑", "store": STORE,
+                 "points": [{"period": "36M", "done": "2025.03.10", "assays": {"오플록사신": 99.1}}]}]
+        first, second = self._trend(logs), self._trend(logs)
+        self.assertEqual(first, second)

@@ -2385,7 +2385,7 @@ def _fill_133_table(table, groups, spec, _trim, marks=None):
              if D.squeeze(_text(tr.findall(qn("w:tc"))[0])).startswith(("관리규격", "최소", "최대", "경향"))]
     values = {k: [] for k, _ in parts}
     guessed = {k: set() for k, _ in parts}                 # 애매하게 읽힌 예상값 — 최소·최대가 여기서 나오면 노랑
-    prev_label = None
+    notes, prev_label = [], None
     for i, (label, one, taken) in enumerate(groups):
         cells = _grid_cells_of(table.rows[f + i], width)
         head = label != prev_label
@@ -2402,6 +2402,7 @@ def _fill_133_table(table, groups, spec, _trim, marks=None):
         if cells.get(1) is not None:
             E.set_cell(cells[1], "%s%s" % (one.get("year") or "", mark))
             E.set_vmerge(cells[1], False)
+        notes.append((label, "%s%s" % (one.get("year") or "", mark), one["lot"]))
         for k, part in parts:
             if cells.get(k) is None:
                 continue
@@ -2455,7 +2456,30 @@ def _fill_133_table(table, groups, spec, _trim, marks=None):
                 E.set_cell(cells[k], "적합" if ok else "부적합")
     for ri in bold_rows:                          # 관리 규격은 보통 글씨 (담당자 2026-09: "굵게 처리 하지 않음")
         E.unbold_row(table, ri)
+    _note_133_lots(table, notes)
     return len(groups)
+
+
+LOT_NOTE = "* 해당 연도의 제조번호 —"
+
+
+def _note_133_lots(table, notes):
+    """13.3 특이사항에 '어느 해가 어느 Lot 인지' 를 적는다.
+
+    담당자 2026-09-07: "이 정보가 13.3.1 특이사항 칸에 기재되어야지" — 경향표에는 연도만 적혀
+    2024¹⁾·2024²⁾ 가 어느 제조번호인지 표에서 알 수 없다. 서식에 담당자가 적어 둔 다른 글
+    (갈음 문구 등)은 그대로 두고 이 줄만 새로 쓴다.
+    """
+    if not notes:
+        return
+    by = {}
+    for label, year, lot in notes:
+        by.setdefault(label or "", []).append("%s %s" % (year, lot))
+    line = LOT_NOTE + " " + " / ".join("%s: %s" % (label, ", ".join(items)) for label, items in by.items())
+    cell = E.comment_cell(table)
+    kept = [l for l in E.cell_text(cell).split("\n")[1:]
+            if l.strip() and l.strip() != "N/A" and not l.strip().startswith(LOT_NOTE)]
+    E.set_cell_plain(cell, "특이사항 (Comment)", *(kept + [line]))
 
 
 def _declared_lots(table):
