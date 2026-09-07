@@ -164,10 +164,32 @@ def report():
         offline = False
     lines.append(_line(key_on, "ANTHROPIC_API_KEY (Claude 비전)",
                        "켜짐 — 시험일지 PDF 를 정확히 읽습니다" if key_on else "없음 — 오프라인 판독기로 대신합니다"))
+    try:
+        from .engine import claude_cli
+        cli = claude_cli._exe()
+    except Exception:
+        cli = ""
+    lines.append(_line(bool(cli), "이 PC 의 Claude Code (claude)",
+                       cli if cli else "없음 — 깔면 '보고서 작성' 이 이 PC 안에서 시험일지를 읽습니다 "
+                                       "(API 키 없이, 구독 그대로). 설치: Node.js 18 이상을 깔고 "
+                                       "명령 프롬프트에서  npm install -g @anthropic-ai/claude-code  → "
+                                       "claude 를 한 번 실행해 로그인"))
     lines.append(_line(offline, "오프라인 판독기 (RapidOCR)",
                        "설치됨 — 깨끗이 읽힌 값만 쓰고 애매한 칸은 노랑/주황으로 표시합니다" if offline
                        else "없음 — %s / PQR-업데이트.bat 을 다시 실행하고 'install-log.txt' 를 보내 주세요"
                             % (handwriting.why() if offline is False else "")))
+    try:
+        from .engine import handreq
+        pc_on = handreq.pc_reading_on(None)
+    except Exception:
+        pc_on = False
+    lines.append(_line(pc_on, "'PC 판독 사용.txt'",
+                       "있음 — 이 PC 로 직접 읽습니다(한 장에 몇 분)" if pc_on
+                       else "없음 — 위 두 길이 모두 없으면 '13. Claude 판독 요청 …zip' 을 만들어 둡니다"))
+    if not key_on and not cli:
+        lines.append("   → 13항을 자동으로 채우려면: 이 PC 에 Claude Code 를 깔거나(위 줄),")
+        lines.append("     제품 폴더에 'PC 판독 사용.txt' 빈 파일을 두거나,")
+        lines.append("     만들어진 '13. Claude 판독 요청 …zip' 을 Claude 대화에 올려 판독 json 을 받으세요.")
     lines.append("")
 
     lines.append("판정:")

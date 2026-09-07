@@ -559,9 +559,11 @@ def collect(folder, product_name=None, log=None):
             made = handreq.make_request(folder, scanned, product_name or "", log)
             묶음 = ", ".join(name for name, _ in made) or "만들지 못함"
             data.issues.insert(0, ("13", 묶음,
-                                   "★ 손글씨 시험일지 %d장은 Claude 가 읽습니다 — 제품 폴더의 '%s' 를 "
-                                   "Claude 대화에 올리고, 받은 '13. 안정성시험일지 판독.json' 을 그 폴더에 둔 뒤 "
-                                   "'보고서 재작성' 을 누르세요. (이 PC 로 직접 읽으려면 제품 폴더에 '%s' 를 두세요)"
+                                   "★ 손글씨 시험일지 %d장을 아직 읽지 못했습니다 — 13항이 '확인 필요' 로 남습니다. "
+                                   "이 PC 에서 Cowork·Claude Code 를 쓰신다면 제품 폴더를 열고 "
+                                   "'13 폴더의 안정성 시험일지를 읽어 13. 안정성시험일지 판독.json 을 만들어 줘' 라고 "
+                                   "시키면 그 자리에서 만들어집니다. 웹 대화라면 제품 폴더의 '%s' 를 올리고 받은 json 을 "
+                                   "그 폴더에 둔 뒤 '보고서 재작성' 을 누르세요. (이 PC 가 직접 읽게 하려면 '%s' 를 두세요)"
                                    % (len(scanned), 묶음, handreq.PC_OPT_IN)))
         # ③ 담당자가 이 PC 로 읽으라고 정해 두었으면 오프라인으로 읽는다
         if not logs and pc_on and handwriting.available():
