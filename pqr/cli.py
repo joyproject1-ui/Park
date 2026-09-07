@@ -424,10 +424,14 @@ def cmd_login_claude(args):
         return 1
     _print("  claude: %s" % exe)
     _print("")
-    _print("  잠시 뒤 Claude 화면이 이 창에 열립니다.")
-    _print("   · 처음이면 로그인 방법을 고르라고 나옵니다 — 늘 쓰시는 계정(구독)으로 고르세요.")
-    _print("   · 브라우저가 열리면 로그인하고, 이 창으로 돌아오세요.")
-    _print("   · 로그인이 끝나면 이 창에 /exit 를 치고 Enter 하면 됩니다.")
+    _print("  잠시 뒤 Claude 화면이 이 창에 열립니다. 차례대로 이렇게 하세요:")
+    _print("   1) 'Choose the text style…' (글자 스타일) — 그냥 Enter (나중에 /theme 로 바꿉니다)")
+    _print("   2) 'Select login method' — 'Claude account with subscription'(구독 계정)을 고르고 Enter")
+    _print("      · 'Anthropic Console (API key)' 는 고르지 마세요 — 유료 API 결제 쪽입니다")
+    _print("   3) 브라우저가 열리면 늘 쓰시는 계정으로 로그인하고 허용을 누르세요")
+    _print("      · 코드를 붙여넣으라고 하면, 이 창에 마우스 오른쪽 클릭(또는 Ctrl+V)으로 붙여넣고 Enter")
+    _print("   4) 'Do you trust the files in this folder?' 가 나오면 Yes")
+    _print("   5) 입력줄 '>' 이 보이면 로그인 끝 — /exit 를 치고 Enter")
     _print("")
     try:
         subprocess.call(claude_cli.command(exe))      # 대화형 — 이 창을 그대로 물려 준다
