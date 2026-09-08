@@ -192,7 +192,16 @@ def pv_by_code(path, code, sheet=None):
     Lot 행(1st·2nd·3rd)이 이어진다.
     """
     wb = load_workbook(path, data_only=True, read_only=True)
-    ws = wb[sheet] if sheet else wb.worksheets[0]
+    # 시트를 안 짚으면 모든 시트를 본다 — PV 마스터는 라인별로 갈라져 있다
+    # (Mar 1호·Mar 2호·마케지니·BFS 1호·BFS 2호·BFS 3호·위탁). 첫 시트만 보면
+    # 다른 라인 제품의 PV 를 못 찾는다 (담당자 2026-09-08: "해당 라인은 충전기 기준 BFS 2호야").
+    if not sheet:
+        for name in wb.sheetnames:
+            found = pv_by_code(path, code, name)
+            if found:
+                return found
+        return []
+    ws = wb[sheet]
     rows = [[_cell(v) for v in r] for r in ws.iter_rows(values_only=True)]
     header = None
     for i, r in enumerate(rows[:15]):

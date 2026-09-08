@@ -1964,7 +1964,9 @@ def fill(document, data, product, period, today=None, log=None):
     def fill_pv(table, hint=""):
         """표의 기존 보고서 번호(PV24-2-QUIO3-R …)에서 코드를 알아내 마스터에서 평가 년도 보고서를 찾는다.
         빈 공양식에는 번호가 없다 — 전년도 결재본 같은 자리 표의 번호(hint)로 찾는다(내수 QUIO3·수출 QUIO2)."""
-        codes = set(re.findall(r"PV\d{2}-\d-([A-Z0-9]+)-", _text(table._tbl) + " " + hint))
+        # 문서 코드에 밑줄이 들어간다(TRHE1_1) — 밑줄을 빼면 한 건도 못 찾아 전년도 것을 옮기게 된다
+        # (담당자 2026-09-08: "10.1 작성할 때는 첨부 파일 10.1 을 참고해서 25년도까지 최신본을 확인").
+        codes = set(re.findall(r"PV\d{2}-\d-([A-Z0-9_]+)-", _text(table._tbl) + " " + hint))
         pv_path = next((p_ for p_ in data.files.get("10.1", []) if p_.lower().endswith(".xlsx")), None)
         if not codes or not pv_path:
             return 0
