@@ -34,9 +34,6 @@ def key_from_file(root=None):
 
 def available():
     """Claude 로 읽을 수 있는가. 파일에 키가 있으면 이 실행에 한해 환경 변수로 세워 둔다."""
-    from . import privacy
-    if privacy.blocked():                       # 외부 전송 금지 — 키가 있어도 부르지 않는다
-        return False
     if os.environ.get("ANTHROPIC_API_KEY", "").strip():
         return True
     key = key_from_file()

@@ -120,10 +120,7 @@ def _exe():
 
 
 def available():
-    """이 PC 에 Claude Code 가 깔려 있고, 외부 전송이 막혀 있지 않은가."""
-    from . import privacy
-    if privacy.blocked():
-        return False
+    """이 PC 에 Claude Code 가 깔려 있는가."""
     return bool(_exe())
 
 

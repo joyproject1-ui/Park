@@ -393,8 +393,6 @@ def write_report(folder, product, period, out_path, today=None, recipe=None, log
         log_("EDMS 서식 없음 — 제품 폴더나 공통 폴더에 E-HLF-32 서식(.docx)을 두면 그 서식으로 만듭니다")
         data_issue = ("서식", "", "EDMS 결재본 서식(E-HLF-32)이 없어 전년도 양식 그대로 만들었음 — 제품 폴더나 '공통' 폴더에 서식을 두세요")
 
-    from . import privacy
-    log_(privacy.note())
     data = collect_module.collect(folder, product_name=product.get("name"), log=log_)
     ledger_path = collect_module.write_ledger(folder, product.get("code", ""), data)
     if ledger_path:

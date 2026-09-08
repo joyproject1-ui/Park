@@ -339,8 +339,6 @@ class Workspace(object):
                                             else "cli" if claude_cli.available()
                                             else "offline" if handwriting.available() else False)
             payload["handwriting_why"] = "" if payload["handwriting_reader"] else handwriting.why()
-            from .engine import privacy
-            payload["outbound_blocked"] = privacy.blocked(self.workspace.input_dir)
             payload["python_version"] = "%d.%d.%d" % sys.version_info[:3]
         except Exception as error:
             payload["handwriting_reader"] = False

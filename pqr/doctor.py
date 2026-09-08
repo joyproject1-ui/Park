@@ -194,11 +194,6 @@ def report():
         pc_on = handreq.pc_reading_on(None)
     except Exception:
         pc_on = False
-    try:
-        from .engine import privacy
-        lines.append(_line(True, "외부 전송", privacy.note()))
-    except Exception:
-        pass
     lines.append(_line(pc_on, "'PC 판독 사용.txt'",
                        "있음 — 이 PC 로 직접 읽습니다(한 장에 몇 분)" if pc_on
                        else "없음 — 위 두 길이 모두 없으면 '13. Claude 판독 요청 …zip' 을 만들어 둡니다"))
