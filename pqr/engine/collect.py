@@ -621,6 +621,13 @@ def collect(folder, product_name=None, log=None):
                 note(item, p, "제조번호를 읽지 못함"); continue
             rec["export"] = "수출용" in os.path.basename(p)
             data.coa.setdefault(lot, {})[key] = rec
+            # 무엇을 읽었는지 남긴다 — 9.2 표의 열이 비었을 때 성적서를 못 읽은 것인지
+            # 열 이름이 안 맞은 것인지 기록만 보고 가릴 수 있어야 한다 (담당자 2026-09-08:
+            # "값을 왜 입력하지 못해? 뭐가 문제지?").
+            names = list(rec.get("items") or {})
+            log("  [%s] %s — %s · 시험항목 %d건%s"
+                % (item, os.path.basename(p), lot, len(names),
+                   (" (" + ", ".join(names[:10]) + ")") if names else " — 하나도 못 읽음"))
     # 9.2.1 에서 읽은 조제 값은 9.2.2 에 없는 것만 보탠다 — 같은 조제 단계라 한 곳에서 보면 된다.
     for recs in data.coa.values():
         if recs.get("921"):

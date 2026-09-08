@@ -1799,8 +1799,25 @@ def fill(document, data, product, period, today=None, log=None):
             return ("%.2f" % got, "충분" if got >= 1 else "부족")
 
         makers.append(maker)
+
+        def miss_of(process):
+            """통째로 빈 열을 문의 목록에 남긴다 — 본문 항 번호와 첨부 자료 번호는 같다.
+
+            담당자 2026-09-08: "값을 왜 입력하지 못해? 오른쪽 파일로 작성하면 돼 뭐가 문제지?
+            PQR 문의목록에도 해당내용이 없네." 그동안 못 채운 칸은 공양식의 사선이 그대로 남아
+            아무 말 없이 비어 있었다.
+            """
+            첨부 = {"조제": "9.2.1·9.2.2", "충전": "9.2.3", "포장": "9.2.4"}.get(process, "9.2")
+
+            def report(labs):
+                issues.append(("9.2", process,
+                               "%s 열을 성적서에서 찾지 못해 비웠습니다 — 첨부 %s(%s 완료 후) 자료를 "
+                               "열어 그 값을 적으세요" % ("·".join("‘%s’" % x for x in labs), 첨부, process)))
+                log("  9.2 %s: 못 채운 열 %s — 첨부 %s 확인" % (process, ", ".join(labs), 첨부))
+            return report
+
         for table, process in pairs:
-            D.fill(table, lots, maker(process), cpk=cpk_of)
+            D.fill(table, lots, maker(process), cpk=cpk_of, miss=miss_of(process))
         miss = found.pop("assay_miss", None)
         if miss:
             issues.append(("9.2", ", ".join(sorted(miss)),

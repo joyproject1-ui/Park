@@ -318,6 +318,10 @@ def read_change(path, log=None, pages=3):
 COA_PROMPT = """이 시험성적서(스캔 이미지)를 읽고 JSON 만 출력하세요.
 보이는 대로만 적고, 안 보이면 빈 값으로 둡니다 — 지어내지 않습니다.
 · "assays" 는 함량 시험입니다. 성분 이름과 규격(하한~상한), 결과값을 짝으로 적습니다.
+· "items" 는 시험항목 표를 줄마다 하나씩 그대로 옮긴 것입니다 — 확인시험·제제균일성·
+  불용성미립자·불용성이물·질량·용량·기밀도·pH·삼투압·비중처럼 표에 있는 항목을 하나도
+  빠뜨리지 말고 적습니다. "name" 은 표에 적힌 항목 이름 그대로, "spec" 은 기준 칸,
+  "value" 는 결과 칸입니다.
 · 숫자는 단위를 빼고 숫자만 적습니다."""
 
 COA_SCHEMA = {
@@ -333,9 +337,14 @@ COA_SCHEMA = {
             "properties": {"part": {"type": "string"}, "lo": {"type": "string"},
                            "hi": {"type": "string"}, "value": {"type": "string"}},
             "required": ["part", "lo", "hi", "value"], "additionalProperties": False}},
+        "items": {"type": "array", "items": {
+            "type": "object",
+            "properties": {"name": {"type": "string"}, "spec": {"type": "string"},
+                           "value": {"type": "string"}},
+            "required": ["name", "spec", "value"], "additionalProperties": False}},
     },
     "required": ["lot", "mfg_date", "expiry", "appearance", "verdict", "particle", "particle_spec",
-                 "metal_total", "metal_each", "bioburden", "bioburden_spec", "assays"],
+                 "metal_total", "metal_each", "bioburden", "bioburden_spec", "assays", "items"],
     "additionalProperties": False,
 }
 
@@ -363,7 +372,7 @@ def read_coa(path, log=None, pages=3):
     from . import handwriting
     client = _client()
     n = min(pages, handwriting.page_count(path) or 1)
-    out = {"file": os.path.basename(path), "assays": []}
+    out = {"file": os.path.basename(path), "assays": [], "items": {}}
     본 = set()
     for page_no in range(1, n + 1):
         try:
@@ -383,8 +392,17 @@ def read_coa(path, log=None, pages=3):
                 out["assays"].append({"part": part, "lo": str(one.get("lo") or "").strip(),
                                       "hi": str(one.get("hi") or "").strip(),
                                       "value": str(one.get("value") or "").strip()})
+        # 시험항목 표 — 확인시험·제제균일성·불용성미립자처럼 코드에 박아 두지 않은 항목이
+        # 여기에 있다. 함량만 받아 오면 9.2 표의 그 열이 통째로 빈다(담당자 2026-09-08).
+        for one in got.get("items") or []:
+            name = str((one or {}).get("name") or "").strip()
+            if name and name not in out["items"]:
+                out["items"][name] = {"spec": str(one.get("spec") or "").strip(),
+                                      "value": str(one.get("value") or "").strip()}
     if out["assays"]:
         out["assay"] = out["assays"][0]["value"]
         out["assay_spec"] = "%s ~ %s%%" % (out["assays"][0]["lo"], out["assays"][0]["hi"])
-    say("    [9.2] %s — Claude(API 키)로 읽음: 함량 %d건" % (out["file"], len(out["assays"])))
+    say("    [9.2] %s — Claude(API 키)로 읽음: 함량 %d건 · 시험항목 %d건 (%s)"
+        % (out["file"], len(out["assays"]), len(out["items"]),
+           ", ".join(list(out["items"])[:8]) or "없음"))
     return out

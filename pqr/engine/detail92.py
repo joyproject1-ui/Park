@@ -252,11 +252,19 @@ def _grid_cells(row, width):
     return out
 
 
-def fill(table, lots, value, cpk=None):
+def _is_data_label(lab):
+    """값을 채워야 하는 열인가 — 연번·Lot No.·비고는 아니다."""
+    low = (lab or "").lower()
+    return bool(lab) and "연번" not in lab and "비고" not in lab \
+        and not low.startswith("lotno") and low not in ("no.", "no")
+
+
+def fill(table, lots, value, cpk=None, miss=None):
     """자료 행을 채우고 요약 행(최댓값·최솟값·평균·Cpk)을 계산해 넣는다.
 
     value(label, lot, i) — label 은 머리글을 이어 붙여 빈칸을 지운 열 이름. None 이면 그 칸은 둔다.
     cpk(label, values) — (지수, 판정) 또는 None.
+    miss([열 이름 …]) — 어느 Lot 에서도 값을 얻지 못해 통째로 빈 열을 알린다.
     돌려주는 값: {열 이름: [자료 글 …]}
     """
     labs = labels(table)
@@ -266,7 +274,7 @@ def fill(table, lots, value, cpk=None):
     first, last, summary = data_range(table)
     f, l = E.fit_rows(table, first, last, max(1, len(lots)))
     summary = [ri + (l - last) for ri in summary]    # 자료 줄이 늘거나 줄면 요약 줄도 밀린다
-    got, where = {}, {}
+    got, where, 자리 = {}, {}, set()
     for i, lot in enumerate(lots):
         cells = _grid_cells(table.rows[f + i], len(labs))
         for k, lab in enumerate(labs):
@@ -279,10 +287,18 @@ def fill(table, lots, value, cpk=None):
                 text = lot
             else:
                 text = value(lab, lot, i)
+            자리.add(k)
             if text is None:
                 continue
             got.setdefault(k, []).append(str(text))
             where.setdefault(k, []).append(cell)
+    # 어느 Lot 에서도 값을 얻지 못한 열은 공양식의 사선이 그대로 남는다 — 그것을 알려야
+    # 담당자가 원본을 보고 채울 수 있다 (담당자 2026-09-08: "값을 왜 입력하지 못해?
+    # PQR 문의목록에도 해당내용이 없네").
+    if miss:
+        빈열 = [labs[k] for k in sorted(자리) if k not in got and _is_data_label(labs[k])]
+        if 빈열:
+            miss(빈열)
     for k, texts in got.items():                     # 한 열의 자릿수를 맞춘 뒤 적는다
         lab = labs[k]
         if not ("연번" in lab or lab.lower().startswith("lotno") or lab.lower() == "no."):

@@ -423,14 +423,37 @@ COA_PROMPT = """다음 시험성적서(스캔 PDF)를 읽고 JSON 만 출력하�
 규칙
 · 보이는 대로만 적습니다 — 안 보이면 빈 값으로 두고 지어내지 않습니다.
 · "assays" 는 함량 시험입니다. 성분 이름·규격(하한~상한)·결과값을 짝으로 적습니다.
+· "items" 는 **시험항목 표를 줄마다 하나씩 그대로** 옮긴 것입니다 — 확인시험·제제균일성·
+  불용성미립자·불용성이물·질량·용량·기밀도·pH·삼투압·비중처럼 표에 있는 항목을 하나도
+  빠뜨리지 말고 적습니다. 항목 이름은 표에 적힌 그대로(줄임말도 그대로), "spec" 은 기준 칸,
+  "value" 는 결과 칸입니다. 결과가 여러 줄이면 줄바꿈 없이 이어 적습니다.
 · 숫자는 단위를 빼고 숫자만 적습니다.
 
 {"lot": "LWY201", "mfg_date": "2025.02.12", "expiry": "2027.02.11",
  "appearance": "무색의 투명한 액", "verdict": "적합",
  "particle": "", "particle_spec": "", "metal_total": "", "metal_each": "",
  "bioburden": "", "bioburden_spec": "",
- "assays": [{"part": "트레할로스수화물", "lo": "90.0", "hi": "110.0", "value": "99.8"}]}
+ "assays": [{"part": "트레할로스수화물", "lo": "90.0", "hi": "110.0", "value": "99.8"}],
+ "items": [{"name": "제제균일성", "spec": "85.0 ~ 115.0%", "value": "102.4"},
+           {"name": "불용성미립자(10㎛ 이상)", "spec": "25개/mL 이하", "value": "0"},
+           {"name": "확인시험", "spec": "검액은 표준액과 …", "value": "적합"}]}
 """
+
+
+def _coa_items(got):
+    """Claude 가 읽은 시험항목 표 → readers.coa.test_items 와 같은 꼴 {항목: {spec, value}}.
+
+    담당자 2026-09-08: 스캔 성적서(9.2.4 LIMS 연동 X)를 Claude 로 읽을 때 함량만 받아 와
+    확인시험·제제균일성·불용성미립자·불용성이물 열이 통째로 비었다.
+    """
+    out = {}
+    for one in got.get("items") or []:
+        name = str((one or {}).get("name") or "").strip()
+        if not name or name in out:
+            continue
+        out[name] = {"spec": str(one.get("spec") or "").strip(),
+                     "value": str(one.get("value") or "").strip()}
+    return out
 
 
 def read_coa(path, folder=None, log=None):
@@ -457,5 +480,8 @@ def read_coa(path, folder=None, log=None):
     if out["assays"]:
         out["assay"] = out["assays"][0]["value"]
         out["assay_spec"] = "%s ~ %s%%" % (out["assays"][0]["lo"], out["assays"][0]["hi"])
-    say("    [9.2] %s — Claude Code 로 읽음: 함량 %d건" % (out["file"], len(out["assays"])))
+    out["items"] = _coa_items(got)
+    say("    [9.2] %s — Claude Code 로 읽음: 함량 %d건 · 시험항목 %d건 (%s)"
+        % (out["file"], len(out["assays"]), len(out["items"]),
+           ", ".join(list(out["items"])[:8]) or "없음"))
     return out
