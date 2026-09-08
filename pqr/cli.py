@@ -688,6 +688,71 @@ def cmd_report(args):
     return 0
 
 
+def cmd_write(args):
+    """대시보드 없이 한 제품의 제출용 보고서를 만든다 — '보고서 작성' 단추와 같은 길.
+
+    PC 에서 Claude(Cowork·Claude Code)가 제품 폴더를 직접 보며 작성할 때 쓴다: 판독 파일을
+    폴더에 놓고 이 명령을 돌리고, 나온 문의 목록을 읽고, 고치고, 다시 돌린다 — 담당자 2026-09-08:
+    "너가 직접 Cowork 가 하는 것처럼 대시보드 폴더에 접근해서 PQR 파일을 직접 읽고 작성해 줘."
+    """
+    from . import build as build_module, docx_report, server as server_module
+    from .engine import writer as engine_writer
+    folder = os.path.abspath(args.folder)
+    if not os.path.isdir(folder):
+        _print("제품 폴더를 찾을 수 없습니다: %s" % folder)
+        return 2
+    input_dir = os.path.dirname(folder)
+    code = build_module._folder_product_code(os.path.basename(folder))
+    workspace = server_module.Workspace(input_dir, out_dir=args.out or os.path.join(input_dir, "..", "out"),
+                                        today=args.today)
+    data = workspace.data                       # Workspace 가 만들며 이미 집계했다
+    product = next((item for item in data.get("products") or [] if item["code"] == code), None)
+    if product is None:
+        # 제품 마스터가 없어도 폴더 이름('QC1-5087 아이퓨어점안액')만으로 만든다 — 제형은 이름으로 짐작
+        name = " ".join(os.path.basename(folder).split()[1:]) or code
+        group = "점안제" if "점안" in name else "연고제" if "연고" in name else ""
+        product = {"code": code, "name": name, "group": group}
+        _print("제품 마스터에 %s 가 없어 폴더 이름으로 만듭니다: %s (%s)" % (code, name, group or "제형 모름"))
+    period = dict(data.get("period") or {})
+    if not (period.get("from") and period.get("to")):
+        # 제품 마스터가 없으면 평가 기간도 없다 — PQR 은 지난 한 해를 평가한다
+        import datetime as _dt
+        year = (schema.parse_date(args.today) if args.today else _dt.date.today()).year - 1
+        period = {"from": "%d-01-01" % year, "to": "%d-12-31" % year}
+    target = os.path.join(server_module._made_dir(folder), docx_report.report_filename(product, period))
+    _print("[%s] %s — %s ~ %s" % (product["code"], product["name"], period.get("from"), period.get("to")))
+    steps = []
+
+    def say(msg):
+        steps.append(msg)
+        _print("  " + msg)
+
+    try:
+        result = engine_writer.write_report(folder, product, period, target, today=data.get("today"),
+                                            log=say, vision=server_module._vision_hook())
+    except Exception as error:
+        import traceback
+        trace = traceback.format_exc()
+        server_module.write_work_log(folder, product, steps, str(error), trace)
+        server_module.write_failure_note(server_module._made_dir(folder), product, str(error), trace, steps)
+        _print("작성 실패: %s" % error)
+        _print(trace)
+        return 1
+    issues = result.get("issues") or []
+    server_module.write_issue_list(folder, product, issues)
+    server_module.write_work_log(folder, product, steps)
+    if result.get("blank_sections"):
+        build_module.mark_auto_draft(folder, target)
+    else:
+        build_module.unmark_auto_draft(folder, target)
+    _print("")
+    _print("보고서: %s" % result.get("path"))
+    _print("문의 목록 %d건 (%s)" % (len(issues), os.path.join(folder, server_module.ISSUE_LIST_NAME % product["code"])))
+    for i, (item, name, why) in enumerate(issues, 1):
+        _print("  %2d. [%s] %s — %s" % (i, item, name, why))
+    return 0
+
+
 def build_parser():
     parser = argparse.ArgumentParser(
         prog="pqr", description="제품품질평가(PQR) 자동 집계 · 보고서 생성 도구")
@@ -774,6 +839,13 @@ def build_parser():
     plan_cmd.add_argument("--master", required=True, help="제품 마스터 (.csv)")
     plan_cmd.add_argument("-o", "--out", help="저장할 파일 (없으면 --master 를 덮어씁니다)")
     plan_cmd.set_defaults(func=cmd_plan)
+
+    write_cmd = subparsers.add_parser(
+        "write", help="한 제품의 제출용 보고서를 만든다 (대시보드의 '보고서 작성' 과 같음)")
+    write_cmd.add_argument("folder", help="제품 폴더 (예: PQR_입력폴더\\QC1-5087 아이퓨어점안액)")
+    write_cmd.add_argument("-o", "--out", help="집계 결과를 둘 폴더 (기본: 입력 폴더 옆 out)")
+    write_cmd.add_argument("--today", help="작성 일자 YYYY-MM-DD (기본: 오늘)")
+    write_cmd.set_defaults(func=cmd_write)
 
     report_cmd = subparsers.add_parser("report", help="보고서만 다시 생성")
     report_cmd.add_argument("-d", "--data", required=True, help="build 가 만든 pqr.json")
