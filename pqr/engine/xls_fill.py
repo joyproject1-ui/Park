@@ -59,6 +59,8 @@ def _legend_layout(values, levels):
 # ---------------------------------------------------------------- Excel (COM)
 def _with_excel(src, dst, cells, values, levels=()):
     try:
+        from . import convert
+        convert._com_ready()                 # 갈래마다 COM 을 열어 준다 (담당자 PC 2026-09-08)
         import win32com.client
     except ImportError:
         return False

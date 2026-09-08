@@ -132,6 +132,7 @@ def _with_word(src, dst):
     Open(경로, False, True) 로 이미 끄고 있었는데 이 길만 빠져 있었다.
     """
     try:
+        _com_ready()
         import win32com.client  # pywin32
     except ImportError:
         return _word_convert(src, dst, 16)
@@ -254,6 +255,7 @@ def _excel_convert(src, dst):
 def _xls_with_excel(src, dst):
     """엑셀도 같다 — pywin32 가 터지면 스크립트 두 길로 넘어간다."""
     try:
+        _com_ready()
         import win32com.client
     except ImportError:
         return _excel_convert(src, dst)
@@ -304,6 +306,7 @@ def to_xlsx(src, dst):
 
 def _pdf_with_word(src, dst):
     try:
+        _com_ready()
         import win32com.client
     except ImportError:
         return False
@@ -457,7 +460,22 @@ def _fields_via_powershell(path):
         "} finally { $w.Quit() }\n" % _ps_path(path))
 
 
+def _com_ready():
+    """이 갈래(스레드)에서 COM 을 쓸 수 있게 한다.
+
+    담당자 PC 2026-09-08: "목차 쪽 번호 계산 실패: CoInitialize가 호출되지 않았습니다."
+    화면(서버)은 일감마다 새 갈래에서 도는데, COM 은 갈래마다 한 번 열어 주어야 한다.
+    열려 있으면 그냥 지나간다 — 실패해도 부르는 쪽이 다른 길(VBScript·PowerShell)로 간다.
+    """
+    try:
+        import pythoncom
+        pythoncom.CoInitialize()
+    except Exception:
+        pass
+
+
 def _fields_via_pywin32(path):
+    _com_ready()
     import win32com.client
     word = win32com.client.DispatchEx("Word.Application")
     word.Visible = False

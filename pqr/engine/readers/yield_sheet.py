@@ -24,12 +24,30 @@ def _number(value):
 
 
 def _grid(path):
-    ws = load_workbook(path, data_only=True, read_only=True).worksheets[0]
+    """표를 [[칸 값]] 로. 가로·세로로 병합된 칸은 덮는 자리 모두에 같은 값을 넣는다.
+
+    담당자 2026-09-08: 수율현황표의 '포장' 머리 칸이 내수·베트남 두 열에 걸쳐 병합돼 있어
+    베트남 열의 이름이 빈 값이 되고, 그 열의 수율(99.75)이 통째로 버려졌다.
+    """
+    book = load_workbook(path, data_only=True)          # 병합 정보를 보려면 read_only 를 쓸 수 없다
+    ws = book.worksheets[0]
     rows = [list(r) for r in ws.iter_rows(values_only=True)]
     if not rows:
         return [], 0
     width = max(len(r) for r in rows)
-    return [r + [None] * (width - len(r)) for r in rows], width
+    rows = [r + [None] * (width - len(r)) for r in rows]
+    for spot in getattr(ws, "merged_cells", None).ranges if getattr(ws, "merged_cells", None) else []:
+        r0, c0, r1, c1 = spot.min_row - 1, spot.min_col - 1, spot.max_row - 1, spot.max_col - 1
+        if not (0 <= r0 < len(rows) and 0 <= c0 < width):
+            continue
+        value = rows[r0][c0]
+        if value is None:
+            continue
+        for r in range(r0, min(r1 + 1, len(rows))):
+            for c in range(c0, min(c1 + 1, width)):
+                if rows[r][c] is None:
+                    rows[r][c] = value
+    return rows, width
 
 
 def _lot_column(rows, width):
@@ -106,11 +124,29 @@ def read_specs(path):
     rows, lot_col, data_rows, value_cols, names = _layout(path)
     if rows is None:
         return {}
+    # 기준이 한 줄에 다 있지 않다 — 조제·충전은 위 줄에, 포장은 그 아래 줄에 적힌 표가 있다
+    # (담당자 2026-09-08 한림포비돈 수율현황표). 자료 줄 위쪽을 모두 훑어 열마다 하나씩 모은다.
+    got = {}
     for i in range(data_rows[0] - 1, -1, -1):
         texts = {c: str(rows[i][c] or "").strip() for c in value_cols}
-        if any(SPEC.search(t) for t in texts.values()):
-            return {names[c]: t for c, t in texts.items() if names.get(c) and t}
-    return {}
+        if not any(SPEC.search(t) for t in texts.values()):
+            continue
+        for c, t in texts.items():
+            if names.get(c) and t and SPEC.search(t) and names[c] not in got:
+                got[names[c]] = t
+    if not got:
+        return {}
+    # 시장별로 갈린 공정('포장(내수)'·'포장(베트남)')은 기준이 하나뿐일 때 나눠 쓴다
+    def _base(text):
+        return re.sub(r"\s", "", re.sub(r"[(（][^)）]*[)）]", "", text or ""))
+
+    for name in names.values():
+        if not name or name in got:
+            continue
+        같은것 = {v for k, v in got.items() if _base(k) == _base(name)}
+        if len(같은것) == 1:
+            got[name] = 같은것.pop()
+    return got
 
 
 def read_yields(path):
