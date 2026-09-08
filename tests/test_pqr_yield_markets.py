@@ -128,3 +128,98 @@ class 보고서_표의_두_줄_머리(unittest.TestCase):
         vals = [_yield_value({"포장(온누리에이치엔씨)": "99.12"}, n) for _, n in cols]
         self.assertTrue(_other_market(cols, vals, 2))            # 내수 칸 — 사선
         self.assertFalse(_other_market(cols, vals, 3))           # 온누리 칸 — 값이 있다
+
+
+class 표_제목이_값_열에_걸친_표(unittest.TestCase):
+    """담당자 2026-09-08: "수율 작성 안 됐어" — 아이퓨어 7항 표는 제목
+    '중요공정 별 수율 현황 (%)' 이 값 열 전체에 가로로 걸쳐 있고 그 줄 끝에 '비고' 가 있다.
+    비고까지 함께 보아 제목 줄로 걸러지지 않았고, 열 이름이
+    '중요공정별수율현황(%)(조제)' 가 되어 세 Lot 아홉 칸이 모두 '확인 필요' 로 나왔다."""
+
+    def _table(self):
+        import docx
+        from pqr.engine import docedit as E
+        d = docx.Document()
+        t = d.add_table(rows=4, cols=7)
+        rows = [["연번", "중요공정 별 수율 현황 (%)", "", "", "", "", "비고"],
+                ["", "공정", "조제", "충전", "포장", "", ""],
+                ["", "기준\nLot No.", "99.5 ± 0.5%", "92.0 ± 8.0%", "내수", "온누리\n에이치엔씨", ""],
+                ["1", "LWY201", "", "", "", "", ""]]
+        for i, r in enumerate(rows):
+            for j, v in enumerate(r):
+                E.set_cell(t.rows[i].cells[j], v)
+        raw = E.raw_cells(t.rows[0])
+        for _ in range(4):                                  # 제목이 공정·값 열 전체에 걸친다
+            raw = E.raw_cells(t.rows[0])
+            E.merge_right(raw[1], raw[2])
+        E.merge_right(E.raw_cells(t.rows[1])[4], E.raw_cells(t.rows[1])[5])
+        return t
+
+    def test_제목_줄을_이름으로_쓰지_않는다(self):
+        from pqr.engine.recipe_ointment import _yield_columns
+        self.assertEqual(_yield_columns(self._table()),
+                         [(2, "조제"), (3, "충전"), (4, "포장(내수)"), (5, "포장(온누리에이치엔씨)")])
+
+    def test_수율현황표_이름과_그대로_맞는다(self):
+        from pqr.engine.recipe_ointment import _yield_columns, _yield_value
+        vals = {"조제": "99.97", "충전": "93.47", "포장(온누리 에이치엔씨)": "99.12"}
+        got = [_yield_value(vals, name) for _, name in _yield_columns(self._table())]
+        self.assertEqual(got, ["99.97", "93.47", None, "99.12"])
+
+
+class 엑셀_제목_줄도_이름이_아니다(unittest.TestCase):
+    """수율현황표 엑셀에서도 제목이 값 열에 걸쳐 있으면 이름에 섞이면 안 된다."""
+
+    def test_제목이_걸쳐도_공정_이름만_읽는다(self):
+        from openpyxl import Workbook
+        wb = Workbook(); ws = wb.active
+        for r in [[None, "중요공정 별 수율 현황 (%)", None, None, None, "비고"],
+                  ["공정", "조제", "충전", "포장", "포장", None],
+                  [None, None, None, "내수", "온누리에이치엔씨", None],
+                  ["Lot No.", "99.5 ± 0.5%", "92.0 ± 8.0%", "98.0 ± 2.0%", None, None],
+                  ["LWY201", 99.97, 93.47, None, 99.12, None]]:
+            ws.append(r)
+        ws.merge_cells(start_row=1, start_column=2, end_row=1, end_column=5)
+        ws.merge_cells(start_row=2, start_column=4, end_row=2, end_column=5)
+        path = os.path.join(tempfile.mkdtemp(prefix="pqr-y3-"), "y.xlsx")
+        wb.save(path)
+        got = dict(Y.read_yields(path))
+        self.assertEqual(got["LWY201"]["조제"], "99.97")
+        self.assertEqual(got["LWY201"]["포장(온누리에이치엔씨)"], "99.12")
+
+
+class 아이퓨어_수율현황표_그대로(unittest.TestCase):
+    """담당자가 보여 준 실제 파일(7. 수율현황표 - 개인.xlsx) 짜임 그대로 —
+    '조제'·'충전' 은 두 줄에 걸쳐 병합, '포장' 은 내수·온누리 두 열에 걸쳐 병합,
+    기준 줄의 '98.0 ± 2.0%' 도 두 열에 걸쳐 있다."""
+
+    def _sheet(self):
+        from openpyxl import Workbook
+        wb = Workbook(); ws = wb.active
+        for r in [[None, "조제", "충전", "포장", None],
+                  [None, None, None, "내수", "온누리 에이치엔씨"],
+                  [None, "99.5 ± 0.5%", "92.0 ± 8.0%", "98.0 ± 2.0%", None],
+                  ["LWY201", 99.97, 93.47, None, 99.12],
+                  ["LWY501", 99.93, 94.93, 99.41, None],
+                  ["LWYO01", 99.88, 94.3, 98.65, None]]:
+            ws.append(r)
+        for spot in ("A1:A3", "B1:B2", "C1:C2", "D1:E1", "D3:E3"):
+            ws.merge_cells(spot)
+        path = os.path.join(tempfile.mkdtemp(prefix="pqr-ipure-"), "7. 수율현황표.xlsx")
+        wb.save(path)
+        return path
+
+    def test_세_Lot_아홉_칸을_모두_읽는다(self):
+        got = dict(Y.read_yields(self._sheet()))
+        self.assertEqual(got["LWY201"]["포장(온누리 에이치엔씨)"], "99.12")
+        self.assertEqual(got["LWY501"]["포장(내수)"], "99.41")
+        self.assertEqual(got["LWYO01"]["충전"], "94.30")
+        self.assertNotIn("포장(내수)", got["LWY201"])          # 그 시장으로 포장하지 않았다 — 사선
+
+    def test_보고서_표_열_이름과_이어진다(self):
+        """엑셀은 '온누리 에이치엔씨', 보고서 표는 줄바꿈이 붙은 '온누리에이치엔씨' — 빈칸은 무시한다."""
+        from pqr.engine.recipe_ointment import _yield_value
+        vals = dict(Y.read_yields(self._sheet()))["LWY501"]
+        self.assertEqual(_yield_value(vals, "포장(내수)"), "99.41")
+        self.assertIsNone(_yield_value(vals, "포장(온누리에이치엔씨)"))
+        self.assertEqual(_yield_value(vals, "조제"), "99.93")

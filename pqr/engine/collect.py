@@ -562,11 +562,23 @@ def collect(folder, product_name=None, log=None):
                 % (label, len(rec["files"]), rec["batch_size"] or "못 읽음", rec["pack_unit"] or "못 읽음",
                    ", ".join("%s %s" % kv for kv in rec["yield_specs"].items()) or "못 읽음",
                    len(mats["주원료"]), len(mats["부원료"]), len(mats["포장자재"])))
+    # 7항 — 수율현황표. 무엇을 읽었는지 반드시 남긴다: 값이 한 칸도 안 들어간 채로 '확인 필요'
+    # 만 나오면 파일이 없었는지, 열 이름이 안 맞았는지 기록만 보고는 알 수 없었다
+    # (담당자 2026-09-08: "수율 작성 안 됐어").
     for p in got.get("7", []):
         if p.lower().endswith((".xlsx", ".xls")):
-            for lot, vals in yield_sheet.read_yields(p):
+            got_lots = yield_sheet.read_yields(p)
+            for lot, vals in got_lots:
                 data.yields[lot] = vals
             data.yield_specs.update(yield_sheet.read_specs(p))
+            names = sorted({n for _, vals in got_lots for n in vals})
+            log("  [7] %s — Lot %d개(%s) · 공정 열 %s"
+                % (os.path.basename(p), len(got_lots),
+                   ", ".join(lot for lot, _ in got_lots[:6]) or "없음",
+                   ", ".join(names) or "못 읽음"))
+    if not data.yields:
+        note("7", "", "★ 수율현황표에서 Lot 을 하나도 읽지 못했습니다 — 7 폴더에 그해 "
+                      "수율현황표 엑셀(.xlsx/.xls)을 올려 주세요")
     # 8.x
     for p in got.get("8.1.1", []):
         if p.lower().endswith(".xlsx"):

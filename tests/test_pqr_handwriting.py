@@ -92,3 +92,24 @@ def test_reader_patterns_are_not_product_specific():
     assert PACK.search("10mL/Bottle").groups() == ("10", "mL", "Bottle")
     assert TEMP.search("30±2℃, 65±5%RH").groups() == ("30", "2")
     assert HUMID.search("30±2℃, 65±5%RH").groups() == ("65", "5")
+
+
+class 파일이름_시험구분_코드(unittest.TestCase):
+    """담당자 2026-09-08: "OG 는 on going 으로 시판 후 안정성이고, LT 는 Long term 으로 장기 안정성이야."
+    시험일지 이름이 '[OG-25-1]아이퓨어점안액_0.5mL_LWY201_12M.pdf' 처럼 코드로 시작한다 —
+    판독기는 한글 '시판 후' 를 못 읽으므로 이 코드가 가장 확실한 근거다."""
+
+    def test_OG는_시판후_LT는_장기(self):
+        from pqr.engine.handwriting import KIND_CODE, KIND_BY_CODE
+        for name, want in (("[OG-25-1]아이퓨어점안액_0.5mL_LWY201_12M.pdf", "시판후"),
+                           ("[OG-23-1-R]아이퓨어점안액(일회용)_0.5mL_LWW401.pdf", "시판후"),
+                           ("[LT-25-1]아이퓨어점안액_0.5mL_LWY201_6M.pdf", "장기"),
+                           ("(og-24-1) 아이퓨어.pdf", "시판후")):
+            m = KIND_CODE.search(name)
+            self.assertIsNotNone(m, name)
+            self.assertEqual(KIND_BY_CODE[m.group(1).upper()], want, name)
+
+    def test_다른_말과_헷갈리지_않는다(self):
+        from pqr.engine.handwriting import KIND_CODE
+        for name in ("장기 안정성 OGY902.pdf", "13. 시판후 LOT.pdf", "OGY301_12M.pdf"):
+            self.assertIsNone(KIND_CODE.search(name), name)

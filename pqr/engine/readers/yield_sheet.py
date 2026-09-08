@@ -100,13 +100,13 @@ def _column_names(rows, value_cols, first_data):
             if i in title_rows:
                 continue
             text = str(rows[i][c] or "").strip()
-            if not text or SPEC.search(text) or re.search(r"\d", text):
-                continue
+            if not text or SPEC.search(text) or re.search(r"\d", text) or "%" in text:
+                continue                      # 기준 칸이거나 표 제목('…수율 현황 (%)')
             text = re.sub(r"[(（][^)）]*[)）]", "", text).strip() or text
             if text and (not parts or text != parts[-1]):
                 parts.append(text)
         if parts:
-            names[c] = parts[0] if len(parts) == 1 else "%s(%s)" % (parts[0], parts[-1])
+            names[c] = parts[0] if len(parts) == 1 else "%s(%s)" % (parts[-2], parts[-1])
     return names
 
 

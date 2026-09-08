@@ -159,6 +159,12 @@ DATE = re.compile(r"(20\d{2})[.\-/ ]?\s?(\d{2})[.\-/ ]?\s?(\d{2})")
 # 보관 온도 '15~25℃' 같은 범위를 규격으로 잘못 잡으면 안 된다(2026-09 평가에서 실제로 그랬다)
 SPEC = re.compile(r"(\d{2,3}(?:\.\d)?)\s*[~～\-]\s*(\d{2,3}(?:\.\d)?)\s*%(?!\s*RH)")
 PACK = re.compile(r"(\d+(?:\.\d+)?)\s*(g|mL|ml|mg|L)\s*[/×x]?\s*(Tube|Btl|Bottle|Vial|Bag|Amp|병|튜브|바이알)", re.I)
+# 시험일지 파일 이름 맨 앞의 시험 구분 코드 — '[OG-25-1]…' 은 on going(시판 후 안정성),
+# '[LT-25-1]…' 은 Long term(장기 안정성). 담당자 2026-09-08 지시.
+KIND_CODE = re.compile(r"[\[(]\s*(OG|LT)[\s\-\]_]", re.I)
+KIND_BY_CODE = {"OG": "시판후", "LT": "장기"}
+
+
 TEMP = re.compile(r"(\d{2})\s*±\s*(\d)\s*[°℃]?\s*C?")
 HUMID = re.compile(r"(\d{2})\s*±\s*(\d)\s*%\s*RH", re.I)
 
@@ -644,7 +650,10 @@ def read_log(pdf_path, specs=None, log=None, page_no=0):
     # 시험구분 — 판독기가 한글('시판 후 안정성시험')을 못 읽으므로 파일 이름, 그다음 시점 짜임새로 가른다:
     # 손으로 시점을 적는 양식에서 시점이 모두 12개월 단위(12M·24M·36M)면 시판 후 안정성, 3M·6M·9M 이 있으면 장기
     kind_sure = True                       # 파일 이름·본문에 '시판 후'·'장기' 라고 적혀 있으면 확실하다
-    if re.search(r"시판\s*후|시판후", top_text + " " + fname):
+    code = KIND_CODE.search(fname)
+    if code:                               # 담당자 2026-09-08: "OG 는 on going 으로 시판 후 안정성이고,
+        kind = KIND_BY_CODE[code.group(1).upper()]   # LT 는 Long term 으로 장기 안정성이야"
+    elif re.search(r"시판\s*후|시판후", top_text + " " + fname):
         kind = "시판후"
     elif "장기" in fname:
         kind = "장기"

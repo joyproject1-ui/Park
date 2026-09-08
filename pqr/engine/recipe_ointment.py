@@ -407,7 +407,10 @@ def _yield_columns(table):
 
     담당자 2026-09-08: "온누리 값을 잘못 넣었어." 표 머리가 '포장' 한 줄 아래 '내수·온누리 에이치엔씨'
     두 칸으로 갈려 있는데 한 줄만 보아 열이 셋으로 잡혔고, 온누리 값이 내수 칸에 들어갔다.
-    값 열 전체에 같은 글이 퍼진 줄(표 제목)과 숫자가 든 줄(기준)은 이름이 아니다.
+    담당자 2026-09-08(둘째): "수율 작성 안 됐어." 표 제목('중요공정 별 수율 현황 (%)')이 값 열에
+    가로로 걸쳐 있는데 그 줄에 '비고' 도 함께 보여 제목 줄로 걸러지지 않았고, 이름이
+    '중요공정별수율현황(%)(조제)' 가 되어 수율현황표의 '조제' 와 맞지 않아 세 Lot 이 모두
+    '확인 필요' 로 나왔다. 그래서 비고 열은 제목 줄을 가릴 때 아예 빼고 본다.
     """
     width = E.grid_width(table)
     head_rows = table.rows[:4]
@@ -419,7 +422,9 @@ def _yield_columns(table):
                 start = i if start is None else min(start, i)
     if start is None:
         return [(2, "조제"), (3, "충전"), (4, "포장")]
-    value_cols = [i for i in range(start + 1, width)]
+    # 비고 열은 값 열이 아니다 — 제목 줄을 가릴 때 섞이면 제목이 공정 이름으로 남는다
+    note_cols = {i for texts in 글 for i, text in texts.items() if "비고" in text}
+    value_cols = [i for i in range(start + 1, width) if i not in note_cols]
     # 표 제목처럼 값 열 전체에 같은 글이 퍼진 줄은 이름이 아니다
     제목줄 = set()
     for ri, texts in enumerate(글):
@@ -435,13 +440,13 @@ def _yield_columns(table):
             text = texts.get(i, "")
             if not text or "비고" in text or "기준" in text or "LotNo" in text:
                 continue
-            if re.search(r"\d", text):
-                continue                       # '99.5±0.5%' 같은 기준 칸
+            if re.search(r"\d", text) or "%" in text:
+                continue                       # '99.5±0.5%' 같은 기준 칸, '…현황(%)' 같은 표 제목
             if not parts or text != parts[-1]:
                 parts.append(text)
         if not parts:
             continue
-        got.append((i, parts[0] if len(parts) == 1 else "%s(%s)" % (parts[0], parts[-1])))
+        got.append((i, parts[0] if len(parts) == 1 else "%s(%s)" % (parts[-2], parts[-1])))
     return got or [(2, "조제"), (3, "충전"), (4, "포장")]
 
 
