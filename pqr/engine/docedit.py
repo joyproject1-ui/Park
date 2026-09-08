@@ -1119,6 +1119,11 @@ def _span(tc):
     return int(g.get(qn("w:val"))) if g is not None else 1
 
 
+def cell_span(cell):
+    """이 칸이 덮는 그리드 열 수 (gridSpan). 병합이 없으면 1."""
+    return _span(cell._tc)
+
+
 def merge_right(cell, right):
     """옆 칸(right)을 이 칸에 합친다 — gridSpan 을 더하고 옆 칸은 지운다. 이 칸의 글은 그대로."""
     tc, rtc = cell._tc, right._tc

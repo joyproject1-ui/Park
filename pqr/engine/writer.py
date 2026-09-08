@@ -166,6 +166,72 @@ def blank_sections(document):
     return blank
 
 
+# 전년도와 견줄 항 — 표에 자료 줄이 있어야 하는 곳
+SHAPE_SECTIONS = ("6", "7", "8.1.1", "8.1.3", "8.2.1", "8.2.2", "9.1", "9.2.1", "9.2.2",
+                  "9.2.3", "9.2.4", "10.1", "10.2", "13.1", "13.2", "13.3")
+
+
+def _rows_of(document, section):
+    """그 항 표들의 자료 줄 수 — 머리행과 '특이사항'·요약 줄은 빼고 글이 있는 줄만."""
+    from . import docedit as E
+    from .locate import find_tables
+    total = 0
+    for i in find_tables(document, section):
+        table = document.tables[i]
+        for row in table.rows[1:]:
+            cells = [E.cell_text(c).strip() for c in E.raw_cells(row)]
+            head = re.sub(r"\s+", "", cells[0] if cells else "")
+            if head.startswith(("특이사항", "최댓값", "최솟값", "평균", "관리규격", "경향분석")):
+                continue
+            if any(t and t not in ("N/A", "-") for t in cells[1:]):
+                total += 1
+    return total
+
+
+def _analyse_previous(old_document, log):
+    """전년도 결재본을 항별로 훑는다 — {항: 자료 줄 수}. 작성 전에 한 번.
+
+    담당자 2026-09-08: "PQR 작성 전에 16. 전년도 PQR 분석을 한 뒤에 작성해 줘야 돼."
+    이것이 있어야 올해 것과 견주어 '전년도에는 있었는데 올해 빈' 항을 잡아낼 수 있다.
+    """
+    shape = {}
+    for section in SHAPE_SECTIONS:
+        try:
+            shape[section] = _rows_of(old_document, section)
+        except Exception:
+            continue
+    있는것 = {k: v for k, v in shape.items() if v}
+    log("전년도 결재본 분석: %s"
+        % (", ".join("%s %d줄" % (k, v) for k, v in sorted(있는것.items())) or "표를 찾지 못함"))
+    return shape
+
+
+def _compare_with_previous(document, shape, log):
+    """전년도에는 자료가 있는데 올해 빈 항 — [(항, 알림 글)].
+
+    자료를 못 읽었거나 판독기가 새 서식을 못 만난 자리다. 다 만든 뒤에 알면 늦으므로
+    문의 목록 맨 앞에 올린다.
+    """
+    if not shape:
+        return []
+    rows = []
+    for section, before in sorted(shape.items()):
+        if not before:
+            continue
+        try:
+            now = _rows_of(document, section)
+        except Exception:
+            continue
+        if now:
+            continue
+        rows.append((section, "★ 전년도 결재본에는 %s항에 %d줄이 있었는데 올해는 비었습니다 — "
+                              "그 항 자료를 올리셨는지, 서식이 평소와 같은지 보시고 "
+                              "그대로면 이 알림을 제작자에게 보내 주세요" % (section, before)))
+    if rows:
+        log("  [문제] 전년도에는 있었는데 올해 빈 항: %s" % ", ".join(s for s, _ in rows))
+    return rows
+
+
 def _writable(path, data, log):
     """보고서를 저장할 자리 — 워드에서 열려 있으면 다른 이름으로 비켜 간다.
 
@@ -392,6 +458,9 @@ def write_report(folder, product, period, out_path, today=None, recipe=None, log
                 data.prev_equipment = carry_module.equipment_rows(old_document)
                 if data.pv_reasons:
                     log_("전년도 10.1 에서 밸리데이션 사유 %d Lot" % len(data.pv_reasons))
+                # 작성에 들어가기 전에 전년도 결재본을 항별로 훑어 둔다 — 나중에 올해 것과 견주어
+                # 빠진 항을 잡아낸다 (담당자 2026-09-08: "PQR 작성 전에 16. 전년도 PQR 분석을 한 뒤에").
+                data.prev_shape = _analyse_previous(old_document, log_)
         except EngineError:
             raise
         except Exception as error:
@@ -400,6 +469,8 @@ def write_report(folder, product, period, out_path, today=None, recipe=None, log
                                 "전년도 결재본을 읽지 못해 원료 규격·제조단위 같은 값을 이어받지 "
                                 "못했습니다 — 빈 칸을 직접 채우세요"))
     ctx = recipe(document, data, product, period, today=today, log=log_)
+    for item, why in _compare_with_previous(document, getattr(data, "prev_shape", None), log_):
+        data.issues.insert(0, (item, data.previous_name or "", why))
     if form and source is previous:
         filled = os.path.join(work, "filled.docx")
         document.save(filled)

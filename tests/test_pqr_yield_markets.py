@@ -85,3 +85,46 @@ class 머리가_두_줄인_표(unittest.TestCase):
         specs = Y.read_specs(path)
         self.assertEqual(specs["포장(내수)"], "98.0 ± 2.0%")
         self.assertEqual(specs["충전"], "92.0 ± 8.0%")
+
+
+class 보고서_표의_두_줄_머리(unittest.TestCase):
+    """담당자 2026-09-08: "온누리 값을 잘못 넣었어" — 표 머리가 '포장' 아래 '내수·온누리' 두 칸인데
+    한 줄만 읽어 열이 셋으로 잡히고 값이 한 칸 밀렸다."""
+
+    def _table(self):
+        import docx
+        from pqr.engine import docedit as E
+        d = docx.Document()
+        t = d.add_table(rows=4, cols=7)
+        rows = [["연번", "중요공정 별 수율 현황 (%)", "", "", "", "", "비고"],
+                ["", "공정", "조제", "충전", "포장", "", ""],
+                ["", "기준\nLot No.", "99.5 ± 0.5%", "92.0 ± 8.0%", "내수", "온누리\n에이치엔씨", ""],
+                ["1", "LWY201", "", "", "", "", ""]]
+        for i, r in enumerate(rows):
+            for j, v in enumerate(r):
+                E.set_cell(t.rows[i].cells[j], v)
+        E.merge_right(E.raw_cells(t.rows[1])[4], E.raw_cells(t.rows[1])[5])   # '포장' 이 두 열에 걸친다
+        return t
+
+    def test_걸친_머리_칸을_두_열에_모두_편다(self):
+        from pqr.engine.recipe_ointment import _yield_columns
+        self.assertEqual(_yield_columns(self._table()),
+                         [(2, "조제"), (3, "충전"), (4, "포장(내수)"), (5, "포장(온누리에이치엔씨)")])
+
+    def test_시장이_적힌_열은_그_시장_값만_쓴다(self):
+        from pqr.engine.recipe_ointment import _yield_value
+        vals = {"조제": "99.97", "포장(온누리에이치엔씨)": "99.12"}
+        self.assertIsNone(_yield_value(vals, "포장(내수)"))       # 예전에는 99.12 가 내수로 들어갔다
+        self.assertEqual(_yield_value(vals, "포장(온누리에이치엔씨)"), "99.12")
+        self.assertEqual(_yield_value(vals, "조제"), "99.97")
+
+    def test_시장이_없는_열은_괄호를_뗀_이름으로도_찾는다(self):
+        from pqr.engine.recipe_ointment import _yield_value
+        self.assertEqual(_yield_value({"포장(내수)": "99.41"}, "포장"), "99.41")
+
+    def test_그_시장으로_포장하지_않은_칸은_사선(self):
+        from pqr.engine.recipe_ointment import _yield_columns, _yield_value, _other_market
+        cols = _yield_columns(self._table())
+        vals = [_yield_value({"포장(온누리에이치엔씨)": "99.12"}, n) for _, n in cols]
+        self.assertTrue(_other_market(cols, vals, 2))            # 내수 칸 — 사선
+        self.assertFalse(_other_market(cols, vals, 3))           # 온누리 칸 — 값이 있다

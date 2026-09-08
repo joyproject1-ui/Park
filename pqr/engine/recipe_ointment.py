@@ -386,29 +386,63 @@ def _plain_stage(text):
     return re.sub(r"[\s]", "", re.sub(r"[(（][^)）]*[)）]", "", str(text or "")))
 
 
-def _yield_columns(table):
-    """7항 표의 수율 열 — [(그리드 열, 공정 이름)]. '공정' 칸 오른쪽부터 '비고' 앞까지.
+def _row_texts(row, width):
+    """{그리드 열: 글} — 가로로 걸친 칸은 덮는 열 모두에 같은 글을 넣는다.
 
-    제품에 따라 포장이 내수·베트남으로 갈린다(담당자 2026-09-07). 열을 셋으로 박아 두면
-    베트남 열이 통째로 빠지고, 그 시장으로 포장한 Lot 이 '확인 필요' 로 남는다.
+    담당자 2026-09-08: '포장' 머리 칸이 내수·온누리 두 열에 걸쳐 있는데 시작 열에만 붙어
+    온누리 열이 '포장' 을 잃었다 — 그래서 온누리 값이 내수 칸에 들어갔다.
+    """
+    out, at = {}, 0
+    for cell in E.raw_cells(row):
+        span = E.cell_span(cell)
+        text = D.squeeze(E.cell_text(cell))
+        for k in range(at, min(at + span, width)):
+            out[k] = text
+        at += span
+    return out
+
+
+def _yield_columns(table):
+    """7항 표의 수율 열 — [(그리드 열, 공정 이름)]. 머리가 여러 줄이면 위에서 아래로 이어 붙인다.
+
+    담당자 2026-09-08: "온누리 값을 잘못 넣었어." 표 머리가 '포장' 한 줄 아래 '내수·온누리 에이치엔씨'
+    두 칸으로 갈려 있는데 한 줄만 보아 열이 셋으로 잡혔고, 온누리 값이 내수 칸에 들어갔다.
+    값 열 전체에 같은 글이 퍼진 줄(표 제목)과 숫자가 든 줄(기준)은 이름이 아니다.
     """
     width = E.grid_width(table)
-    for row in table.rows[:3]:
-        cells = E.grid_cells(row, width)
-        texts = {i: D.squeeze(E.cell_text(c)) for i, c in cells.items()}
-        head = [i for i, t in texts.items() if t == "공정"]
-        if not head:
-            continue
-        got, seen = [], set()
-        for i in sorted(texts):
-            name = texts[i]
-            if i <= head[0] or not name or "비고" in name or name in seen:
+    head_rows = table.rows[:4]
+    글 = [_row_texts(row, width) for row in head_rows]
+    start = None
+    for texts in 글:
+        for i, text in texts.items():
+            if text == "공정":
+                start = i if start is None else min(start, i)
+    if start is None:
+        return [(2, "조제"), (3, "충전"), (4, "포장")]
+    value_cols = [i for i in range(start + 1, width)]
+    # 표 제목처럼 값 열 전체에 같은 글이 퍼진 줄은 이름이 아니다
+    제목줄 = set()
+    for ri, texts in enumerate(글):
+        보임 = {texts.get(i, "") for i in value_cols}
+        if len(보임) == 1 and 보임 != {""}:
+            제목줄.add(ri)
+    got = []
+    for i in value_cols:
+        parts = []
+        for ri, texts in enumerate(글):
+            if ri in 제목줄:
                 continue
-            seen.add(name)
-            got.append((i, name))
-        if got:
-            return got
-    return [(2, "조제"), (3, "충전"), (4, "포장")]
+            text = texts.get(i, "")
+            if not text or "비고" in text or "기준" in text or "LotNo" in text:
+                continue
+            if re.search(r"\d", text):
+                continue                       # '99.5±0.5%' 같은 기준 칸
+            if not parts or text != parts[-1]:
+                parts.append(text)
+        if not parts:
+            continue
+        got.append((i, parts[0] if len(parts) == 1 else "%s(%s)" % (parts[0], parts[-1])))
+    return got or [(2, "조제"), (3, "충전"), (4, "포장")]
 
 
 def _yield_first_row(table):
@@ -420,21 +454,36 @@ def _yield_first_row(table):
     width = E.grid_width(table)
     last_head = 0
     for i, row in enumerate(table.rows[:5]):
-        texts = [E.cell_text(c) for c in E.grid_cells(row, width).values()]
+        texts = list(_row_texts(row, width).values())
         if any(("±" in t or "이상" in t or "이하" in t) for t in texts):
             last_head = i                       # 기준 줄
-        elif any(D.squeeze(t) in ("공정", "기준", "LotNo.", "연번") for t in texts):
+        elif any(t in ("공정", "기준", "LotNo.", "연번") for t in texts):
             last_head = max(last_head, i)       # 이름 줄
     return min(last_head + 1, max(1, len(table.rows) - 4))
 
 
+def _sub_label(text):
+    """이름의 괄호 안 — '포장(내수)' → '내수'. 없으면 빈 값."""
+    m = re.search(r"[(（]([^)）]*)[)）]", str(text or ""))
+    return re.sub(r"\s+", "", m.group(1)) if m else ""
+
+
 def _yield_value(vals, name):
-    """표 열 이름으로 수율현황표 값 찾기 — 이름이 그대로 있으면 그것을, 없으면 괄호를 뗀 이름으로."""
+    """표 열 이름으로 수율현황표 값 찾기.
+
+    시장이 적힌 열('포장(내수)')은 **그 시장의 값만** 쓴다 — 괄호를 뗀 이름으로만 견주면
+    온누리 값이 내수 칸에 들어간다 (담당자 2026-09-08: "온누리 값을 잘못 넣었어").
+    """
     if name in vals:
         return vals[name]
-    base = _plain_stage(name)
-    same = [v for k, v in vals.items() if _plain_stage(k) == base]
-    return same[0] if len(same) == 1 else None
+    base, sub = _plain_stage(name), _sub_label(name)
+    if sub:                                    # 시장이 적힌 열 — 그 시장으로만 찾는다
+        같은것 = [v for k, v in vals.items()
+                if _plain_stage(k) == base and _sub_label(k)
+                and (sub in _sub_label(k) or _sub_label(k) in sub)]
+        return 같은것[0] if len(같은것) == 1 else None
+    같은것 = [v for k, v in vals.items() if _plain_stage(k) == base]
+    return 같은것[0] if len(같은것) == 1 else None
 
 
 def _other_market(columns, values, k):

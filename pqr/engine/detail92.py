@@ -73,6 +73,24 @@ def labels(table):
     return out
 
 
+def drop_blank_head(table):
+    """머리행과 첫 자료 줄 사이의 **글이 하나도 없는 줄**을 지운다 → 지운 줄 수.
+
+    담당자 2026-09-08: "1번 연번 위의 쓸모없는 행 2개를 삭제해야지." 공양식의 9.2 표에는 빈 줄이
+    끼어 있는데 첫 칸이 비어 있어 머리행으로 셈해져 그대로 남았다. 글이 있는 머리행은 건드리지 않는다.
+    """
+    trs = table._tbl.findall(qn("w:tr"))
+    n = head_rows(table)
+    지움 = 0
+    for i in range(n - 1, 0, -1):              # 첫 줄(진짜 머리행)은 두고 그 아래만 본다
+        글 = squeeze("".join(t.text or "" for t in trs[i].iter(qn("w:t"))))
+        if 글:
+            continue
+        trs[i].getparent().remove(trs[i])
+        지움 += 1
+    return 지움
+
+
 def data_range(table):
     """(첫 자료 행, 마지막 자료 행, [요약 행 …]) — 요약은 최댓값·최솟값·평균·Cpk 줄."""
     trs = table._tbl.findall(qn("w:tr"))
@@ -244,6 +262,7 @@ def fill(table, lots, value, cpk=None):
     labs = labels(table)
     if not labs:
         return {}
+    drop_blank_head(table)
     first, last, summary = data_range(table)
     f, l = E.fit_rows(table, first, last, max(1, len(lots)))
     summary = [ri + (l - last) for ri in summary]    # 자료 줄이 늘거나 줄면 요약 줄도 밀린다

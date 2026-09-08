@@ -95,3 +95,37 @@ class 허용기준에서_결과_문구(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class 머리행_아래_빈_줄(unittest.TestCase):
+    """담당자 2026-09-08: "1번 연번 위의 쓸모없는 행 2개를 삭제해야지"."""
+
+    def _table(self, rows):
+        import docx
+        from pqr.engine import docedit as E
+        d = docx.Document()
+        t = d.add_table(rows=len(rows), cols=len(rows[0]))
+        for i, r in enumerate(rows):
+            for j, v in enumerate(r):
+                E.set_cell(t.rows[i].cells[j], v)
+        return t
+
+    def test_글이_없는_줄만_지운다(self):
+        from pqr.engine.detail92 import drop_blank_head, head_rows
+        t = self._table([["연번", "Lot No.", "성상"], ["", "", ""], ["", "", ""],
+                         ["1", "LWY201", "무색"], ["최댓값", "", ""]])
+        self.assertEqual(drop_blank_head(t), 2)
+        self.assertEqual(len(t.rows), 3)
+        self.assertEqual(head_rows(t), 1)
+
+    def test_글이_있는_머리행은_그대로_둔다(self):
+        from pqr.engine.detail92 import drop_blank_head
+        t = self._table([["연번", "Lot No.", "질량·용량"], ["", "", "평균"],
+                         ["1", "LWY201", "0.52"], ["최댓값", "", ""]])
+        self.assertEqual(drop_blank_head(t), 0)      # 둘째 줄에 '평균' 이 있다 — 머리행이다
+        self.assertEqual(len(t.rows), 4)
+
+    def test_첫_줄은_비어_있어도_두다(self):
+        from pqr.engine.detail92 import drop_blank_head
+        t = self._table([["", "", ""], ["1", "LWY201", "무색"]])
+        self.assertEqual(drop_blank_head(t), 0)
