@@ -166,6 +166,29 @@ def blank_sections(document):
     return blank
 
 
+def _writable(path, data, log):
+    """보고서를 저장할 자리 — 워드에서 열려 있으면 다른 이름으로 비켜 간다.
+
+    담당자 PC 2026-09-08: 만들어 둔 보고서를 워드로 열어 둔 채 재작성을 눌러
+    "PermissionError: [Errno 13] Permission denied" 로 **작성 전체가 실패**했다.
+    몇 분 걸린 판독까지 헛일이 되므로, 첨부 엑셀과 같이 다른 이름으로 저장하고 알린다.
+    """
+    if not os.path.exists(path):
+        return path
+    try:
+        with open(path, "r+b"):
+            return path
+    except OSError:
+        stem, ext = os.path.splitext(path)
+        alt = "%s (새로 만든 것)%s" % (stem, ext)
+        data.issues.insert(0, ("작성본", os.path.basename(path),
+                               "★ 이 보고서가 워드에서 열려 있어 덮어쓰지 못했습니다 — '%s' 로 저장했습니다. "
+                               "워드를 닫고 다시 작성하면 원래 이름으로 만들어집니다."
+                               % os.path.basename(alt)))
+        log("  ★ 보고서가 열려 있어 '%s' 로 저장합니다" % os.path.basename(alt))
+        return alt
+
+
 ATTACH_MARKS = ("HLF-QC-126-06 안정성 시험 경향 분석 결과", "Cpk 계산 파일")
 
 
@@ -397,6 +420,7 @@ def write_report(folder, product, period, out_path, today=None, recipe=None, log
                                 "전년도 결재본을 .docx 로 제품 폴더에 두고 다시 만드세요."
                                 % ", ".join(empty)))
     layout.apply(document, log=log_, product_title=(ctx or {}).get("cover_title"))
+    out_path = _writable(out_path, data, log_)
     document.save(out_path)
     polish.polish(out_path)
     with zipfile.ZipFile(out_path) as z:

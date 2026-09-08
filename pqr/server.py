@@ -324,7 +324,13 @@ class Workspace(object):
         payload = {key: data[key] for key in
                    ("generated_at", "today", "period", "stages", "items", "products",
                     "trend", "leadtime", "sources", "narrative")}
-        payload["issue_count"] = len([i for i in data.get("issues", []) if i["level"] == "error"])
+        errors = [i for i in data.get("issues", []) if i["level"] == "error"]
+        payload["issue_count"] = len(errors)
+        # 숫자만 보내면 담당자가 무엇이 잘못됐는지 알 수 없다 — 눌러서 볼 수 있게 목록도 보낸다
+        # (담당자 2026-09-08: "적재 오류 27건이 무슨 뜻이지?"). 너무 길면 앞 50건만.
+        payload["issue_list"] = [{"file": i.get("source") or "", "row": i.get("row") or 0,
+                                  "field": i.get("field") or "", "message": i.get("message") or ""}
+                                 for i in errors[:50]]
         payload["program_version"] = program_version()
         # 손글씨 안정성시험일지를 무엇으로 읽는지 — API 키 → 이 PC 의 Claude Code → (표시 파일이 있으면) PC 판독
         try:

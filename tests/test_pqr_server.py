@@ -807,3 +807,48 @@ class BulkZipTest(BulkUploadTest):
         result = self.upload_bulk("HP-110", "메모.pdf")
         self.assertEqual(result["unmatched"], ["메모.pdf"])
 
+
+
+class 적재_오류_목록(unittest.TestCase):
+    """숫자만으로는 무엇이 잘못됐는지 알 수 없다 (담당자 2026-09-08: "적재 오류 27건이 무슨 뜻이지?")."""
+
+    def _space(self, issues):
+        import types
+        from pqr import server as S
+        space = S.Workspace.__new__(S.Workspace)
+        space.data = {"generated_at": "", "today": "", "period": {}, "stages": [], "items": [],
+                      "products": [], "trend": [], "leadtime": [], "sources": {}, "narrative": {},
+                      "issues": issues}
+        space.input_dir = ""
+        space.out_dir = ""
+        space.revision = 1
+        space.progress = {}
+        from pqr import build as build_module
+        space.config = build_module.load_config()
+        return space
+
+    def test_오류만_세고_목록도_함께_보낸다(self):
+        space = self._space([
+            {"source": "제품마스터.xlsx", "row": 12, "field": "제품코드", "level": "error",
+             "message": "제품코드가 비어 있습니다"},
+            {"source": "제품마스터.xlsx", "row": 13, "field": "", "level": "warning",
+             "message": "그냥 알림"},
+        ])
+        got = space.dashboard_payload()
+        self.assertEqual(got["issue_count"], 1)
+        self.assertEqual(len(got["issue_list"]), 1)
+        self.assertEqual(got["issue_list"][0]["file"], "제품마스터.xlsx")
+        self.assertEqual(got["issue_list"][0]["row"], 12)
+        self.assertIn("비어 있습니다", got["issue_list"][0]["message"])
+
+    def test_너무_많으면_앞_50건만(self):
+        space = self._space([{"source": "가.xlsx", "row": i, "field": "", "level": "error",
+                              "message": "문제 %d" % i} for i in range(80)])
+        got = space.dashboard_payload()
+        self.assertEqual(got["issue_count"], 80)
+        self.assertEqual(len(got["issue_list"]), 50)
+
+    def test_오류가_없으면_빈_목록(self):
+        got = self._space([]).dashboard_payload()
+        self.assertEqual(got["issue_count"], 0)
+        self.assertEqual(got["issue_list"], [])

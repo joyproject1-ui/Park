@@ -1529,6 +1529,31 @@ function chainToReport(code){
   }, 1000);
 }
 
+/* '적재 오류 N건' 을 누르면 무엇이 잘못됐는지 보여 준다 (담당자 2026-09-08: "무슨 뜻이지?").
+   대장 엑셀(제품 마스터·PQR 일정·일탈 대장 …)을 표로 읽을 때 생긴 문제다 — 제품 폴더의
+   PQR 보고서 자료와는 다른 이야기이므로, 그 점을 글로 밝힌다. */
+function showLoadErrors(){
+  const list = (SOURCE.issue_list || []);
+  const 몇 = SOURCE.issue_count || 0;
+  if (!list.length){
+    showToast(`<b>적재 오류 ${몇}건</b><br>자세한 내용을 받지 못했습니다 — 화면을 새로 고쳐 주세요.`);
+    return;
+  }
+  const 파일별 = {};
+  for (const one of list){ (파일별[one.file] = 파일별[one.file] || []).push(one); }
+  showToast(`<div class="star-note"><b>적재 오류 ${몇}건 — 대장 엑셀을 표로 읽을 때 생긴 문제입니다</b>`
+    + `<br><span class="muted">제품 폴더에 올리신 PQR 자료가 아니라, 화면을 그리는 데 쓰는 대장`
+    + `(제품 마스터·PQR 일정·일탈 대장 등)을 읽은 결과입니다. 그 줄만 빠지고 나머지는 그대로 쓰입니다.</span>`
+    + Object.keys(파일별).map(file => `<br><b>${esc(file || "(파일 이름 없음)")}</b> ${파일별[file].length}건`
+        + `<ul class="issue-list">`
+        + 파일별[file].slice(0, 5).map(one =>
+            `<li>${one.row ? `${one.row}행 ` : ``}${esc(one.field ? one.field + " — " : "")}${esc(one.message)}</li>`).join("")
+        + (파일별[file].length > 5 ? `<li>… 외 ${파일별[file].length - 5}건</li>` : ``)
+        + `</ul>`).join("")
+    + (몇 > list.length ? `<br><span class="muted">앞 ${list.length}건만 보입니다.</span>` : ``)
+    + `</div>`);
+}
+
 /* 안정성 판독 — 13 폴더의 손글씨 시험일지를 읽어 '13. 안정성시험일지 판독.json' 을 만듭니다.
    이 단추를 누른 뒤 '보고서 작성' 을 누르면 13항이 채워집니다 (담당자 2026-09-07). */
 async function readStability(code, button, allowPc){
@@ -2486,6 +2511,8 @@ document.addEventListener("click", e=>{
   if (bundle && !bundle.disabled){ bundleProduct(bundle.dataset.bundle, bundle); return; }
   const bulk = e.target.closest(".bulk-btn");
   if (bulk && !bulk.disabled){ openBulk(bulk.dataset.bulk); return; }
+  const errs = e.target.closest(".load-errs");
+  if (errs){ showLoadErrors(); return; }
   const read = e.target.closest(".read-btn");
   if (read && !read.disabled){ readStability(read.dataset.read, read); return; }
   const report = e.target.closest(".report-btn");
@@ -2831,7 +2858,8 @@ function renderSourceNote(){
       + `<span class="muted" style="margin-left:8px">${esc((SOURCE.generated_at||"").replace("T"," "))}</span>`
       + (inputDir ? `<span class="muted" style="margin-left:8px" title="${esc(inputDir)}">`
                     + `📂 ${esc(shortDir)}</span>` : "")
-      + (errors ? `<span class="tag r" style="margin-left:8px">적재 오류 ${errors}건</span>` : "");
+      + (errors ? `<span class="tag r load-errs" style="margin-left:8px;cursor:pointer"
+             title="눌러서 무엇이 잘못됐는지 보기">적재 오류 ${errors}건 ▾</span>` : "");
     $("#file-open").hidden = uploadEnabled();
     $("#reload-btn").hidden = !uploadEnabled();
     const files = Object.values(SOURCE.sources || {}).reduce((sum, list)=>sum + list.length, 0);
