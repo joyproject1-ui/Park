@@ -129,8 +129,10 @@ class 전년도_값은_노랑(unittest.TestCase):
         table = self._table([["연번", "관리번호", "원/자재명", "제조원"],
                              ["1", "EPB116", "벤잘코늄염화물", "Hubei"],          # 그대로 — 노랑
                              ["2", "EPB105", "붕산", "올해 제조원㈜"]])           # 갱신됨 — 그대로 둔다
-        self.assertEqual(_mark_carried_cells(table, old), 3)
-        self.assertEqual(sorted(self._yellow(table)), sorted(["벤잘코늄염화물", "Hubei", "붕산"]))
+        # 관리번호·품명은 해마다 같은 것이 정상이라 칠하지 않는다
+        # (담당자 2026-09-08: "8.1.1 히아루론산나트륨은 왜 노랑 마크인지?")
+        self.assertEqual(_mark_carried_cells(table, old), 1)
+        self.assertEqual(self._yellow(table), ["Hubei"])
 
     def test_전년도에_없는_줄은_건드리지_않는다(self):
         from pqr.engine.recipe_ointment import _mark_carried_cells

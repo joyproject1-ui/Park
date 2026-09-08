@@ -58,10 +58,38 @@ def _appearance(text):
     return _clean_result(_result_tail(norm(m.group(1)))) if m else None
 
 
+ITEM_LINE = re.compile(r"^ {0,4}([가-힣A-Za-z][가-힣A-Za-z0-9·\-()% ]{0,12}?) {2,}"
+                       r"(\S[^\n]*?) {2,}(\S[^\n]*?) *$", re.M)
+NOT_ITEM = ("제품명", "제조번호", "공정명", "제조일자", "시험항목", "시험자", "시험일자",
+            "검체채취", "의뢰", "판정", "성적서", "L O T", "LOT", "시험완료일자", "확인일자")
+
+
+def test_items(text):
+    """시험항목 표를 통째로 → {항목: {"spec": 기준, "value": 결과}}.
+
+    담당자 2026-09-08: "9.2.1 시험 압축 파일을 참고해서 9.2.1 표를 작성하면 돼." 성적서에는
+    pH·삼투압·비중처럼 제품마다 다른 항목이 있다. 항목을 코드에 박아 두면 새 제품에서 또 빈다 —
+    표를 그대로 읽어 두고, 보고서의 열 이름과 맞춰 쓴다.
+    """
+    got = {}
+    for name, spec, value in ITEM_LINE.findall(text or ""):
+        name = name.strip()
+        flat = re.sub(r"\s+", "", name)
+        if len(flat) < 2 or any(w in flat for w in (re.sub(r"\s+", "", w) for w in NOT_ITEM)):
+            continue                       # 머리글 줄('제 조 번 호')과 한 글자 조각은 항목이 아니다
+        if name in got:
+            continue
+        if not re.search(r"[가-힣A-Za-z]", name):
+            continue
+        got[name] = {"spec": spec.strip(), "value": value.strip()}
+    return got
+
+
 def read_ipc(path):
     """공정 시험성적서(조제·충전 등) 한 장."""
     text = squash(read_text(path))
-    out = {"file": os.path.basename(path)}
+    # 항목 표는 칸이 여러 칸 띄어쓰기로 나뉘므로 squash 하지 않은 글에서 읽는다
+    out = {"file": os.path.basename(path), "items": test_items(read_text(path))}
     out["lot"] = _first(r"제\s*조\s*번\s*호.*?\n.*?\b([A-Z]{2}[A-Z0-9]{4})\b", text, flags=re.S) \
         or _first(r"\b(O[A-Z]{2}[A-Z0-9]{3})\b", text)
     out["stage"] = _first(r"공\s*정\s*명\s+(\S+)", text)
@@ -144,7 +172,7 @@ def _near(text, needle, span):
 def read_fp(path):
     """완제 시험성적서 한 장 (HLF-QC-327-06)."""
     text = squash(read_text(path))
-    out = {"file": os.path.basename(path)}
+    out = {"file": os.path.basename(path), "items": test_items(read_text(path))}
     out["lot"] = _first(r"\b(O[A-Z]{2}[A-Z0-9]{3})\b", text) or _first(LOT.pattern, text)
     out["expiry"] = _first(r"\b(\d{4}\.\d{2}\.\d{2})\s+한림제약", text)
     out["appearance"] = _appearance(text)

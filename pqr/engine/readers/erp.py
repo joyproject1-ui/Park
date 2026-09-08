@@ -64,20 +64,36 @@ def read_material_tests(path, product=None):
             out.append((cells[0], test_no(cells[1]), cells[2]))
         return out
 
-    key = re.sub(r"\s+", "", product or "")
+    key = _plain_product(product)
     out = []
     for row in rows:
         cells = [str(c or "").strip() for c in row] + [""] * (RAW_LOT + 1)
         code, lot, test = cells[RAW_CODE], cells[RAW_LOT], cells[RAW_TEST]
         if not CODE.match(code) or not LOT.match(lot) or not test:
             continue                       # 제품에 쓰이지 않은 입고·시험 줄
-        made = re.sub(r"\s+", "", cells[RAW_PRODUCT])
-        if key and made != key:
+        if key and not _same_product(cells[RAW_PRODUCT], key):
             continue                       # 같은 원료를 쓰는 다른 제품 줄
         record = (code, test_no(test), lot)
         if record not in out:
             out.append(record)
     return out
+
+
+def _plain_product(text):
+    """제품 이름에서 빈칸과 괄호 설명을 뗀다 — '아이퓨어점안액[일회용]' → '아이퓨어점안액'.
+
+    담당자 2026-09-08: ERP 표의 제품명은 '아이퓨어점안액[일회용]' 인데 제품 코드의 이름은
+    '아이퓨어점안액' 이라 정확히 견주면 한 줄도 남지 않고 8.2 표가 통째로 사선이 됐다.
+    """
+    return re.sub(r"\s+", "", re.sub(r"[\[(（【][^\])）】]*[\])）】]", "", str(text or "")))
+
+
+def _same_product(made, key):
+    """ERP 표의 제품명이 이 제품인가 — 괄호 설명을 뗀 이름이 서로의 앞부분이면 같은 제품."""
+    made = _plain_product(made)
+    if not made or not key:
+        return False
+    return made == key or made.startswith(key) or key.startswith(made)
 
 
 def group_by_test(records):

@@ -411,6 +411,23 @@ def _yield_columns(table):
     return [(2, "조제"), (3, "충전"), (4, "포장")]
 
 
+def _yield_first_row(table):
+    """7항 표에서 자료(Lot)가 시작하는 줄 — 기준 줄 다음.
+
+    담당자 2026-09-08: "LWY201 수율 값이 기준에 적혀 있네." 머리가 세 줄인 표(중요공정 /
+    공정·조제·충전·포장 / 내수·온누리)가 있어 자리를 넷째 줄로 박아 두면 첫 Lot 이 기준 줄에 찍힌다.
+    """
+    width = E.grid_width(table)
+    last_head = 0
+    for i, row in enumerate(table.rows[:5]):
+        texts = [E.cell_text(c) for c in E.grid_cells(row, width).values()]
+        if any(("±" in t or "이상" in t or "이하" in t) for t in texts):
+            last_head = i                       # 기준 줄
+        elif any(D.squeeze(t) in ("공정", "기준", "LotNo.", "연번") for t in texts):
+            last_head = max(last_head, i)       # 이름 줄
+    return min(last_head + 1, max(1, len(table.rows) - 4))
+
+
 def _yield_value(vals, name):
     """표 열 이름으로 수율현황표 값 찾기 — 이름이 그대로 있으면 그것을, 없으면 괄호를 뗀 이름으로."""
     if name in vals:
@@ -469,7 +486,9 @@ def _mark_carried_cells(table, old_grid):
         if not old:
             continue
         for name, i in new_head.items():
-            if i in (0, code_i) or not name:
+            # 관리번호·품명은 해마다 같은 것이 정상이라 노랑으로 칠하지 않는다
+            # (담당자 2026-09-08: "8.1.1 히아루론산나트륨은 왜 노랑 마크인지?")
+            if i in (0, code_i) or not name or any(w in name for w in ("자재명", "원료명", "품명")):
                 continue
             j = old_head.get(name)
             here = cells.get(i)
@@ -492,6 +511,19 @@ def _one_letter_off(a, b):
     return len(a) == len(b) and sum(1 for x, y in zip(a, b) if x != y) == 1
 
 
+EQUIPMENT_CODE = re.compile(r"^(DA|DE|FA|HA|HC|HE|AI|CW)[A-Z]?\d{3,5}")
+
+
+def _is_equipment(code):
+    """관리번호가 설비인가 — 8.1.3 은 부원료·포장자재 표다.
+
+    담당자 2026-09-08: "8.1.3 부원료 및 포장자재인데 고압증기 멸균기를 적는 것은 적절하지 않아,
+    고압증기 멸균기는 생산 장비야." 공 기록서의 자재 목록에 설비 관리번호(DAE5024 …)가 섞여 온다.
+    설비는 10.2 적격성 표가 다룬다.
+    """
+    return bool(EQUIPMENT_CODE.match(str(code or "").strip().upper()))
+
+
 def _add_material_rows(table, materials, fixed=None):
     """표에 없는 관리번호의 원/자재를 줄로 보탠다 — 관리번호·원/자재명·규격만, 나머지 칸은 비운다(노랑).
     표가 비어 있으면(빈 공양식) 그 줄들이 표가 된다. 보탠 줄 수를 돌려준다.
@@ -500,6 +532,7 @@ def _add_material_rows(table, materials, fixed=None):
     고친다 — 같은 자재가 두 줄이 되지 않게 (담당자 2026-09-07: "케이스는 내수 케이스야, 기존
     P38033 관리번호 오기라서 P38003 으로 수정해 줘"). 고친 것은 fixed 목록에 (옛, 새)로 담는다.
     """
+    materials = [m for m in (materials or []) if not _is_equipment(m.get("code"))]
     if not materials:
         return 0
     width = E.grid_width(table)
@@ -936,7 +969,8 @@ def fill(document, data, product, period, today=None, log=None):
         stages = tuple(name for _, name in columns)
         put_sheet_specs(table, stages, is_dom)
         specs = yield_specs(table)
-        f, l = E.fit_rows(table, 3, len(table.rows) - 4, max(1, len(lots)))
+        첫줄 = _yield_first_row(table)
+        f, l = E.fit_rows(table, 첫줄, len(table.rows) - 4, max(1, len(lots)))
         width = E.grid_width(table)
         vals = {}
         for i, lot in enumerate(lots):
@@ -1659,8 +1693,30 @@ def fill(document, data, product, period, today=None, log=None):
                     return _ident_result([lot], rec, prior, crit)  # 올해 성적서 '확인시험 적합' + 전년도 문안
                 if "포장규격" in lab:
                     return D.criterion_for(rules, process, "포장규격", part)
-                return None
+                # 코드에 박아 두지 않은 항목(pH·삼투압·비중 …)은 성적서의 시험항목 표에서 찾는다
+                # (담당자 2026-09-08: "9.2.1 시험 압축 파일을 참고해서 9.2.1 표를 작성하면 돼").
+                return _item_value(lot, process, lab)
             return value
+
+        def _item_value(lot, process, lab):
+            """성적서 시험항목 표에서 이 열에 맞는 결과 — 없으면 None."""
+            keys = ("921", "922", "923") if process != "포장" else ("924",)
+            if process == "충전":
+                keys = ("923", "921", "922")
+            want = D.squeeze(re.sub(r"[(（][^)）]*[)）]", "", lab))
+            want = re.sub(r"\d+\)", "", want)
+            if not want:
+                return None
+            for key in keys + ("924", "923", "922", "921"):
+                for name, one in (rec(lot, key).get("items") or {}).items():
+                    flat = D.squeeze(name)
+                    if not flat:
+                        continue
+                    if flat == want or flat in want or want in flat:
+                        value = (one.get("value") or "").strip()
+                        if value and value not in ("N/A",):
+                            return value
+            return None
 
         def cpk_of(lab, texts):
             if not qc.cpk_applies(len(lots)):
