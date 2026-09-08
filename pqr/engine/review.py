@@ -144,7 +144,9 @@ def review(folder, product, report_path, issues, log=None, period=None):
     try:
         from . import claude_cli
         if not claude_cli.available():
-            say("검토: 이 PC 에 Claude Code 가 없어 건너뜁니다 (PQR-Claude설치.bat)")
+            from . import privacy
+            say("검토: %s" % ("외부 전송 금지 모드라 건너뜁니다" if privacy.blocked(folder)
+                             else "이 PC 에 Claude Code 가 없어 건너뜁니다 (PQR-Claude설치.bat)"))
             return []
     except Exception:
         return []

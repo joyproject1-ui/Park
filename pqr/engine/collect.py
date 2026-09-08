@@ -926,7 +926,9 @@ def collect(folder, product_name=None, log=None):
             api_on = vision_mod.available()
         except Exception:
             api_on = False
-        pc_on = handreq.pc_reading_on(folder)
+        from . import privacy
+        # 외부 전송 금지면 이 PC 의 판독기로 읽는다 — Claude 에게 보내지 않는다
+        pc_on = handreq.pc_reading_on(folder) or privacy.blocked(folder)
         logs = []
         # ① API 키가 있으면 Claude 가 곧바로 읽는다 (한 장에 몇 초)
         if api_on:
