@@ -1131,6 +1131,10 @@ class Handler(BaseHTTPRequestHandler):
                     log=steps.append, vision=_vision_hook())
                 issues = engine_result.get("issues") or []
                 final = target
+                # 만든 보고서를 PC 의 Claude Code 가 첨부와 대조해 문의 목록에 보탠다 (담당자 2026-09-08:
+                # "단추 한 번에 만들고 → Claude 가 검토해 문의 목록에 적기"). 없거나 실패하면 그냥 지나간다.
+                from .engine import review as review_module
+                issues = list(issues) + review_module.review(folder, product, target, issues, log=steps.append, period=period)
                 if engine_result.get("blank_sections"):
                     # 전년도 결재본 없이 빈 서식으로 만든 보고서는 담당자가 마저 써야 한다 —
                     # '완성본' 으로 세우면 덜 채운 보고서가 그대로 나갈 수 있다.

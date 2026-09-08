@@ -738,7 +738,9 @@ def cmd_write(args):
         _print("작성 실패: %s" % error)
         _print(trace)
         return 1
-    issues = result.get("issues") or []
+    issues = list(result.get("issues") or [])
+    from .engine import review as review_module
+    issues += review_module.review(folder, product, target, issues, log=say, period=period)   # Claude Code 가 있으면 검토
     server_module.write_issue_list(folder, product, issues)
     server_module.write_work_log(folder, product, steps)
     if result.get("blank_sections"):
