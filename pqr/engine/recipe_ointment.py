@@ -64,12 +64,16 @@ def parse_limits(spec_texts):
 
 
 def cpk_uni(vals, usl):
+    if usl is None or not vals:          # 허용기준을 못 읽었으면 Cpk 를 내지 않는다 (담당자 2026-09-08)
+        return None
     m = sum(vals) / len(vals)
     s = statistics.stdev(vals) if len(vals) > 1 else 0
     return (usl - m) / (3 * s) if s else None
 
 
 def cpk_bi(vals, lsl, usl):
+    if lsl is None or usl is None or not vals:
+        return None
     m = sum(vals) / len(vals)
     s = statistics.stdev(vals) if len(vals) > 1 else 0
     return min((usl - m) / (3 * s), (m - lsl) / (3 * s)) if s else None
@@ -1279,6 +1283,14 @@ def fill(document, data, product, period, today=None, log=None):
                 return next((c for c in cells if D.PREFIX.search(c or "")), cells[-2])
         return ""
 
+    def has_row(t91, words):
+        """그 시험항목 줄이 9.1 표에 있는가 — 없으면 이 제품에 없는 시험이다."""
+        for row in t91.rows:
+            cells = [E.cell_text(c) for c in E.raw_cells(row)]
+            if any(all(w in c for w in words) for c in cells[:2]):
+                return True
+        return False
+
     def rec(lot, key):
         return (data.coa.get(lot) or {}).get(key) or {}
 
@@ -1300,10 +1312,20 @@ def fill(document, data, product, period, today=None, log=None):
                               "assay": spec_of(t91_all[0], ("함량",)),
                               "metal": spec_of(t91_all[0], ("금속성",))})
         limits.update(found)
-        missing = [k for k in ("particle", "assay", "metal") if k not in found]
+        # 이 제품에 없는 시험(점안제의 금속성이물 등)까지 '못 읽었다' 고 알리면 잔소리가 된다 —
+        # 표에 줄이 있는 시험만 본다. 그리고 못 읽은 한계는 **기본값을 쓰지 않고** 그 항목 Cpk 를
+        # 건너뛴다 — 퀴노비드안연고 숫자가 다른 제형으로 새면 안 된다 (담당자 2026-09-08).
+        낱말 = {"particle": ("입자도",), "assay": ("함량",), "metal": ("금속성",)}
+        이름 = {"particle": "입자도", "assay": "함량", "metal": "금속성이물"}
+        missing = [k for k in ("particle", "assay", "metal")
+                   if k not in found and has_row(t91_all[0], 낱말[k])]
+        for k in ("particle", "assay", "metal"):
+            if k not in found:
+                limits[k] = (None, None) if k == "assay" else None
         if missing:
-            issues.append(("9.1", "", "허용기준에서 %s 한계를 읽지 못해 기본값(퀴노비드안연고)으로 Cpk 를 계산함 — 확인 필요"
-                           % ", ".join({"particle": "입자도", "assay": "함량", "metal": "금속성이물"}[k] for k in missing)))
+            issues.append(("9.1", "", "허용기준에서 %s 한계를 읽지 못해 그 항목은 Cpk 를 계산하지 않았습니다 — "
+                                      "9.1 표의 허용기준 칸을 채우고 재작성하세요"
+                           % ", ".join(이름[k] for k in missing)))
     log("Cpk 한계: %s" % limits)
 
     def app(lots):
@@ -2929,7 +2951,8 @@ def _fill_stability(document, stab, log, assay_limits=None):
                 if head:
                     prev_year = yr
 
-    lo_hi = assay_limits or DEFAULT_LIMITS["assay"]
+    # 허용기준을 못 읽었으면 (None, None) 이 온다 — 13.3 관리 규격에는 흔한 값을 적어 둔다
+    lo_hi = assay_limits if (assay_limits and assay_limits[0] is not None) else DEFAULT_LIMITS["assay"]
 
     def fill_trend(table, rows, note, comment):
         f, l = E.fit_rows(table, 1, len(table.rows) - 6, max(1, len(rows)))

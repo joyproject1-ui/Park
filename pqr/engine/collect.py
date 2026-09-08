@@ -422,6 +422,44 @@ def _change_by_claude(path, folder, log, note):
     return None
 
 
+DEV_CACHE = "PQR 일탈보고서 판독.json"
+
+
+def _deviation_by_claude(path, folder, log, note):
+    """글자 없는 스캔 일탈 보고서를 Claude 로 읽는다 — 변경요청서 판독기를 그대로 쓴다.
+
+    일탈 보고서도 '제목·내용·부서별 조치' 라는 짜임이 같다. 한 번 읽은 것은 되쓴다.
+    """
+    say = log or (lambda *a: None)
+    key = _change_cache_key(path)
+    box = os.path.join(folder or "", DEV_CACHE)
+    try:
+        with open(box, encoding="utf-8") as handle:
+            cache = json.load(handle)
+        cache = cache if isinstance(cache, dict) else {}
+    except (OSError, ValueError):
+        cache = {}
+    if key not in cache:
+        got = _change_by_claude(path, folder, log, lambda *a: None)
+        if got is None:
+            note("11", path, "글자 없는 스캔 일탈 보고서입니다 — Claude 로도 읽지 못했습니다. "
+                             "일탈 내용을 직접 채우세요")
+            return None
+        cache[key] = dict(got, actions=[list(a) for a in got.get("actions") or []])
+        try:
+            with open(box, "w", encoding="utf-8") as handle:
+                json.dump(cache, handle, ensure_ascii=False, indent=2)
+        except OSError:
+            pass
+        say("    [11] %s — Claude 로 읽음: %s" % (os.path.basename(path), got.get("title") or ""))
+    one = cache[key]
+    m = re.search(r"(DR-\d{6}-\d{2})", os.path.basename(path))
+    return {"doc_no": one.get("doc_no") or (m.group(1) if m else ""),
+            "title": one.get("title") or "", "lot": "", "occurred": "", "planned": False,
+            "actions": [tuple(a) for a in one.get("actions") or []], "completed": None,
+            "description": one.get("description") or ""}
+
+
 COA_CACHE = "PQR 시험성적서 판독.json"
 
 
@@ -686,10 +724,20 @@ def collect(folder, product_name=None, log=None):
     # 11 · 12
     for p in got.get("11", []):
         if p.lower().endswith(".pdf"):
+            got_one = None
             try:
-                data.deviations.append(deviation.read_deviation(p))
+                got_one = deviation.read_deviation(p)
             except PdfTextError as e:
                 note("11", p, str(e))
+            # 글자 없는 스캔 일탈 보고서도 12항 변경요청서와 같은 길로 읽는다
+            # (담당자 2026-09-08: "다음 PQR 작성할 때 문제없도록 조치해 줘").
+            비었나 = got_one is None or not (got_one.get("title") or got_one.get("doc_no"))
+            if 비었나 and is_scanned(p):
+                읽음 = _deviation_by_claude(p, folder, log, note)
+                if 읽음 is not None:
+                    got_one = 읽음
+            if got_one is not None:
+                data.deviations.append(got_one)
     # 12항에 올린 변경요청서는 하나도 빠뜨리지 않는다 — 읽지 못한 것도 파일 이름의 문서번호로 줄을
     # 세운다 (담당자 2026-09-06: "12항 변경관리가 5개인데 1개만 표시되어 있네").
     for p in got.get("12", []):

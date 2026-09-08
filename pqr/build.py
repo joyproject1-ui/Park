@@ -639,7 +639,7 @@ def find_final_report(folder, matcher=None, include_drafts=False):
 OUTPUT_DIR = "PQR 작성본"
 
 SIDE_FILES = (AUTO_DRAFT_MARKER, "PQR 문의 목록", "PQR 작성 기록", "PQR 안정성 판독 기록",
-              "PQR 변경요청서 판독", "PQR 시험성적서 판독")
+              "PQR 변경요청서 판독", "PQR 시험성적서 판독", "PQR 일탈보고서 판독")
 
 
 def has_source_files(folder, matcher=None):
