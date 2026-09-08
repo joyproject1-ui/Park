@@ -392,6 +392,11 @@ def stability_entries(old_document):
             continue
         for row in _grid_vmerged(table)[1:]:
             text = lambda c: (row[c] if c is not None and c < len(row) else "").strip()
+            # 표 끝의 '특이사항' 줄은 칸 하나가 가로로 다 걸쳐 있어 모든 열에 같은 글이 들어간다 —
+            # 그 글에 제조번호가 섞여 있으면(아이퓨어 2025: 'LWV301, LWW401, LWX101 의 경우 …')
+            # Lot 줄로 잘못 읽혀 연도 칸에 특이사항 글이 통째로 실렸다(담당자 2026-09-08).
+            if squeeze(row[0] if row else "").startswith("특이사항") or len({c.strip() for c in row}) <= 1:
+                continue
             lot_text = text(c_lot)
             codes = LOT.findall(squeeze(lot_text))
             if not codes:

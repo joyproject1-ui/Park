@@ -381,9 +381,46 @@ def _seed_rows_by_header(table, old_grid):
     return len(rows)
 
 
+UNIT = r"개|매|%|mL|ml|L|g|mg|kg|㎛|um|μm|㎖|mOsmol/kg|mOsm/kg|CFU[^)）]*|℃|°C"
+UNIT_PAREN = re.compile(r"[(（]\s*[\d.,/\s]*(?:%s)\s*[)）]" % UNIT, re.I)
+UNIT_TAIL = re.compile(r"\s*(?:%s)\s*$" % UNIT, re.I)
+
+
+def _norm_item(text):
+    """시험항목 이름을 견주기 좋게 — 단위 괄호를 떼고, 남은 괄호·가운뎃점·빈칸을 지운다.
+
+    '불용성미립자(개)10㎛이상/mL' 과 성적서의 '불용성미립자(10um이상/mL)' 이 같은 것이 되게 한다.
+    """
+    got = UNIT_PAREN.sub("", str(text or ""))
+    got = got.replace("㎛", "um").replace("μm", "um").replace("㎖", "mL")
+    got = re.sub(r"[()（）\[\]·∙ㆍ・:：,\s]", "", got)
+    return got.lower()
+
+
+def _drop_unit(value, lab):
+    """열 이름이 단위를 이미 달고 있으면('삼투압(mOsmol/kg)') 값의 꼬리 단위를 뗀다.
+
+    단위가 붙은 채로 두면 그 열의 최댓값·최솟값·평균을 셀 수 없다(글로 보아 사선이 남는다).
+    """
+    got = str(value or "").strip()
+    if UNIT_PAREN.search(str(lab or "")) and re.match(r"^[\d.,~\s]+", got):
+        got = UNIT_TAIL.sub("", got) or got
+    return got
+
+
 def _plain_stage(text):
     """공정 이름에서 괄호 설명과 빈칸을 뗀 이름 — '포장 (베트남)' → '포장'."""
     return re.sub(r"[\s]", "", re.sub(r"[(（][^)）]*[)）]", "", str(text or "")))
+
+
+def _row_cells(row, width):
+    """[(첫 열, 끝 열, 글)] — 가로로 걸친 칸이 **어느 열들을 덮는지** 그대로 돌려준다."""
+    out, at = [], 0
+    for cell in E.raw_cells(row):
+        span = E.cell_span(cell)
+        out.append((at, min(at + span, width), D.squeeze(E.cell_text(cell))))
+        at += span
+    return out
 
 
 def _row_texts(row, width):
@@ -392,62 +429,97 @@ def _row_texts(row, width):
     담당자 2026-09-08: '포장' 머리 칸이 내수·온누리 두 열에 걸쳐 있는데 시작 열에만 붙어
     온누리 열이 '포장' 을 잃었다 — 그래서 온누리 값이 내수 칸에 들어갔다.
     """
-    out, at = {}, 0
-    for cell in E.raw_cells(row):
-        span = E.cell_span(cell)
-        text = D.squeeze(E.cell_text(cell))
-        for k in range(at, min(at + span, width)):
+    out = {}
+    for first, last, text in _row_cells(row, width):
+        for k in range(first, last):
             out[k] = text
-        at += span
     return out
 
 
 def _yield_columns(table):
-    """7항 표의 수율 열 — [(그리드 열, 공정 이름)]. 머리가 여러 줄이면 위에서 아래로 이어 붙인다.
+    """7항 표의 수율 열 — [(첫 열, 끝 열, 공정 이름)]. 머리가 여러 줄이면 위에서 아래로 이어 붙인다.
 
-    담당자 2026-09-08: "온누리 값을 잘못 넣었어." 표 머리가 '포장' 한 줄 아래 '내수·온누리 에이치엔씨'
-    두 칸으로 갈려 있는데 한 줄만 보아 열이 셋으로 잡혔고, 온누리 값이 내수 칸에 들어갔다.
-    담당자 2026-09-08(둘째): "수율 작성 안 됐어." 표 제목('중요공정 별 수율 현황 (%)')이 값 열에
-    가로로 걸쳐 있는데 그 줄에 '비고' 도 함께 보여 제목 줄로 걸러지지 않았고, 이름이
-    '중요공정별수율현황(%)(조제)' 가 되어 수율현황표의 '조제' 와 맞지 않아 세 Lot 이 모두
-    '확인 필요' 로 나왔다. 그래서 비고 열은 제목 줄을 가릴 때 아예 빼고 본다.
+    **표 제목은 글자가 아니라 칸 구조로 가린다** (담당자 2026-09-08: "한 줄이 전부 같은 글이면
+    제목으로 친다 — 이런 규칙은 버리는 게 좋습니다. 표의 위치와 열 구조를 기준으로 판단해야
+    합니다"). 값 열을 **한 칸이 통째로 덮으면** 그 줄은 제목이다. '포장' 처럼 값 열의 일부만
+    덮는 칸은 진짜 공정 이름이므로 그대로 쓴다.
+
+    예전 규칙은 '한 줄의 글이 모두 같으면 제목' 이었는데, 제목 줄 끝에 '비고' 가 함께 보여
+    제목으로 안 걸러졌다 — 열 이름이 '중요공정별수율현황(%)(조제)' 가 되어 수율현황표의
+    '조제' 와 맞지 않았고 세 Lot 아홉 칸이 모두 '확인 필요' 로 나왔다.
     """
     width = E.grid_width(table)
-    head_rows = table.rows[:4]
-    글 = [_row_texts(row, width) for row in head_rows]
+    rows = [_row_cells(row, width) for row in table.rows[:4]]
     start = None
-    for texts in 글:
-        for i, text in texts.items():
+    for row in rows:
+        for first, _last, text in row:
             if text == "공정":
-                start = i if start is None else min(start, i)
+                start = first if start is None else min(start, first)
     if start is None:
         return [(2, "조제"), (3, "충전"), (4, "포장")]
-    # 비고 열은 값 열이 아니다 — 제목 줄을 가릴 때 섞이면 제목이 공정 이름으로 남는다
-    note_cols = {i for texts in 글 for i, text in texts.items() if "비고" in text}
-    value_cols = [i for i in range(start + 1, width) if i not in note_cols]
-    # 표 제목처럼 값 열 전체에 같은 글이 퍼진 줄은 이름이 아니다
-    제목줄 = set()
-    for ri, texts in enumerate(글):
-        보임 = {texts.get(i, "") for i in value_cols}
-        if len(보임) == 1 and 보임 != {""}:
-            제목줄.add(ri)
+    # 비고 열은 값 열이 아니다
+    note_cols = {c for row in rows for first, last, text in row if "비고" in text
+                 for c in range(first, last)}
+    value_cols = [c for c in range(start + 1, width) if c not in note_cols]
+    if not value_cols:
+        return [(2, "조제"), (3, "충전"), (4, "포장")]
+    제목줄 = {i for i, row in enumerate(rows)
+            if any(text and first <= value_cols[0] and last >= value_cols[-1] + 1
+                   for first, last, text in row)}
     got = []
     for i in value_cols:
         parts = []
-        for ri, texts in enumerate(글):
+        for ri, row in enumerate(rows):
             if ri in 제목줄:
                 continue
-            text = texts.get(i, "")
+            text = next((t for first, last, t in row if first <= i < last), "")
             if not text or "비고" in text or "기준" in text or "LotNo" in text:
                 continue
             if re.search(r"\d", text) or "%" in text:
-                continue                       # '99.5±0.5%' 같은 기준 칸, '…현황(%)' 같은 표 제목
+                continue                       # '99.5±0.5%' 같은 기준 칸
             if not parts or text != parts[-1]:
                 parts.append(text)
         if not parts:
             continue
-        got.append((i, parts[0] if len(parts) == 1 else "%s(%s)" % (parts[-2], parts[-1])))
-    return got or [(2, "조제"), (3, "충전"), (4, "포장")]
+        name = parts[0] if len(parts) == 1 else "%s(%s)" % (parts[-2], parts[-1])
+        # 가장 아래 머리 칸이 여러 열에 걸쳐 있으면(‘온누리 에이치엔씨’ 가 두 열) 그 열들은
+        # 한 공정이다 — 열마다 따로 세면 같은 공정이 두 번 나오고, 값이 엉뚱한 칸으로 간다
+        # (담당자 2026-09-08: 온누리 99.12 가 자료 줄에서 사라졌다).
+        if got and got[-1][2] == name and got[-1][1] == i:
+            got[-1] = (got[-1][0], i + 1, name)
+        else:
+            got.append((i, i + 1, name))
+    return got or [(2, 3, "조제"), (3, 4, "충전"), (4, 5, "포장")]
+
+
+def _cells_for(row, regions):
+    """열 구간마다 그 줄의 어느 칸에 쓸지 — 겹치는 넓이가 가장 큰 칸을 차례로 하나씩.
+
+    담당자 2026-09-08: 공양식의 7항은 머리 칸과 자료 칸의 경계가 서로 다르다 —
+    머리는 '내수'=4열·'온누리'=5~6열인데 자료 줄은 4~5열·6열로 갈려 있다. 열 번호로 짚으면
+    온누리 칸을 못 찾아 99.12 가 통째로 버려졌다. 그래서 자리가 아니라 **겹침**으로 짚는다.
+    """
+    spans, at = [], 0
+    for cell in E.raw_cells(row):
+        span = E.cell_span(cell)
+        spans.append((at, at + span, cell))
+        at += span
+    out, 쓴것 = [], set()
+    for first, last, _name in regions:
+        best, score = None, 0
+        for k, (a, b, cell) in enumerate(spans):
+            if k in 쓴것:
+                continue
+            overlap = min(b, last) - max(a, first)
+            if overlap > score:
+                best, score = k, overlap
+        if best is None:
+            out.append(None)
+        else:
+            쓴것.add(best)
+            out.append(spans[best][2])
+    남은것 = [cell for k, (_a, _b, cell) in enumerate(spans) if k not in 쓴것]
+    return out, (남은것[-1] if 남은것 else None)
 
 
 def _yield_first_row(table):
@@ -493,9 +565,9 @@ def _yield_value(vals, name):
 
 def _other_market(columns, values, k):
     """이 열은 비었는데 같은 공정의 다른 시장 열에는 값이 있는가 — 그러면 '확인 필요' 가 아니라 사선."""
-    base = _plain_stage(columns[k][1])
-    return any(values[j] is not None and _plain_stage(name) == base
-               for j, (_gi, name) in enumerate(columns) if j != k)
+    base = _plain_stage(columns[k][-1])
+    return any(values[j] is not None and _plain_stage(one[-1]) == base
+               for j, one in enumerate(columns) if j != k)
 
 
 def _last_data_row(table):
@@ -1020,24 +1092,24 @@ def fill(document, data, product, period, today=None, log=None):
         # 공정 열은 표에서 읽는다 — 제품에 따라 '포장' 이 내수·베트남으로 갈린다
         # (담당자 2026-09-07: "ELYN01 과 ELYN02 는 내수가 아니고 베트남 포장했네").
         columns = _yield_columns(table)
-        stages = tuple(name for _, name in columns)
+        stages = tuple(one[-1] for one in columns)
         put_sheet_specs(table, stages, is_dom)
         specs = yield_specs(table)
         첫줄 = _yield_first_row(table)
         f, l = E.fit_rows(table, 첫줄, len(table.rows) - 4, max(1, len(lots)))
-        width = E.grid_width(table)
         vals = {}
         for i, lot in enumerate(lots):
             row = table.rows[f + i]
             r = E.raw_cells(row)
-            cells = E.grid_cells(row, width)
+            값칸, 비고칸 = _cells_for(row, columns)
             y = data.yields.get(lot, {})
-            v = [_yield_value(y, name) for _, name in columns]
+            v = [_yield_value(y, one[-1]) for one in columns]
             vals[lot] = v
             E.set_cell(r[0], str(i + 1)); E.set_cell(r[1], lot)
-            for k, (gi, name) in enumerate(columns):
-                cell = cells.get(gi)
-                if cell is None:
+            for k, one in enumerate(columns):
+                name = one[-1]
+                cell = 값칸[k]
+                if cell is None or cell is r[0] or cell is r[1]:
                     continue
                 if v[k] is not None:
                     E.clear_diag(cell)
@@ -1058,21 +1130,21 @@ def fill(document, data, product, period, today=None, log=None):
                     fv = float(v[k])
                     if (lo is not None and fv < lo) or (hi is not None and fv > hi):
                         out = True
-            if len(r) > 5:                      # 비고: 행마다 따로 (병합을 풀고) 주석을 단다
-                E.set_vmerge(r[5], False)
-                E.clear_diag(r[5])
-                E.set_cell(r[5], "")
+            if 비고칸 is not None:              # 비고: 행마다 따로 (병합을 풀고) 주석을 단다
+                E.set_vmerge(비고칸, False)
+                E.clear_diag(비고칸)
+                E.set_cell(비고칸, "")
             if out:
                 yield_out.append(lot)
                 if lot in dev_lots:
                     yield_dev.append(lot)
-                if len(r) > 5:
+                if 비고칸 is not None:
                     # 기준을 벗어난 Lot 은 모두 '1)' — 표 아래 각주 한 줄이 설명한다(담당자 2026-09-06: "비고에는
                     # 1), 2) 가 아니고 모두 1) 로 작성되어야 표 하단 문구로 설명되는 것 아닌지"). 11항에 일탈
                     # 기록이 없는 Lot 은 노랑으로 남겨 대조하게 한다.
-                    E.set_cell(r[5], "1)")
+                    E.set_cell(비고칸, "1)")
                     if lot not in dev_lots:
-                        E.highlight_cell(r[5])
+                        E.highlight_cell(비고칸)
         # 최댓값·최솟값·평균 — 세 줄 모두 채우고 그 칸의 사선은 지운다 (담당자 지시 2026-09).
         # raw_cells 로 그 행이 실제로 가진 칸을 쓴다: .cells 는 세로 병합을 하나로 합쳐 돌려주어
         # 세 줄이 같은 칸을 가리키고, 마지막에 쓴 평균만 남는다(최댓값 자리에 평균이 찍혔다).
@@ -1083,9 +1155,7 @@ def fill(document, data, product, period, today=None, log=None):
         # 자리로 세면 값이 한 칸씩 밀린다(조제 자리에 사선, 비고 자리에 포장 수율).
         for ri, _fn in summary:
             if ri < len(table.rows):
-                cells = E.grid_cells(table.rows[ri], width)
-                for gi, _name in columns:
-                    cell = cells.get(gi)
+                for cell in _cells_for(table.rows[ri], columns)[0]:
                     if cell is not None:
                         E.set_vmerge(cell, False)
                         E.clear_diag(cell)
@@ -1093,9 +1163,9 @@ def fill(document, data, product, period, today=None, log=None):
         for ri, fn in summary:
             if ri >= len(table.rows):
                 continue
-            cells = E.grid_cells(table.rows[ri], width)
-            for k, (gi, _name) in enumerate(columns):
-                cell = cells.get(gi)
+            값칸 = _cells_for(table.rows[ri], columns)[0]
+            for k, one in enumerate(columns):
+                cell = 값칸[k]
                 if cell is None:
                     continue
                 xs = [float(vals[lt][k]) for lt in lots
@@ -1744,33 +1814,47 @@ def fill(document, data, product, period, today=None, log=None):
                 if "확인" in lab:
                     sub = (re.search(r"\d\)", lab) or [""])[0] if re.search(r"\d\)", lab) else ""
                     crit = D.criterion_for(rules, process, "확인", part, sub)
-                    return _ident_result([lot], rec, prior, crit)  # 올해 성적서 '확인시험 적합' + 전년도 문안
+                    # 올해 성적서 '확인시험 적합' + 전년도 문안. 없으면 아래에서 성적서의
+                    # 시험항목 표('확인시험')를 찾아 결과 글을 그대로 쓴다 (담당자 2026-09-08:
+                    # 스캔 성적서를 다 읽고도 '확인'·'포장규격' 열이 비어 있었다).
+                    got = _ident_result([lot], rec, prior, crit)
+                    if got:
+                        return got
                 if "포장규격" in lab:
-                    return D.criterion_for(rules, process, "포장규격", part)
+                    got = D.criterion_for(rules, process, "포장규격", part)
+                    if got:
+                        return got
                 # 코드에 박아 두지 않은 항목(pH·삼투압·비중 …)은 성적서의 시험항목 표에서 찾는다
                 # (담당자 2026-09-08: "9.2.1 시험 압축 파일을 참고해서 9.2.1 표를 작성하면 돼").
                 return _item_value(lot, process, lab)
             return value
 
         def _item_value(lot, process, lab):
-            """성적서 시험항목 표에서 이 열에 맞는 결과 — 없으면 None."""
+            """성적서 시험항목 표에서 이 열에 맞는 결과 — 없으면 None.
+
+            열 이름의 단위 괄호('불용성미립자(개)', '삼투압(mOsmol/kg)')는 떼고 견주고,
+            여러 개가 걸리면 **가장 자세한 이름**을 쓴다. 예전에는 '불용성미립자' 하나가
+            10·25·50㎛ 세 열에 모두 걸려 합친 글이 세 칸에 똑같이 들어갔다
+            (담당자 2026-09-08 아이퓨어 9.2.4).
+            """
             keys = ("921", "922", "923") if process != "포장" else ("924",)
             if process == "충전":
                 keys = ("923", "921", "922")
-            want = D.squeeze(re.sub(r"[(（][^)）]*[)）]", "", lab))
-            want = re.sub(r"\d+\)", "", want)
+            want = _norm_item(re.sub(r"\d+\)", "", lab))
             if not want:
                 return None
+            찾은것 = None
             for key in keys + ("924", "923", "922", "921"):
                 for name, one in (rec(lot, key).get("items") or {}).items():
-                    flat = D.squeeze(name)
-                    if not flat:
+                    flat = _norm_item(name)
+                    value = (one.get("value") or "").strip()
+                    if not flat or not value or value == "N/A":
                         continue
-                    if flat == want or flat in want or want in flat:
-                        value = (one.get("value") or "").strip()
-                        if value and value not in ("N/A",):
-                            return value
-            return None
+                    if flat == want:
+                        return _drop_unit(value, lab)
+                    if (flat in want or want in flat) and (찾은것 is None or len(flat) > len(찾은것[0])):
+                        찾은것 = (flat, value)
+            return _drop_unit(찾은것[1], lab) if 찾은것 else None
 
         def cpk_of(lab, texts):
             if not qc.cpk_applies(len(lots)):
@@ -2666,24 +2750,37 @@ def _fill_131_table(table, rows, why_of, issues, post=False):
 def _fill_133_table(table, groups, spec, _trim, marks=None):
     """13.3 경향 분석 — groups: [(줄 이름 '시판 후'|'장기', log, 평가 연도까지의 시점들)]. 성분마다 최솟값 ~ 최댓값."""
     labels = D.labels(table)
+    # 줄 이름과 연도가 한 칸에 적힌 서식('시판 후(2023)' | pH | 함량 | 삼투압 — 아이퓨어 2026 공양식)은
+    # 값 열이 1열부터다. 연도 칸이 따로 있는 서식(장기 | 2023 | 함량 …)은 2열부터.
+    combined = any(re.match(r"(장기|시판후)\(?\d{4}", D.squeeze(E.cell_text(E.raw_cells(r)[0])))
+                   for r in table.rows[1:4])
+    first_value_col = 1 if combined else 2
     parts = []
     for k, name in enumerate(labels):
+        if k < first_value_col or not name or "시험항목" in name:
+            continue
         got = next((p for p in spec if D.squeeze(p) and D.squeeze(p) in name), None)
+        if got is None and "함량" in name and len(spec) == 1:
+            got = list(spec)[0]                            # 성분 이름 없이 '함량(%)' 한 열뿐인 표(퀴노비드)
+        if got is None:
+            # pH·삼투압처럼 성분이 아닌 열 — 열 이름(단위 뗀 것)을 그대로 판독값의 열쇠로 쓴다
+            # (담당자 2026-09-08 아이퓨어 13.3: pH·삼투압 열이 통째로 비어 있었다).
+            plain = re.sub(r"[(（].*?[)）]", "", name).strip()
+            if plain and any(_norm_item(plain) == _norm_item(key)
+                             for _lab, one, seen in groups for p in seen for key in (p.get("assays") or {})):
+                got = next(key for _lab, one, seen in groups for p in seen for key in (p.get("assays") or {})
+                           if _norm_item(plain) == _norm_item(key))
         if got:
             parts.append((k, got))
-    if not parts and len(spec) == 1:                       # 성분 이름 없이 '함량(%)' 한 열뿐인 표(퀴노비드)
-        value_cols = [k for k, name in enumerate(labels) if k >= 2 and name and "시험항목" not in name]
-        if value_cols:
-            parts.append((value_cols[0], list(spec)[0]))
     if not parts:
         return 0
     width = len(labels)
     heads = [i for i, tr in enumerate(table._tbl.findall(qn("w:tr")))
              if D.squeeze(_text(tr.findall(qn("w:tc"))[0])).startswith(("관리규격", "최소", "최대", "경향"))]
     first = next((i for i, r in enumerate(table.rows)
-                  if D.squeeze(E.cell_text(E.raw_cells(r)[0])) in ("장기", "시판후")), 2)
+                  if re.match(r"(장기|시판후)", D.squeeze(E.cell_text(E.raw_cells(r)[0])))), 2)
     # 줄 차례는 서식을 따른다 — EDMS 공양식은 '장기' 를 먼저, 2025 결재본은 '시판 후' 를 먼저 적었다
-    lead = D.squeeze(E.cell_text(E.raw_cells(table.rows[first])[0])) if first < len(table.rows) else ""
+    lead = D.squeeze(E.cell_text(E.raw_cells(table.rows[first])[0]))[:2] if first < len(table.rows) else ""
     if lead == "장기":
         groups = [g for g in groups if g[0] == "장기"] + [g for g in groups if g[0] != "장기"]
     last = heads[0] - 1 if heads else len(table.rows) - 1
@@ -2692,13 +2789,21 @@ def _fill_133_table(table, groups, spec, _trim, marks=None):
              if D.squeeze(_text(tr.findall(qn("w:tc"))[0])).startswith(("관리규격", "최소", "최대", "경향"))]
     values = {k: [] for k, _ in parts}
     guessed = {k: set() for k, _ in parts}                 # 애매하게 읽힌 예상값 — 최소·최대가 여기서 나오면 노랑
+    # 열마다 자릿수를 따로 — 삼투압(302)은 정수, 함량(100.6)은 소수 한 자리. 함량 자릿수를 삼투압에
+    # 씌우면 '302.0 ~ 319.0' 처럼 시험일지에 없는 자릿수가 생긴다.
+    def _dec_of(part):
+        d = 0
+        for _lab, _one, seen in groups:
+            for pt in seen:
+                v = (pt.get("assays") or {}).get(part)
+                if v is not None and "." in str(v):
+                    d = max(d, len(str(v).split(".")[1].rstrip("0")))
+        return d
+    trims = {k: (lambda v, d=_dec_of(part): ("%%.%df" % d) % float(v)) for k, part in parts}
     notes, prev_label = [], None
     for i, (label, one, taken) in enumerate(groups):
         cells = _grid_cells_of(table.rows[f + i], width)
         head = label != prev_label
-        if cells.get(0) is not None:
-            E.set_cell(cells[0], label if head else "")
-            E.set_vmerge(cells[0], "restart" if head else None)
         prev_label = label
         same = [g for g in groups if g[0] == label and g[1]["year"] == one["year"]]
         mark = ""
@@ -2706,9 +2811,17 @@ def _fill_133_table(table, groups, spec, _trim, marks=None):
             mark = marks.get(one["lot"], "")
         elif len(same) > 1:
             mark = "%d)" % (sum(1 for g in groups[:i] if g[0] == label and g[1]["year"] == one["year"]) + 1)
-        if cells.get(1) is not None:
-            E.set_cell(cells[1], "%s%s" % (one.get("year") or "", mark))
-            E.set_vmerge(cells[1], False)
+        if combined:
+            if cells.get(0) is not None:                   # '시판 후(2023)' — 줄 이름과 연도를 한 칸에
+                E.set_vmerge(cells[0], False)
+                E.set_cell(cells[0], "%s(%s%s)" % (label, one.get("year") or "", mark))
+        else:
+            if cells.get(0) is not None:
+                E.set_cell(cells[0], label if head else "")
+                E.set_vmerge(cells[0], "restart" if head else None)
+            if cells.get(1) is not None:
+                E.set_cell(cells[1], "%s%s" % (one.get("year") or "", mark))
+                E.set_vmerge(cells[1], False)
         notes.append((label, "%s%s" % (one.get("year") or "", mark), one["lot"]))
         for k, part in parts:
             if cells.get(k) is None:
@@ -2733,8 +2846,9 @@ def _fill_133_table(table, groups, spec, _trim, marks=None):
             if got:
                 values[k] += got
                 guessed[k].update(float(p["assays"][part]) for p in shaky if p["assays"].get(part) is not None)
-                E.set_cell(cells[k], "%s ~ %s" % (_trim(min(got)), _trim(max(got))) if len(got) > 1 or min(got) != max(got)
-                           else _trim(got[0]))
+                tk = trims[k]
+                E.set_cell(cells[k], "%s ~ %s" % (tk(min(got)), tk(max(got))) if min(got) != max(got)
+                           else tk(got[0]))                # 값이 모두 같으면 '7.0 ~ 7.0' 이 아니라 '7.0'
             else:
                 E.set_cell(cells[k], "확인 필요")                 # 그해 값을 하나도 못 읽었다
             if shaky:
@@ -2747,14 +2861,15 @@ def _fill_133_table(table, groups, spec, _trim, marks=None):
             if cells.get(k) is None or not values[k]:
                 continue
             if "관리규격" in head:
-                E.set_cell(cells[k], re.sub(r"\s*%$", "", spec.get(part, "")))
+                if spec.get(part):                          # 서식에 적힌 pH·삼투압 규격은 그대로 둔다
+                    E.set_cell(cells[k], re.sub(r"\s*%$", "", spec.get(part, "")))
                 bold_rows.add(ri)
             elif "최소" in head:
-                E.set_cell(cells[k], _trim(min(values[k])))
+                E.set_cell(cells[k], trims[k](min(values[k])))
                 if min(values[k]) in guessed[k]:
                     E.highlight_cell(cells[k])              # 예상값이 최소가 됐다 — 대조 필요
             elif "최대" in head:
-                E.set_cell(cells[k], _trim(max(values[k])))
+                E.set_cell(cells[k], trims[k](max(values[k])))
                 if max(values[k]) in guessed[k]:
                     E.highlight_cell(cells[k])
             elif "경향" in head:

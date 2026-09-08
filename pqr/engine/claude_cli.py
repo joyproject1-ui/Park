@@ -434,7 +434,7 @@ COA_PROMPT = """다음 시험성적서(스캔 PDF)를 읽고 JSON 만 출력하�
  "particle": "", "particle_spec": "", "metal_total": "", "metal_each": "",
  "bioburden": "", "bioburden_spec": "",
  "assays": [{"part": "트레할로스수화물", "lo": "90.0", "hi": "110.0", "value": "99.8"}],
- "items": [{"name": "제제균일성", "spec": "85.0 ~ 115.0%", "value": "102.4"},
+ "items": [{"name": "제제균일성", "spec": "85.0 ~ 115.0%%", "value": "102.4"},
            {"name": "불용성미립자(10㎛ 이상)", "spec": "25개/mL 이하", "value": "0"},
            {"name": "확인시험", "spec": "검액은 표준액과 …", "value": "적합"}]}
 """

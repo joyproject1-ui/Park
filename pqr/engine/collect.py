@@ -334,11 +334,26 @@ CHANGE_CACHE = "PQR 변경요청서 판독.json"
 
 
 def _change_cache_key(path):
+    """판독 되쓰기 열쇠 — 파일 이름과 크기.
+
+    예전에는 고친 때(mtime)까지 넣었는데, 압축 안의 성적서·시험일지는 작성할 때마다 새로
+    풀리므로 mtime 이 늘 달라져 **되쓰기가 한 번도 맞지 않았다** — 그래서 같은 자료를 매번
+    다시 판독했다(담당자 2026-09-08: "보고서 작성 시간이 기존보다 오래 걸리는 이유가?").
+    """
     try:
-        st = os.stat(path)
-        return "%s|%d|%d" % (os.path.basename(path), st.st_size, int(st.st_mtime))
+        return "%s|%d" % (os.path.basename(path), os.stat(path).st_size)
     except OSError:
         return os.path.basename(path)
+
+
+def _cache_get(cache, key):
+    """열쇠로 찾고, 없으면 예전 꼴('이름|크기|고친때')에서도 찾는다."""
+    if key in cache:
+        return cache[key]
+    for old, value in (cache or {}).items():
+        if old.startswith(key + "|"):
+            return value
+    return None
 
 
 def _change_cache(folder):
@@ -371,8 +386,9 @@ def _change_by_claude(path, folder, log, note):
     """
     say = log or (lambda *a: None)
     key, cache = _change_cache_key(path), _change_cache(folder)
-    if key in cache:
-        got = dict(cache[key])
+    본것 = _cache_get(cache, key)
+    if 본것 is not None:
+        got = dict(본것)
         got["actions"] = [tuple(a) for a in got.get("actions") or []]
         say("    [12] %s — 지난 판독 결과를 그대로 씁니다 (%s)" % (os.path.basename(path), CHANGE_CACHE))
         return got
@@ -479,9 +495,11 @@ def _coa_by_claude(path, folder, log, note, item):
         cache = cache if isinstance(cache, dict) else {}
     except (OSError, ValueError):
         cache = {}
-    if key in cache:
-        say("    [%s] %s — 지난 판독 결과를 그대로 씁니다" % (item, os.path.basename(path)))
-        return dict(cache[key])
+    본것 = _cache_get(cache, key)
+    if 본것 is not None:
+        say("    [%s] %s — 지난 판독 결과를 그대로 씁니다 (%s)"
+            % (item, os.path.basename(path), COA_CACHE))
+        return dict(본것)
     갈래 = []
     try:
         from . import vision as vision_mod, vision_claude

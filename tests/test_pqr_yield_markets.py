@@ -109,7 +109,7 @@ class 보고서_표의_두_줄_머리(unittest.TestCase):
     def test_걸친_머리_칸을_두_열에_모두_편다(self):
         from pqr.engine.recipe_ointment import _yield_columns
         self.assertEqual(_yield_columns(self._table()),
-                         [(2, "조제"), (3, "충전"), (4, "포장(내수)"), (5, "포장(온누리에이치엔씨)")])
+                         [(2, 3, "조제"), (3, 4, "충전"), (4, 5, "포장(내수)"), (5, 6, "포장(온누리에이치엔씨)")])
 
     def test_시장이_적힌_열은_그_시장_값만_쓴다(self):
         from pqr.engine.recipe_ointment import _yield_value
@@ -125,7 +125,7 @@ class 보고서_표의_두_줄_머리(unittest.TestCase):
     def test_그_시장으로_포장하지_않은_칸은_사선(self):
         from pqr.engine.recipe_ointment import _yield_columns, _yield_value, _other_market
         cols = _yield_columns(self._table())
-        vals = [_yield_value({"포장(온누리에이치엔씨)": "99.12"}, n) for _, n in cols]
+        vals = [_yield_value({"포장(온누리에이치엔씨)": "99.12"}, one[-1]) for one in cols]
         self.assertTrue(_other_market(cols, vals, 2))            # 내수 칸 — 사선
         self.assertFalse(_other_market(cols, vals, 3))           # 온누리 칸 — 값이 있다
 
@@ -158,12 +158,12 @@ class 표_제목이_값_열에_걸친_표(unittest.TestCase):
     def test_제목_줄을_이름으로_쓰지_않는다(self):
         from pqr.engine.recipe_ointment import _yield_columns
         self.assertEqual(_yield_columns(self._table()),
-                         [(2, "조제"), (3, "충전"), (4, "포장(내수)"), (5, "포장(온누리에이치엔씨)")])
+                         [(2, 3, "조제"), (3, 4, "충전"), (4, 5, "포장(내수)"), (5, 6, "포장(온누리에이치엔씨)")])
 
     def test_수율현황표_이름과_그대로_맞는다(self):
         from pqr.engine.recipe_ointment import _yield_columns, _yield_value
         vals = {"조제": "99.97", "충전": "93.47", "포장(온누리 에이치엔씨)": "99.12"}
-        got = [_yield_value(vals, name) for _, name in _yield_columns(self._table())]
+        got = [_yield_value(vals, one[-1]) for one in _yield_columns(self._table())]
         self.assertEqual(got, ["99.97", "93.47", None, "99.12"])
 
 
@@ -223,3 +223,66 @@ class 아이퓨어_수율현황표_그대로(unittest.TestCase):
         self.assertEqual(_yield_value(vals, "포장(내수)"), "99.41")
         self.assertIsNone(_yield_value(vals, "포장(온누리에이치엔씨)"))
         self.assertEqual(_yield_value(vals, "조제"), "99.93")
+
+
+class 머리_칸이_두_열에_걸친_공양식(unittest.TestCase):
+
+    def assertSame(self, a, b, msg=None):
+        """python-docx 는 부를 때마다 새 칸 객체를 만든다 — 속 알맹이로 견준다."""
+        self.assertIs(getattr(a, "_tc", a), getattr(b, "_tc", b), msg)
+
+    """담당자 2026-09-08: 아이퓨어 공양식 7항은 '온누리 에이치엔씨' 머리 칸이 두 열에 걸쳐 있고,
+    자료 줄은 '내수' 가 두 열, '온누리' 가 한 열로 갈려 머리와 경계가 다르다.
+    열 번호로 짚으면 온누리 값(99.12)이 통째로 버려진다."""
+
+    def _table(self):
+        import docx
+        from pqr.engine import docedit as E
+        d = docx.Document()
+        t = d.add_table(rows=6, cols=8)
+        rows = [["연번", "중요공정 별 수율 현황 (%)", "", "", "", "", "", "비고"],
+                ["", "공정", "조제", "충전", "포장", "", "", ""],
+                ["", "", "", "", "내수", "온누리\n에이치엔씨", "", ""],
+                ["", "기준\nLot No.", "99.5 ± 0.5%", "92.0 ± 8.0%", "98.0 ± 2.0%", "", "", ""],
+                ["1", "", "", "", "", "", "", ""],
+                ["최댓값", "", "", "", "", "", "", ""]]
+        for i, r in enumerate(rows):
+            for j, v in enumerate(r):
+                E.set_cell(t.rows[i].cells[j], v)
+        for _ in range(5):                                   # 0줄: 제목이 1~6열에 걸친다
+            raw = E.raw_cells(t.rows[0]); E.merge_right(raw[1], raw[2])
+        for _ in range(2):                                   # 1줄: '포장' 이 4~6열
+            raw = E.raw_cells(t.rows[1]); E.merge_right(raw[4], raw[5])
+        raw = E.raw_cells(t.rows[2]); E.merge_right(raw[5], raw[6])   # '온누리' 가 5~6열
+        for _ in range(2):                                   # 3줄: 기준이 4~6열
+            raw = E.raw_cells(t.rows[3]); E.merge_right(raw[4], raw[5])
+        raw = E.raw_cells(t.rows[4]); E.merge_right(raw[4], raw[5])   # 자료 줄은 4~5열 / 6열
+        raw = E.raw_cells(t.rows[5]); E.merge_right(raw[0], raw[1])   # 요약 줄은 '최댓값' 이 0~1열
+        return t
+
+    def test_걸친_머리_칸은_한_공정이다(self):
+        from pqr.engine.recipe_ointment import _yield_columns
+        self.assertEqual(_yield_columns(self._table()),
+                         [(2, 3, "조제"), (3, 4, "충전"), (4, 5, "포장(내수)"), (5, 7, "포장(온누리에이치엔씨)")])
+
+    def test_자료_줄의_칸을_겹침으로_짚는다(self):
+        from pqr.engine.recipe_ointment import _yield_columns, _cells_for
+        from pqr.engine import docedit as E
+        t = self._table()
+        cols = _yield_columns(t)
+        값칸, 비고칸 = _cells_for(t.rows[4], cols)
+        raw = E.raw_cells(t.rows[4])
+        self.assertSame(값칸[0], raw[2])                 # 조제
+        self.assertSame(값칸[1], raw[3])                 # 충전
+        self.assertSame(값칸[2], raw[4])                 # 내수 — 4~5열에 걸친 칸
+        self.assertSame(값칸[3], raw[5])                 # 온누리 — 6열 칸 (예전에는 못 찾았다)
+        self.assertSame(비고칸, raw[6])                   # 비고는 맨 끝 칸 (예전에는 r[5]=온누리를 지웠다)
+
+    def test_요약_줄도_같은_자리에_쓴다(self):
+        from pqr.engine.recipe_ointment import _yield_columns, _cells_for
+        from pqr.engine import docedit as E
+        t = self._table()
+        값칸 = _cells_for(t.rows[5], _yield_columns(t))[0]
+        raw = E.raw_cells(t.rows[5])
+        self.assertSame(값칸[0], raw[1])                 # '최댓값' 이 0~1열을 덮어 한 칸씩 밀린다
+        self.assertSame(값칸[3], raw[4])

@@ -8,6 +8,7 @@ import os
 import re
 
 from ..pdftext import read_text, squash
+from . import coa_table
 
 LOT = re.compile(r"\b([A-Z]{2}[A-Z0-9]{4})\b")      # OEY101 · OZYD01 · LKY401 …
 
@@ -85,11 +86,41 @@ def test_items(text):
     return got
 
 
+UNIT = re.compile(r"\s*(?:mL|ml|㎖|g|mg|kg|개|매|%)\s*$")
+
+
+def _items(path):
+    """시험항목 표 — 열 자리로 읽고, 그러지 못하면 글 모양으로 읽는다."""
+    try:
+        got = coa_table.read_table(path)
+    except Exception:
+        got = {}
+    return got or test_items(read_text(path))
+
+
+def _item(items, *names):
+    """항목 이름으로 결과 글 — 가운뎃점(·∙ㆍ)과 빈칸은 무시하고 견준다."""
+    def flat(text):
+        return re.sub(r"[\s·∙ㆍ・.]", "", text or "")
+    for name in names:
+        want = flat(name)
+        for key, one in (items or {}).items():
+            if flat(key) == want:
+                return (one.get("value") or "").strip() or None
+    return None
+
+
+def _plain_unit(text):
+    """'0.52mL' → '0.52', '0.50 ~ 0.55mL' → '0.50 ~ 0.55'. 단위는 표 머리에 있다."""
+    return UNIT.sub("", (text or "").strip()) or None
+
+
 def read_ipc(path):
     """공정 시험성적서(조제·충전 등) 한 장."""
     text = squash(read_text(path))
     # 항목 표는 칸이 여러 칸 띄어쓰기로 나뉘므로 squash 하지 않은 글에서 읽는다
-    out = {"file": os.path.basename(path), "items": test_items(read_text(path))}
+    items = _items(path)
+    out = {"file": os.path.basename(path), "items": items}
     out["lot"] = _first(r"제\s*조\s*번\s*호.*?\n.*?\b([A-Z]{2}[A-Z0-9]{4})\b", text, flags=re.S) \
         or _first(r"\b(O[A-Z]{2}[A-Z0-9]{3})\b", text)
     out["stage"] = _first(r"공\s*정\s*명\s+(\S+)", text)
@@ -102,12 +133,26 @@ def read_ipc(path):
     m = re.search(r"생균수\s+(\S+)\s*이하\s+(\S+(?:\s*\S+)?)\s+\S+\s+\d{4}\.\d{2}\.\d{2}", text)
     if m:
         out["bioburden_spec"], out["bioburden"] = m.group(1) + " 이하", norm(m.group(2))
-    m = re.search(r"질량[·․\.]?\s*용량\s+평균\s*:\s*([\d\.]+\s*~\s*[\d\.]+g)\s+([\d\.]+\s*g?)", text)
-    if m:
-        out["mass_avg_spec"], out["mass_avg"] = norm(m.group(1)), norm(m.group(2))
-    m = re.search(r"개개\s*:\s*([\d\.]+g 이상)\s+([\d\.]+\s*~\s*[\d\.]+\s*g?)", text)
-    if m:
-        out["mass_each_spec"], out["mass_each"] = norm(m.group(1)), norm(m.group(2))
+    # 질량·용량 — 항목 표에서 곧바로 읽는다. 예전에는 정규식에 'g' 를 박아 두어 점안액의
+    # 'mL' 을 못 읽었고 9.2.3 표의 두 열이 세 Lot 모두 비었다(담당자 2026-09-08).
+    for key, names in (("mass_avg", ("질량·용량(평균)", "질량(평균)", "용량(평균)", "충전량(평균)")),
+                       ("mass_each", ("질량·용량(개개)", "질량(개개)", "용량(개개)", "충전량(개개)"))):
+        got = _plain_unit(_item(items, *names))
+        if got:
+            out[key] = got
+    if not out.get("mass_avg"):
+        m = re.search(r"질량[·․∙ㆍ\.]?\s*용량\s+평균\s*:\s*([\d\.]+\s*~\s*[\d\.]+\s*\S*)\s+([\d\.]+\s*\S*)", text)
+        if m:
+            out["mass_avg_spec"], out["mass_avg"] = norm(m.group(1)), _plain_unit(m.group(2))
+    if not out.get("mass_each"):
+        m = re.search(r"개개\s*:\s*([\d\.]+\s*\S*\s*이상)\s+([\d\.]+\s*~\s*[\d\.]+\s*\S*)", text)
+        if m:
+            out["mass_each_spec"], out["mass_each"] = norm(m.group(1)), _plain_unit(m.group(2))
+    for key, names in (("leak", ("기밀도",)), ("bioburden", ("생균수", "바이오버든")),
+                       ("sterility", ("무균", "무균시험"))):
+        got = _item(items, *names)
+        if got and not out.get(key):
+            out[key] = got
     if "인쇄상태가 양호하며" in text:
         out["tube_print"] = "인쇄상태가 양호하며 제조번호 및 사용기한의 압인상태가 명확히 식별 가능함"
     if "메틸렌블루시액 침투 없음" in text:
@@ -172,7 +217,8 @@ def _near(text, needle, span):
 def read_fp(path):
     """완제 시험성적서 한 장 (HLF-QC-327-06)."""
     text = squash(read_text(path))
-    out = {"file": os.path.basename(path), "items": test_items(read_text(path))}
+    items = _items(path)
+    out = {"file": os.path.basename(path), "items": items}
     out["lot"] = _first(r"\b(O[A-Z]{2}[A-Z0-9]{3})\b", text) or _first(LOT.pattern, text)
     out["expiry"] = _first(r"\b(\d{4}\.\d{2}\.\d{2})\s+한림제약", text)
     out["appearance"] = _appearance(text)
