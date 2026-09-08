@@ -428,6 +428,33 @@ def _assay_limits(data):
     return out
 
 
+def points_by_part(one, part, year_to=None, shaky=None):
+    """시험일지 판독 한 건에서 그 성분의 {시점: 값} — 평가 기간을 넘어선 시점은 뺀다.
+
+    판독값의 성분 이름이 경향표와 다를 수 있다 — '트레할로스수화물' 과 '함량'
+    (담당자 2026-09-08: 판독 3 Lot 이 있는데 '안정성 시험 결과값이 없어' 경향 파일을 못 만들었다).
+    같은 계열 이름을 먼저 찾고, 성분이 하나뿐이면 이름이 달라도 그 값을 쓴다.
+    """
+    out = {}
+    for point in one.get("points", []):
+        got = re.findall(r"\d{4}", point.get("done") or "") or \
+            re.findall(r"\d{4}", point.get("expected") or "")     # 일자를 못 읽었으면 예정 시기로
+        if year_to and got and int(got[0]) > year_to:
+            continue
+        assays = point.get("assays") or {}
+        value = _num(assays.get(part))
+        if value is None and assays:
+            같은것 = [v for k, v in assays.items() if _same_part(k, part)]
+            if not 같은것 and len(assays) == 1:
+                같은것 = list(assays.values())
+            value = _num(같은것[0]) if 같은것 else None
+        if shaky is not None and part in (point.get("unsure") or []):
+            shaky.add(point["period"])         # 손글씨 판독이 애매한 시점 — 시트에서 주황
+        if value is not None:
+            out[point["period"]] = float(value)
+    return out
+
+
 def _same_part(a, b):
     a, b = re.sub(r"\s+", "", a or ""), re.sub(r"\s+", "", b or "")
     return bool(a) and bool(b) and (a in b or b in a)
@@ -466,19 +493,7 @@ def _trend_file(form, folder, data, product, today, report_path, seed, logs, suf
     limits = _assay_limits(data)
 
     def points_of(one, part, shaky=None):
-        out = {}
-        for point in one.get("points", []):
-            got = re.findall(r"\d{4}", point.get("done") or "") or \
-                re.findall(r"\d{4}", point.get("expected") or "")     # 일자를 못 읽었으면 예정 시기로
-            if year_to and got and int(got[0]) > year_to:
-                continue
-            value = _num((point.get("assays") or {}).get(part))
-            if shaky is not None and part in (point.get("unsure") or []):
-                shaky.add(point["period"])         # 손글씨 판독이 애매한 시점 — 시트에서 주황. 예상값이
-                                                   # 있으면 그 값을 적는다(담당자 2026-09-06), 없으면 빈 주황 칸
-            if value is not None:
-                out[point["period"]] = float(value)
-        return out
+        return points_by_part(one, part, year_to, shaky)
 
     parts = []                                    # [(성분, 시험항목 글, 하한, 상한, 지난 Lot)]
     for sheet in seed:

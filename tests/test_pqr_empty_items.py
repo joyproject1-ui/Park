@@ -53,3 +53,45 @@ class 못_읽은_항(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class 경향_성분_이름(unittest.TestCase):
+    """판독값의 성분 이름이 경향표와 달라도 값을 잃지 않는다
+    (담당자 2026-09-08: 판독 3 Lot 이 있는데 '결과값이 없어' 경향 파일을 못 만들었다)."""
+
+    def _log(self, assays, period="12M", done="2025.05.02", unsure=()):
+        return {"lot": "LWY201", "points": [{"period": period, "done": done,
+                                             "assays": assays, "unsure": list(unsure)}]}
+
+    def test_이름이_같으면_그대로(self):
+        from pqr.engine.excel_attach import points_by_part
+        got = points_by_part(self._log({"트레할로스수화물": 99.8}), "트레할로스수화물", 2025)
+        self.assertEqual(got, {"12M": 99.8})
+
+    def test_같은_계열_이름이면_찾는다(self):
+        from pqr.engine.excel_attach import points_by_part
+        got = points_by_part(self._log({"트레할로스": 99.8}), "트레할로스수화물", 2025)
+        self.assertEqual(got, {"12M": 99.8})
+
+    def test_성분이_하나뿐이면_이름이_달라도_쓴다(self):
+        from pqr.engine.excel_attach import points_by_part
+        got = points_by_part(self._log({"함량": 99.8}), "트레할로스수화물", 2025)
+        self.assertEqual(got, {"12M": 99.8})
+
+    def test_성분이_여럿이고_이름이_다르면_쓰지_않는다(self):
+        from pqr.engine.excel_attach import points_by_part
+        got = points_by_part(self._log({"겐타마이신": 99.8, "플루오로메톨론": 101.2}),
+                             "트레할로스수화물", 2025)
+        self.assertEqual(got, {})
+
+    def test_평가_기간을_넘어선_시점은_뺀다(self):
+        from pqr.engine.excel_attach import points_by_part
+        got = points_by_part(self._log({"함량": 99.8}, done="2026.01.20"), "트레할로스수화물", 2025)
+        self.assertEqual(got, {})
+
+    def test_애매한_시점은_따로_알린다(self):
+        from pqr.engine.excel_attach import points_by_part
+        shaky = set()
+        points_by_part(self._log({"함량": 99.8}, unsure=["트레할로스수화물"]),
+                       "트레할로스수화물", 2025, shaky)
+        self.assertEqual(shaky, {"12M"})
