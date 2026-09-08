@@ -186,3 +186,59 @@ class 판독_결과_되쓰기(unittest.TestCase):
             handle.write(b" more")                       # 크기가 달라지면 다른 파일로 본다
         self._once(reader)
         self.assertEqual(calls["n"], 2)
+
+
+class 스캔_시험성적서(unittest.TestCase):
+    """담당자 2026-09-08: "시험 성적을 제대로 못 읽는 것 같아" — 9.2.4 완제 성적서가
+    세 쪽 모두 글자 0자인 스캔본이었다."""
+
+    def setUp(self):
+        import tempfile
+        self.dir = tempfile.mkdtemp(prefix="pqr-coa-")
+        self.pdf = os.path.join(self.dir, "LWY201.pdf")
+        with open(self.pdf, "wb") as handle:
+            handle.write(b"%PDF-1.4 scan")
+        self.notes = []
+
+    def _note(self, item, path, why):
+        self.notes.append((item, why))
+
+    def _run(self, reader):
+        import types
+        import pqr.engine as pkg
+        old = getattr(pkg, "claude_cli", None)
+        pkg.claude_cli = types.SimpleNamespace(available=lambda: True, read_coa=reader)
+        sys.modules["pqr.engine.claude_cli"] = pkg.claude_cli
+        try:
+            return C._coa_by_claude(self.pdf, self.dir, None, self._note, "9.2.4")
+        finally:
+            if old is None:
+                delattr(pkg, "claude_cli"); sys.modules.pop("pqr.engine.claude_cli", None)
+            else:
+                pkg.claude_cli = old; sys.modules["pqr.engine.claude_cli"] = old
+
+    def _answer(self):
+        return {"file": "LWY201.pdf", "lot": "LWY201", "appearance": "무색의 투명한 액",
+                "assays": [{"part": "트레할로스수화물", "lo": "90.0", "hi": "110.0", "value": "99.8"}]}
+
+    def test_읽고_되쓴다(self):
+        calls = {"n": 0}
+
+        def reader(*a, **kw):
+            calls["n"] += 1
+            return self._answer()
+        first = self._run(reader)
+        self.assertEqual(first["assays"][0]["value"], "99.8")
+        self.assertTrue(os.path.isfile(os.path.join(self.dir, C.COA_CACHE)))
+        self._run(reader)                                 # 두 번째는 판독기를 부르지 않는다
+        self.assertEqual(calls["n"], 1)
+
+    def test_읽어_낸_것이_없으면_까닭을_남긴다(self):
+        got = self._run(lambda *a, **kw: {"file": "LWY201.pdf", "assays": []})
+        self.assertIsNone(got)
+        self.assertEqual(self.notes[0][0], "9.2.4")
+        self.assertIn("읽어 낸 것이 없음", self.notes[0][1])
+
+    def test_판독_파일은_자료로_세지_않는다(self):
+        from pqr import build
+        self.assertTrue(any(C.COA_CACHE.startswith(side) for side in build.SIDE_FILES))

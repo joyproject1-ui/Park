@@ -413,3 +413,48 @@ def read_change(path, folder=None, log=None):
     say("    [12] %s — Claude Code 로 읽음: %s (조치 %d건)"
         % (os.path.basename(path), out["title"] or "제목 못 읽음", len(out["actions"])))
     return out
+
+COA_PROMPT = """다음 시험성적서(스캔 PDF)를 읽고 JSON 만 출력하세요.
+
+읽을 파일:
+%(file)s
+
+규칙
+· 보이는 대로만 적습니다 — 안 보이면 빈 값으로 두고 지어내지 않습니다.
+· "assays" 는 함량 시험입니다. 성분 이름·규격(하한~상한)·결과값을 짝으로 적습니다.
+· 숫자는 단위를 빼고 숫자만 적습니다.
+
+{"lot": "LWY201", "mfg_date": "2025.02.12", "expiry": "2027.02.11",
+ "appearance": "무색의 투명한 액", "verdict": "적합",
+ "particle": "", "particle_spec": "", "metal_total": "", "metal_each": "",
+ "bioburden": "", "bioburden_spec": "",
+ "assays": [{"part": "트레할로스수화물", "lo": "90.0", "hi": "110.0", "value": "99.8"}]}
+"""
+
+
+def read_coa(path, folder=None, log=None):
+    """스캔 시험성적서를 이 PC 의 Claude Code 로 읽는다 — readers.coa 와 같은 꼴."""
+    say = log or (lambda *a: None)
+    if not _exe():
+        raise RuntimeError("이 PC 에 Claude Code 가 없습니다")
+    where = folder or os.path.dirname(os.path.abspath(path))
+    got = _json_object(_ask(_exe(), COA_PROMPT % {"file": os.path.abspath(path)}, where, None, [path]))
+    out = {"file": os.path.basename(path), "assays": []}
+    for key in ("lot", "mfg_date", "expiry", "appearance", "verdict", "particle", "particle_spec",
+                "metal_total", "metal_each", "bioburden", "bioburden_spec"):
+        value = str(got.get(key) or "").strip()
+        if value:
+            out[key] = value
+    본 = set()
+    for one in got.get("assays") or []:
+        part = str((one or {}).get("part") or "").strip()
+        if part and part not in 본:
+            본.add(part)
+            out["assays"].append({"part": part, "lo": str(one.get("lo") or "").strip(),
+                                  "hi": str(one.get("hi") or "").strip(),
+                                  "value": str(one.get("value") or "").strip()})
+    if out["assays"]:
+        out["assay"] = out["assays"][0]["value"]
+        out["assay_spec"] = "%s ~ %s%%" % (out["assays"][0]["lo"], out["assays"][0]["hi"])
+    say("    [9.2] %s — Claude Code 로 읽음: 함량 %d건" % (out["file"], len(out["assays"])))
+    return out

@@ -422,6 +422,63 @@ def _change_by_claude(path, folder, log, note):
     return None
 
 
+COA_CACHE = "PQR 시험성적서 판독.json"
+
+
+def _coa_by_claude(path, folder, log, note, item):
+    """글자 없는 스캔 시험성적서를 Claude 로 읽는다 — 못 읽으면 None.
+
+    담당자 2026-09-08: "시험 성적을 제대로 못 읽는 것 같아." 아이퓨어점안액의 9.2.4 완제
+    성적서(LIMS 연동 X)가 세 쪽 모두 글자 0자인 스캔본이라 한 칸도 못 읽었다. 변경요청서와
+    같은 갈래로 읽고, 한 번 읽은 것은 되쓴다 — 성적서는 Lot 마다 있어 여러 장이다.
+    """
+    say = log or (lambda *a: None)
+    key = _change_cache_key(path)
+    box = os.path.join(folder or "", COA_CACHE)
+    try:
+        with open(box, encoding="utf-8") as handle:
+            cache = json.load(handle)
+        cache = cache if isinstance(cache, dict) else {}
+    except (OSError, ValueError):
+        cache = {}
+    if key in cache:
+        say("    [%s] %s — 지난 판독 결과를 그대로 씁니다" % (item, os.path.basename(path)))
+        return dict(cache[key])
+    갈래 = []
+    try:
+        from . import vision as vision_mod, vision_claude
+        if vision_mod.available():
+            갈래.append(("Claude(API 키)", lambda: vision_claude.read_coa(path, say)))
+    except Exception:
+        pass
+    try:
+        from . import claude_cli
+        if claude_cli.available():
+            갈래.append(("이 PC 의 Claude Code", lambda: claude_cli.read_coa(path, folder, say)))
+    except Exception:
+        pass
+    까닭 = []
+    for 이름, 부르기 in 갈래:
+        try:
+            got = 부르기()
+        except Exception as error:
+            까닭.append("%s: %s" % (이름, error))
+            continue
+        if got.get("assays") or got.get("appearance") or got.get("bioburden"):
+            cache[key] = got
+            try:
+                with open(box, "w", encoding="utf-8") as handle:
+                    json.dump(cache, handle, ensure_ascii=False, indent=2)
+            except OSError:
+                pass
+            return got
+        까닭.append("%s: 읽어 낸 것이 없음" % 이름)
+    note(item, path, "글자 없는 스캔 시험성적서입니다 — %s"
+         % (" / ".join(까닭) or "이 PC 에 Claude(API 키)도 Claude Code 도 없습니다. "
+                                "'PQR-Claude설치.bat' 을 실행하면 다음부터 읽습니다"))
+    return None
+
+
 def collect(folder, product_name=None, log=None):
     log = log or (lambda *a: None)
     data = ProductData()
@@ -502,6 +559,13 @@ def collect(folder, product_name=None, log=None):
                 rec = fn(p)
             except PdfTextError as e:
                 note(item, p, str(e)); continue
+            # 글자가 없는 스캔 성적서는 한 칸도 못 읽는다 — Claude 에게 맡긴다
+            # (담당자 2026-09-08: "시험 성적을 제대로 못 읽는 것 같아").
+            읽힌것 = [k for k, v in rec.items() if k not in ("file",) and v]
+            if len(읽힌것) <= 1 and is_scanned(p):
+                읽음 = _coa_by_claude(p, folder, log, note, item)
+                if 읽음 is not None:
+                    rec = 읽음
             lot = rec.get("lot") or _lot_from_name(os.path.basename(p))
             if not lot:
                 note(item, p, "제조번호를 읽지 못함"); continue

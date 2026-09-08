@@ -313,3 +313,78 @@ def read_change(path, log=None, pages=3):
     say("    [12] %s — Claude(API 키)로 읽음: %s (조치 %d건)"
         % (os.path.basename(path), out["title"] or "제목 못 읽음", len(out["actions"])))
     return out
+
+# ---------------------------------------------------------------- 완제/공정 시험성적서(스캔) 판독
+COA_PROMPT = """이 시험성적서(스캔 이미지)를 읽고 JSON 만 출력하세요.
+보이는 대로만 적고, 안 보이면 빈 값으로 둡니다 — 지어내지 않습니다.
+· "assays" 는 함량 시험입니다. 성분 이름과 규격(하한~상한), 결과값을 짝으로 적습니다.
+· 숫자는 단위를 빼고 숫자만 적습니다."""
+
+COA_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "lot": {"type": "string"}, "mfg_date": {"type": "string"}, "expiry": {"type": "string"},
+        "appearance": {"type": "string"}, "verdict": {"type": "string"},
+        "particle": {"type": "string"}, "particle_spec": {"type": "string"},
+        "metal_total": {"type": "string"}, "metal_each": {"type": "string"},
+        "bioburden": {"type": "string"}, "bioburden_spec": {"type": "string"},
+        "assays": {"type": "array", "items": {
+            "type": "object",
+            "properties": {"part": {"type": "string"}, "lo": {"type": "string"},
+                           "hi": {"type": "string"}, "value": {"type": "string"}},
+            "required": ["part", "lo", "hi", "value"], "additionalProperties": False}},
+    },
+    "required": ["lot", "mfg_date", "expiry", "appearance", "verdict", "particle", "particle_spec",
+                 "metal_total", "metal_each", "bioburden", "bioburden_spec", "assays"],
+    "additionalProperties": False,
+}
+
+
+def _coa_page(client, png_b64):
+    body = dict(model=MODEL, max_tokens=8000,
+                output_config={"format": {"type": "json_schema", "schema": COA_SCHEMA}},
+                messages=[{"role": "user", "content": [
+                    {"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": png_b64}},
+                    {"type": "text", "text": COA_PROMPT},
+                ]}])
+    try:
+        response = client.beta.messages.create(betas=["server-side-fallback-2026-07-01"],
+                                               fallbacks="default", **body)
+    except TypeError:
+        response = client.messages.create(**body)
+    if getattr(response, "stop_reason", "") == "refusal":
+        raise RuntimeError("판독 거부")
+    return json.loads(next(b.text for b in response.content if b.type == "text"))
+
+
+def read_coa(path, log=None, pages=3):
+    """글자 없는 스캔 시험성적서를 Claude(API 키)로 읽는다 — readers.coa 와 같은 꼴."""
+    say = log or (lambda *a: None)
+    from . import handwriting
+    client = _client()
+    n = min(pages, handwriting.page_count(path) or 1)
+    out = {"file": os.path.basename(path), "assays": []}
+    본 = set()
+    for page_no in range(1, n + 1):
+        try:
+            got = _coa_page(client, _png(path, page_no))
+        except Exception as error:
+            say("    [9.2] %d쪽을 읽지 못했습니다 — %s" % (page_no, error))
+            continue
+        for key in ("lot", "mfg_date", "expiry", "appearance", "verdict", "particle", "particle_spec",
+                    "metal_total", "metal_each", "bioburden", "bioburden_spec"):
+            value = str(got.get(key) or "").strip()
+            if value and not out.get(key):
+                out[key] = value
+        for one in got.get("assays") or []:
+            part = str((one or {}).get("part") or "").strip()
+            if part and part not in 본:
+                본.add(part)
+                out["assays"].append({"part": part, "lo": str(one.get("lo") or "").strip(),
+                                      "hi": str(one.get("hi") or "").strip(),
+                                      "value": str(one.get("value") or "").strip()})
+    if out["assays"]:
+        out["assay"] = out["assays"][0]["value"]
+        out["assay_spec"] = "%s ~ %s%%" % (out["assays"][0]["lo"], out["assays"][0]["hi"])
+    say("    [9.2] %s — Claude(API 키)로 읽음: 함량 %d건" % (out["file"], len(out["assays"])))
+    return out
