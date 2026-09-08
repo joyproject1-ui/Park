@@ -962,6 +962,10 @@ class Handler(BaseHTTPRequestHandler):
         except UploadError as error:
             return self._json(400, {"ok": False, "error": str(error)})
         except Exception as error:               # 서버가 죽지 않도록 오류를 그대로 알려 줍니다.
+            # 검은 프로그램 창에도 남긴다 — 담당자가 그 글을 보내 주면 멈춘 자리를 바로 안다
+            # (담당자 2026-09-08: 화면에는 'Failed to fetch' 만 떴다).
+            import traceback
+            sys.stderr.write("\n[오류] %s %s\n%s\n" % (path, error, traceback.format_exc()))
             return self._json(500, {"ok": False, "error": "%s: %s"
                                     % (type(error).__name__, error)})
         return self._send(404, "찾을 수 없습니다", "text/plain; charset=utf-8")
