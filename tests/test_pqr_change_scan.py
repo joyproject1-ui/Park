@@ -218,7 +218,8 @@ class 스캔_시험성적서(unittest.TestCase):
                 pkg.claude_cli = old; sys.modules["pqr.engine.claude_cli"] = old
 
     def _answer(self):
-        return {"file": "LWY201.pdf", "lot": "LWY201", "appearance": "무색의 투명한 액",
+        # 요즘 판독기는 시험항목 표(items)를 늘 함께 준다 — 없는 옛 결과는 되쓰지 않는다
+        return {"file": "LWY201.pdf", "lot": "LWY201", "appearance": "무색의 투명한 액", "items": {},
                 "assays": [{"part": "트레할로스수화물", "lo": "90.0", "hi": "110.0", "value": "99.8"}]}
 
     def test_읽고_되쓴다(self):
@@ -242,3 +243,31 @@ class 스캔_시험성적서(unittest.TestCase):
     def test_판독_파일은_자료로_세지_않는다(self):
         from pqr import build
         self.assertTrue(any(C.COA_CACHE.startswith(side) for side in build.SIDE_FILES))
+
+
+class 옛_성적서_판독_결과(unittest.TestCase):
+    """담당자 PC 2026-09-08: '9.2.4 LWYO01.pdf — 시험항목 0건' — 함량만 묻던 때의 되쓰기 결과가 걸렸다."""
+
+    def test_items_열쇠가_없으면_다시_읽는다(self):
+        import json, tempfile
+        folder = tempfile.mkdtemp(prefix="pqr-oldcoa-")
+        pdf = os.path.join(folder, "LWY201.pdf")
+        with open(pdf, "wb") as h:
+            h.write(b"%PDF-1.4 old")
+        key = C._change_cache_key(pdf)
+        with open(os.path.join(folder, C.COA_CACHE), "w", encoding="utf-8") as h:
+            json.dump({key: {"file": "LWY201.pdf", "assays": [{"part": "x", "value": "99.8", "lo": "90", "hi": "110"}]}}, h)
+        calls = {"n": 0}
+
+        def reader(*a, **kw):
+            calls["n"] += 1
+            return {"file": "LWY201.pdf", "lot": "LWY201", "assays": [], "items": {"pH": {"spec": "", "value": "7.0"}}}
+        from pqr.engine import claude_cli, vision
+        old = (claude_cli.available, claude_cli.read_coa, vision.available)
+        claude_cli.available, claude_cli.read_coa, vision.available = (lambda: True), reader, (lambda: False)
+        try:
+            got = C._coa_by_claude(pdf, folder, None, lambda *a: None, "9.2.4")
+        finally:
+            claude_cli.available, claude_cli.read_coa, vision.available = old
+        self.assertEqual(calls["n"], 1)                       # 옛 결과를 버리고 다시 읽었다
+        self.assertIn("pH", got["items"])

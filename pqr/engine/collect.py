@@ -9,6 +9,7 @@ import json
 import os
 import re
 import tempfile
+import time
 import zipfile
 
 from .. import build as build_module
@@ -53,6 +54,8 @@ class ProductData(object):
         self.folder = ""            # 이 자료를 읽은 제품 폴더
         self.previous_report = None
         self.files = {}           # item -> [paths]
+        self.read = {}            # 경로 -> 무엇을 읽었는지 (자료 판독 대장)
+        self.ledger = []          # [(항, 파일 이름, 상태, 설명)] — 입력 폴더의 모든 파일
         self.issues = []          # [(항, 파일, 설명)]
 
     @property
@@ -496,6 +499,11 @@ def _coa_by_claude(path, folder, log, note, item):
     except (OSError, ValueError):
         cache = {}
     본것 = _cache_get(cache, key)
+    # 시험항목 표(items)가 없는 옛 판독 결과는 버린다 — 함량만 묻던 때의 것이라 9.2 열이 빈다
+    # (담당자 PC 2026-09-08: '9.2.4 LWYO01.pdf — 시험항목 0건 — 하나도 못 읽음' 이 되쓰기에서 나왔다).
+    if 본것 is not None and "items" not in 본것:            # 표를 묻지 않던 옛 꼴 (열쇠 자체가 없다)
+        say("    [%s] %s — 지난 판독 결과에 시험항목 표가 없어 다시 읽습니다" % (item, os.path.basename(path)))
+        본것 = None
     if 본것 is not None:
         say("    [%s] %s — 지난 판독 결과를 그대로 씁니다 (%s)"
             % (item, os.path.basename(path), COA_CACHE))
@@ -520,8 +528,8 @@ def _coa_by_claude(path, folder, log, note, item):
         except Exception as error:
             까닭.append("%s: %s" % (이름, error))
             continue
-        if got.get("assays") or got.get("appearance") or got.get("bioburden"):
-            cache[key] = got
+        if got.get("assays") or got.get("appearance") or got.get("bioburden") or got.get("items"):
+            cache[key] = got                          # 시험항목 표만 읽혀도 값이다
             try:
                 with open(box, "w", encoding="utf-8") as handle:
                     json.dump(cache, handle, ensure_ascii=False, indent=2)
@@ -546,18 +554,26 @@ def collect(folder, product_name=None, log=None):
         data.issues.append((item, os.path.basename(path), why))
         log("  [%s] %s — %s" % (item, os.path.basename(path), why))
 
+    def saw(path, what):
+        """이 파일을 읽었다 — 자료 판독 대장에 남긴다 (담당자 2026-09-08: "PC 입력폴더에 있는 원본
+        파일을 빠짐없이 찾아서 읽었는지 검증하는 기능을 강화하라")."""
+        data.read.setdefault(path, what)
+
     # 6. 제조내역 (수출용 ERP)  · 7. 수율
     records = []
     for p in got.get("6", []):
         if p.lower().endswith(".pdf"):
             try:
-                data.manufacturing += erp.read_manufacturing(p)
+                got_rows = erp.read_manufacturing(p)
+                data.manufacturing += got_rows
+                saw(p, "제조내역 %d줄" % len(got_rows))
             except PdfTextError as e:
                 note("6", p, str(e))
         elif p.lower().endswith(".docx"):
             # 공 기록서(제조·충전·포장) — 제조단위·포장단위·수율 기준·원/자재 코드 (담당자 2026-09-06)
             try:
                 records.append(batch_record.read(p))
+                saw(p, "공 기록서")
             except Exception as e:                        # 서식이 달라 못 읽어도 작성은 계속
                 note("6", p, "공 기록서를 읽지 못함: %s" % e)
     # 다른 제품의 공 기록서가 섞여 오면(담당자 PC 2026-09-07: 한림포비돈점안액 폴더에 '올로원스점안액 3ml'
@@ -589,6 +605,7 @@ def collect(folder, product_name=None, log=None):
             for lot, vals in got_lots:
                 data.yields[lot] = vals
             data.yield_specs.update(yield_sheet.read_specs(p))
+            saw(p, "수율 Lot %d개" % len(got_lots))
             names = sorted({n for _, vals in got_lots for n in vals})
             log("  [7] %s — Lot %d개(%s) · 공정 열 %s"
                 % (os.path.basename(p), len(got_lots),
@@ -601,19 +618,26 @@ def collect(folder, product_name=None, log=None):
     for p in got.get("8.1.1", []):
         if p.lower().endswith(".xlsx"):
             data.suppliers_raw = suppliers.read_supplier_list(p)
+            saw(p, "공급업체 %d줄" % len(data.suppliers_raw or []))
     for p in got.get("8.1.3", []):
         if p.lower().endswith(".xlsx"):
             data.suppliers_mat = suppliers.read_supplier_list(p)
+            saw(p, "공급업체 %d줄" % len(data.suppliers_mat or []))
     for p in got.get("8.1.2", []):
         if p.lower().endswith(".xlsx"):
             data.api_chain = suppliers.read_api_chain(p)
+            saw(p, "주성분 공급망")
     # ERP 가 그대로 내려 준 표에는 그 원료를 쓴 모든 제품이 들어 있다 — 제품 이름으로 가려낸다.
     for p in got.get("8.2.1", []) + got.get("8.2.1.1", []):
         if p.lower().endswith((".xls", ".xlsx")):
-            data.raw_tests += erp.group_by_test(erp.read_material_tests(p, product=product_name))
+            got_rows = erp.group_by_test(erp.read_material_tests(p, product=product_name))
+            data.raw_tests += got_rows
+            saw(p, "원료 시험 %d항목" % len(got_rows))
     for p in got.get("8.2.2", []):
         if p.lower().endswith((".xls", ".xlsx")):
-            data.pkg_tests += erp.group_by_test(erp.read_material_tests(p, product=product_name))
+            got_rows = erp.group_by_test(erp.read_material_tests(p, product=product_name))
+            data.pkg_tests += got_rows
+            saw(p, "자재 시험 %d항목" % len(got_rows))
     # 9.2.x 성적서
     # 9.2.1 도 조제 단계 성적서다 — 점안제는 9.2.1(점안제)·9.2.2(바이오버든)로 갈라 올린다
     # (담당자 2026-09-07: 한림포비돈점안액 폴더에 'ELYO01 조제 완료 후.pdf' 넉 장이 9.2.1 로 올라와 있었다).
@@ -646,6 +670,7 @@ def collect(folder, product_name=None, log=None):
             log("  [%s] %s — %s · 시험항목 %d건%s"
                 % (item, os.path.basename(p), lot, len(names),
                    (" (" + ", ".join(names[:10]) + ")") if names else " — 하나도 못 읽음"))
+            saw(p, "%s 성적서 · 시험항목 %d건" % (lot, len(names)) if names else None)
     # 9.2.1 에서 읽은 조제 값은 9.2.2 에 없는 것만 보탠다 — 같은 조제 단계라 한 곳에서 보면 된다.
     for recs in data.coa.values():
         if recs.get("921"):
@@ -667,7 +692,9 @@ def collect(folder, product_name=None, log=None):
                 # 목록만 채운다 (담당자 2026-09-07: "허가증은 빼자, 의미가 없네").
                 if not is_scanned(p):
                     data.license = license_reader.read_license(p)
+                    saw(p, "허가증")
                 else:
+                    saw(p, "스캔 허가증 — 결재본 값을 씀")
                     log("  [3] %s — 글자 없는 스캔본이라 허가 정보는 결재본 값을 그대로 씁니다"
                         % os.path.basename(p))
             except PdfTextError as e:
@@ -678,6 +705,7 @@ def collect(folder, product_name=None, log=None):
             try:
                 from .. import master as master_module
                 data.pv = master_module.read_pv_master(p, product_name or "")
+                saw(p, "PV 마스터 %d줄" % len(data.pv or []))
             except Exception as e:
                 note("10.1", p, "PV 마스터 판독 실패: %s" % e)
             try:                                   # 수출용은 마스터에 '(수출용)' 이름으로 따로 있다
@@ -702,7 +730,9 @@ def collect(folder, product_name=None, log=None):
 
     for p in _newest_first(got.get("10.2", [])):
         try:
-            for key, entry in masters.equipment_docs(p).items():
+            docs_ = masters.equipment_docs(p)
+            saw(p, "설비 %d대" % len(docs_))
+            for key, entry in docs_.items():
                 have = data.equipment.setdefault(key, entry)
                 if have is entry:
                     continue
@@ -729,6 +759,7 @@ def collect(folder, product_name=None, log=None):
     for p in support_files:
         try:
             읽음[p] = masters.support_docs(p)
+            saw(p, "제조지원 설비 %d대" % len(읽음[p] or {}))
         except Exception as e:
             note("10.3-5", p, str(e))
 
@@ -775,6 +806,7 @@ def collect(folder, product_name=None, log=None):
                     got_one = 읽음
             if got_one is not None:
                 data.deviations.append(got_one)
+                saw(p, "일탈 %s" % (got_one.get("doc_no") or got_one.get("title") or ""))
     # 12항에 올린 변경요청서는 하나도 빠뜨리지 않는다 — 읽지 못한 것도 파일 이름의 문서번호로 줄을
     # 세운다 (담당자 2026-09-06: "12항 변경관리가 5개인데 1개만 표시되어 있네").
     for p in got.get("12", []):
@@ -796,6 +828,7 @@ def collect(folder, product_name=None, log=None):
                     cc["unread"] = True              # 못 읽은 것과 같다 — 노랑으로
                     note("12", p, "변경요청서에서 변경사항·조치사항을 읽지 못해 문서번호만 적었습니다 — 직접 채우세요")
             data.changes.append(cc)
+            saw(p, None if cc.get("unread") else "변경요청서 %s" % (cc.get("doc_no") or ""))
         except Exception as e:                       # 서식이 아주 다르거나 파일이 깨진 것
             m = re.search(r"(CC-\d{6}-\d{2})", os.path.basename(p))
             읽음 = _change_by_claude(p, folder, log, note)      # 여기서도 Claude 에게 맡긴다
@@ -803,6 +836,7 @@ def collect(folder, product_name=None, log=None):
                 if m and not 읽음.get("doc_no"):
                     읽음["doc_no"] = m.group(1)
                 data.changes.append(읽음)
+                saw(p, "변경요청서 %s (Claude)" % 읽음.get("doc_no", ""))
                 continue
             data.changes.append({"doc_no": m.group(1) if m else os.path.splitext(os.path.basename(p))[0],
                                  "title": "", "unread": True, "actions": [], "products": ""})
@@ -824,11 +858,13 @@ def collect(folder, product_name=None, log=None):
     for p in got.get("13", []):
         if p.lower().endswith(".pdf"):
             data.stability_files.append((p, is_scanned(p)))
+            saw(p, "안정성 시험일지" + (" (스캔)" if data.stability_files[-1][1] else ""))
         elif p.lower().endswith(".json"):
             try:
                 with open(p, encoding="utf-8") as fh:
                     got_json = json.load(fh)
                 data.stability_logs += got_json if isinstance(got_json, list) else got_json.get("logs", [])
+                saw(p, "판독 결과 %d Lot" % len(data.stability_logs))
                 log("  [13] %s — 안정성 시험일지 판독 결과 %d Lot" % (os.path.basename(p), len(data.stability_logs)))
                 data.stability_cache = (p, 0 if isinstance(got_json, list) else got_json.get("reader_version", 0))
                 # 사람이(또는 이 대화의 Claude 가) 13 폴더 전체를 읽어 만든 판독 파일이면 PDF 를 더 읽지 않는다
@@ -940,6 +976,7 @@ def collect(folder, product_name=None, log=None):
                             and trend_reader.is_trend_file(tp)):
                         try:
                             sheets += trend_reader.read_trend(tp)
+                            saw(tp, "경향표")
                         except Exception:
                             pass
                 handwriting.merge_known(logs, sheets, log)
@@ -974,6 +1011,7 @@ def collect(folder, product_name=None, log=None):
             try:
                 if trend_reader.is_trend_file(p):
                     sheets = trend_reader.read_trend(p)
+                    saw(p, "경향표 %d시트" % len(sheets or []))
                     if sheets:
                         data.stability_trend = sheets
                         log("  [%s] %s — 지난 경향표 %d 시트를 이어받습니다"
@@ -984,13 +1022,161 @@ def collect(folder, product_name=None, log=None):
     for p in got.get("16", []):
         if p.lower().endswith((".doc", ".docx")):
             data.previous_report = p
+            saw(p, "전년도 결재본")
     data.deviations.sort(key=lambda d: d.get("doc_no") or "")
     # 읽지 못한 파일은 반드시 알린다 — 조용히 지나가면 그 항이 왜 비었는지 아무도 모른다
     for item, path, why in unread_files(got, log):
         note(item, path, why)
     for item, why in empty_after_read(data, got, log):
         data.issues.insert(0, (item, "", why))
+    data.ledger = build_ledger(folder, got, data.read)
+    for item, name, status, detail in data.ledger:
+        if status == "안 읽음":
+            data.issues.insert(0, (item, name, "★ 읽을 수 있는 형식인데 읽지 못했습니다 — %s. 이 알림과 파일을 제작자에게 보내 주세요" % detail))
+    counts = {}
+    for _item, _name, status, _detail in data.ledger:
+        counts[status] = counts.get(status, 0) + 1
+    log("자료 판독 대장: %s" % " · ".join("%s %d" % kv for kv in sorted(counts.items())))
     return data
+
+
+OURS_PREFIX = ("PQR 문의 목록", "PQR 작성 기록", "PQR 자료 판독 대장", "PQR 검토용 본문", "PQR 변경요청서 판독",
+               "PQR 시험성적서 판독", "PQR 안정성 판독 기록", "★ ", "13. Claude 판독 요청")
+ZERO = re.compile(r"(^|\D)0\s*(줄|건|개|대|항목|시트|Lot)")
+
+
+def _all_files(folder, depth=3):
+    """입력 폴더에 실제로 있는 파일 전부 (압축은 안을 센다) — [(표시 이름, 크기, 항 또는 None)].
+
+    discover() 는 항 번호가 있는 것만 돌려주므로, 번호가 없어 어느 항에도 못 들어간 파일은
+    여기서만 보인다.
+    """
+    out = []
+
+    def scan(root, left, item_from_dir=None, prefix=""):
+        try:
+            names = sorted(os.listdir(root))
+        except OSError:
+            return
+        for name in names:
+            if name.startswith("~$") or name.startswith(".") or is_output_dir(name):
+                continue
+            path = os.path.join(root, name)
+            item = _item_of(name) or item_from_dir
+            shown = prefix + name
+            if os.path.isdir(path):
+                scan(path, left - 1, item, shown + "/")
+                continue
+            if name.lower().endswith(".zip"):
+                try:
+                    with zipfile.ZipFile(path) as z:
+                        for info in z.infolist():
+                            if info.is_dir():
+                                continue
+                            inner = _member_name(info)
+                            base = os.path.basename(inner)
+                            if base.startswith("~$") or base.startswith("."):
+                                continue
+                            out.append((shown + "/" + inner, info.file_size, _item_of(base) or item))
+                except (zipfile.BadZipFile, OSError):
+                    out.append((shown, None, item))
+                continue
+            try:
+                size = os.path.getsize(path)
+            except OSError:
+                size = None
+            out.append((shown, size, item))
+
+    scan(os.path.abspath(folder), depth)
+    return out
+
+
+def build_ledger(folder, got, read):
+    """[(항, 파일, 상태, 설명)] — 입력 폴더의 파일마다 읽었는지.
+
+    담당자 2026-09-08: "PC 입력폴더에 있는 원본 파일을 빠짐없이 찾아서 읽었는지 검증하는 기능을
+    강화하라." 상태는 넷: '읽음'(무엇을 읽었는지) · '못 읽음'(그 항이 읽는 형식이 아님) ·
+    '안 읽음'(읽을 수 있는 형식인데 읽지 못함 — 프로그램 문제) · '항 없음'(이름이 항 번호로
+    시작하지 않아 어느 항에도 못 들어감). 우리가 남긴 파일(PQR …, 판독 .json)은 '우리 파일'.
+    """
+    by_key = {}
+    for item, paths in got.items():
+        for path in paths:
+            try:
+                key = (os.path.basename(path).lower(), os.path.getsize(path))
+            except OSError:
+                key = (os.path.basename(path).lower(), None)
+            by_key.setdefault(key, (item, path))
+    rows, seen = [], set()
+    for shown, size, item_guess in _all_files(folder):
+        base = os.path.basename(shown)
+        key = (base.lower(), size)
+        if key in seen:
+            continue
+        seen.add(key)
+        if base.startswith(OURS_PREFIX) or base == handwriting_cache_name():
+            rows.append((item_guess or "", shown, "우리 파일", "프로그램이 남긴 것"))
+            continue
+        hit = by_key.get(key)
+        if hit is None:
+            if item_guess is None:
+                rows.append(("", shown, "항 없음", "이름이 항 번호로 시작하지 않아 어느 항에도 넣지 못함 — 쓰지 않았습니다"))
+            else:
+                rows.append((item_guess, shown, "못 읽음", "같은 이름·크기의 파일을 이미 읽어 건너뜀"))
+            continue
+        item, path = hit
+        what = read.get(path)
+        if what and ZERO.search(what):                 # 읽었다지만 한 줄도 못 얻었다 — 못 읽은 것과 같다
+            rows.append((item, shown, "안 읽음", what))
+            continue
+        if what:
+            rows.append((item, shown, "읽음", what))
+            continue
+        if item == "0":                                 # 당해년도 서식 — 값을 읽는 자료가 아니라 바탕이다
+            rows.append((item, shown, "읽음", "당해년도 서식 (보고서·첨부의 바탕)"))
+            continue
+        if base.lower().endswith(".txt"):
+            rows.append((item, shown, "우리 파일", "'해당없음 확인' 마감 글"))
+            continue
+        rule = READABLE.get(item)
+        exts, want = rule if rule else ((), "")
+        if exts and base.lower().endswith(tuple(exts)):
+            rows.append((item, shown, "안 읽음", "%s 인데 값을 얻지 못함" % want))
+        else:
+            rows.append((item, shown, "못 읽음", "이 항은 %s 를 읽습니다" % (want or "정해진 형식만")))
+    order = {"안 읽음": 0, "항 없음": 1, "못 읽음": 2, "읽음": 3, "우리 파일": 4}
+    rows.sort(key=lambda r: (order.get(r[2], 9), [int(x) if x.isdigit() else 0 for x in (r[0] or "99").replace("-", ".").split(".")], r[1]))
+    return rows
+
+
+LEDGER_NAME = "PQR 자료 판독 대장 - %s.txt"
+
+
+def write_ledger(folder, code, data):
+    """자료 판독 대장을 제품 폴더에 글로 남긴다 — 담당자가 보고서 옆에서 바로 본다."""
+    rows = getattr(data, "ledger", None) or []
+    if not rows or not folder or not os.path.isdir(folder):
+        return None
+    counts = {}
+    for _i, _n, status, _d in rows:
+        counts[status] = counts.get(status, 0) + 1
+    lines = ["[%s] 자료 판독 대장 — 입력 폴더의 파일마다 읽었는지" % code,
+             "만든 때: %s" % time.strftime("%Y-%m-%d %H:%M"),
+             "요약: " + " · ".join("%s %d" % kv for kv in sorted(counts.items())),
+             "",
+             "상태 뜻 — 읽음: 값을 읽어 보고서에 씀 / 안 읽음: 읽을 수 있는 형식인데 값을 못 얻음(제작자에게) /"
+             " 못 읽음: 그 항이 읽지 않는 형식 / 항 없음: 이름이 항 번호로 시작하지 않아 쓰지 않음 / 우리 파일: 프로그램이 남긴 것",
+             ""]
+    for item, name, status, detail in rows:
+        mark = "★ " if status in ("안 읽음", "항 없음") else "   "
+        lines.append("%s[%s] %s — %s: %s" % (mark, item or "-", name, status, detail))
+    path = os.path.join(folder, LEDGER_NAME % code)
+    try:
+        with open(path, "w", encoding="utf-8") as handle:
+            handle.write("\n".join(lines) + "\n")
+    except OSError:
+        return None
+    return path
 
 
 # 항마다 '읽혔다면 여기에 값이 있어야 한다' — 자료는 올렸는데 값이 없으면 그 항은 빈 채로 나간다.

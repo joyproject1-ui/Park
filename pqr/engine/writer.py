@@ -394,6 +394,9 @@ def write_report(folder, product, period, out_path, today=None, recipe=None, log
         data_issue = ("서식", "", "EDMS 결재본 서식(E-HLF-32)이 없어 전년도 양식 그대로 만들었음 — 제품 폴더나 '공통' 폴더에 서식을 두세요")
 
     data = collect_module.collect(folder, product_name=product.get("name"), log=log_)
+    ledger_path = collect_module.write_ledger(folder, product.get("code", ""), data)
+    if ledger_path:
+        log_("자료 판독 대장을 남겼습니다: %s" % os.path.basename(ledger_path))
     data.previous_report = previous
     data.period = period
     if vision is not None:
