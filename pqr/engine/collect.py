@@ -29,6 +29,7 @@ class ProductData(object):
         self.coa = {}             # lot -> {"922": {...}, "923": {...}, "924": {...}}
         self.raw_tests = []       # 8.2.1  [(코드, 시험번호, [lots])]
         self.pkg_tests = []       # 8.2.2  [(코드, 시험번호, [lots])]
+        self.material_names = {}  # 8.2    {원료 코드: ERP 에 적힌 원료명}
         self.manufacturing = []   # 6항    [(lot, 품명, 제조일자, 사용기한)]
         self.batch = None         # 6항 공 기록서(제조·충전·포장 워드) — 제조단위·포장단위·수율 기준·원/자재 (batch_record.merge)
         self.batch_exp = None     # 이름에 '(수출용)' 이 붙은 공 기록서는 따로 — 수출 제조단위·포장단위·수율 기준
@@ -80,7 +81,16 @@ def _item_of(name):
     if item:
         return item
     m = ITEM_RE.match(name)
-    return m.group(1) if m else None
+    if m:
+        return m.group(1)
+    # 항 번호가 없어도 회사 서식 이름으로 알 수 있는 것은 잡아 준다 — 그러지 않으면 후보에도
+    # 들지 않아 **있는 줄도 모르고** 지나간다 (담당자 2026-09-09 올로원스점안액: 항 번호 없는
+    # '포장기록서_미얀마.docx'·'포장기록서_캄보디아.docx' 두 장이 통째로 빠져 있었다).
+    if name.lower().endswith((".docx", ".doc")):
+        flat = re.sub(r"\s+", "", os.path.splitext(name)[0])
+        if any(word in flat for word in ("제조기록서", "충전기록서", "포장기록서")):
+            return "6"
+    return None
 
 
 # 만든 보고서를 넣는 폴더 — 자료가 아니므로 읽을 때는 지나친다 (정의는 build 에).
@@ -630,11 +640,13 @@ def collect(folder, product_name=None, log=None):
     # ERP 가 그대로 내려 준 표에는 그 원료를 쓴 모든 제품이 들어 있다 — 제품 이름으로 가려낸다.
     for p in got.get("8.2.1", []) + got.get("8.2.1.1", []):
         if p.lower().endswith((".xls", ".xlsx")):
+            data.material_names.update(erp.read_material_names(p))
             got_rows = erp.group_by_test(erp.read_material_tests(p, product=product_name))
             data.raw_tests += got_rows
             saw(p, "원료 시험 %d항목" % len(got_rows))
     for p in got.get("8.2.2", []):
         if p.lower().endswith((".xls", ".xlsx")):
+            data.material_names.update(erp.read_material_names(p))
             got_rows = erp.group_by_test(erp.read_material_tests(p, product=product_name))
             data.pkg_tests += got_rows
             saw(p, "자재 시험 %d항목" % len(got_rows))

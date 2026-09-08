@@ -22,14 +22,16 @@ def _sheet_rows(path):
 
 
 def test_no(raw):
-    """ERP 표기 'R202405130070' → 보고서 표기 'R-2024-05-13-0070'."""
-    s = str(raw or "").strip()
-    m = re.match(r"^([A-Z])(\d{4})(\d{2})(\d{2})(\d{4})$", s)
-    return "%s-%s-%s-%s-%s" % m.groups() if m else s
+    """시험 성적 번호는 ERP 에 적힌 그대로 쓴다 — 'R202305090013'.
+
+    담당자 2026-09-08: "시험성적번호는 오른쪽처럼 하이픈 없이 작성해줘." 전에는 날짜로 끊어
+    'R-2023-05-09-0013' 으로 적었는데, 결재본(2025 올로원스점안액)은 붙여 쓴다.
+    """
+    return str(raw or "").strip()
 
 
 # ERP 가 그대로 내려 주는 표는 머리행이 없고 열이 열아홉이다. 쓰는 칸은 다음과 같다.
-RAW_CODE, RAW_PRODUCT, RAW_TEST, RAW_LOT = 0, 7, 10, 16
+RAW_CODE, RAW_NAME, RAW_PRODUCT, RAW_TEST, RAW_LOT = 0, 3, 7, 10, 16
 CODE = re.compile(r"^[A-Z]{1,3}\d{3,6}$")                       # RBG201 · P17043
 LOT = re.compile(r"^[A-Z0-9]{5,7}$")                            # OGY301
 
@@ -116,3 +118,22 @@ def read_manufacturing(path):
     """제조내역 PDF — [(Lot, 품명, 제조일자, 사용기한), ...]"""
     text = squash(read_text(path))
     return [(m.group(1), m.group(2).strip(), m.group(3), m.group(4)) for m in LOT_LINE.finditer(text)]
+
+
+def read_material_names(path):
+    """ERP 표의 {원료 코드: 원료명} — 8.2 표의 원료명 칸에 쓴다.
+
+    담당자 2026-09-08: "8.2.2 표의 내용은 자재 코드와 자재명이 맞아, 점안제인데 자재가 튜브로
+    잘못 기록되어 있어. 해당 첨부 파일을 제대로 확인해줘." 이름을 코드에 붙일 길이 없어
+    안연고 문안('튜브 (내수용)')을 그대로 쓰고 있었다 — 이름은 ERP 표 넷째 칸에 있다.
+    """
+    rows = _sheet_rows(path)
+    if not _looks_raw(rows):
+        return {}
+    out = {}
+    for row in rows:
+        cells = [str(c or "").strip() for c in row] + [""] * (RAW_LOT + 1)
+        code, name = cells[RAW_CODE], cells[RAW_NAME]
+        if CODE.match(code) and name and code not in out:
+            out[code] = name
+    return out

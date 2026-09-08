@@ -220,6 +220,21 @@ def _quarter(day):
     return (day.month - 1) // 3 + 1
 
 
+def _group_quarter(group):
+    """QC-126 그룹별 PQR 완료 기한 분기 (담당자 2026-09-08):
+    **1(A) 그룹은 1분기 · 1(B)·2·3 그룹은 3분기.** 그룹을 알 수 없으면 None.
+
+    예전에는 제품 마스터의 마감일(또는 오늘)이 든 분기를 적었는데, 마감일이 비어 있거나
+    전년도 문안('2026년 1분기')이 그대로 남아 2 그룹 제품에 1분기가 적혔다.
+    """
+    g = re.sub(r"[\s()（）\-_.]", "", str(group or "")).upper()
+    if g == "1A":
+        return 1
+    if g in ("1B", "2", "3"):
+        return 3
+    return None
+
+
 def _small(para_el):
     for r in para_el.iter(qn("w:r")):
         rpr = r.find(qn("w:rPr"))
@@ -520,6 +535,105 @@ def _cells_for(row, regions):
             out.append(spans[best][2])
     남은것 = [cell for k, (_a, _b, cell) in enumerate(spans) if k not in 쓴것]
     return out, (남은것[-1] if 남은것 else None)
+
+
+HEAD_WORDS = ("공정", "시험항목", "허용기준", "결과", "Lot No.", "연번", "구분")
+
+
+CIRCLED = "①②③④⑤⑥⑦⑧⑨⑩⑪⑫"
+
+
+def _impurity_legend(document):
+    """9.2.4 유연물질 표 **바로 아래** 범례 — {'①': 'Olopatadine E-isomer', …}.
+
+    표의 열 이름이 동그라미 번호뿐이라 성적서와 맞출 이름이 없다. 범례는 그 표 다음 표에
+    '① Olopatadine E-isomer' 처럼 적혀 있다 (담당자 2026-09-08: "유연물질 기재방법도 위와 동일해").
+    문서 전체를 훑으면 이물검사 범례('① 육안으로 관찰할 때 맑으며 …')가 먼저 걸려 ①②가
+    엉뚱한 글이 된다 — 그래서 유연물질 표 다음 표만 본다.
+    """
+    tables = list(document.tables)
+    after = None
+    for i, table in enumerate(tables):
+        head = " ".join(E.cell_text(c) for c in E.raw_cells(table.rows[0]))
+        if "유연물질" in head and i + 1 < len(tables):
+            after = tables[i + 1]
+            break
+    if after is None:
+        return {}
+    out = {}
+    for row in after.rows:
+        for cell in E.raw_cells(row):
+            for m in re.finditer(r"([%s])\s*([^\n%s]+)" % (CIRCLED, CIRCLED), E.cell_text(cell) or ""):
+                name = m.group(2).strip()
+                if name and m.group(1) not in out:
+                    out[m.group(1)] = name
+    return out
+
+
+def _impurity_value(rec924, name):
+    """성적서의 유연물질 칸에서 그 성분의 결과만 뽑는다 — '… : 불검출, … : 불검출(LOQ미만)'.
+
+    이름은 9.2.4 표 아래 범례(동그라미 번호)나 9.1 줄의 허용기준에서 온다. 대소문자·빈칸은
+    무시한다 — 범례는 'related compound B', 성적서는 'related Compound B' 로 적는다.
+    """
+    want = re.sub(r"\s+", "", str(name or "")).lower()
+    if not want:
+        return None
+    for key, one in (rec924.get("items") or {}).items():
+        if "유연물질" not in key:
+            continue
+        for part in re.split(r"[,，]", str((one or {}).get("value") or "")):
+            bits = re.split(r"[:：]", part, 1)
+            if len(bits) < 2:
+                continue
+            head = re.sub(r"\s+", "", bits[0]).lower()
+            if head == want or (len(want) > 4 and (head.startswith(want) or want.startswith(head))):
+                return bits[1].strip()
+    return None
+
+
+def _is_head_row(texts):
+    """9.1·9.2 표에서 쪽마다 되풀이되는 머리행인가 — 글이 든 칸이 모두 머리글 낱말이다."""
+    words = [D.squeeze(t) for t in texts if D.squeeze(t)]
+    if len(words) < 2:
+        return False
+    return all(any(w == D.squeeze(h) for h in HEAD_WORDS) for w in words)
+
+
+def _particle_of(text, lab, idx=0):
+    """불용성미립자 결과 — '10㎛이상/mL : 2개, 25㎛이상/mL : 0개, 50㎛이상/mL : 0개' 에서 이 칸의 값.
+
+    9.2.4 표는 열 이름에 크기가 적혀 있고('10㎛이상/mL'), 9.1 표는 줄마다 허용기준에만 크기가
+    적혀 있다 — 앞엣것은 이름으로, 뒤엣것은 줄 차례(10·25·50)로 찾는다.
+    """
+    got = re.findall(r"(\d+)\s*(?:㎛|um|μm)[^\d]{0,12}?(\d+)\s*개", str(text or ""))
+    if not got:
+        return None
+    want = re.search(r"(\d+)\s*(?:㎛|um|μm)", str(lab or ""))
+    if want:
+        return next((n for size, n in got if size == want.group(1)), None)
+    return got[idx][1] if 0 <= idx < len(got) else None
+
+
+def _material_names_in_document(document):
+    """이 보고서의 8.1.1·8.1.3 표에 적힌 {관리번호: 원/자재명} — 8.2 표는 사내 표기를 따른다."""
+    out = {}
+    for prefix in ("8.1.1", "8.1.3"):
+        for table in _tables(document, prefix):
+            width = E.grid_width(table)
+            head = {D.squeeze(t): gi for gi, t in _row_texts(table.rows[0], width).items()}
+            c_code = next((i for n, i in head.items() if "관리번호" in n or "코드" in n), None)
+            c_name = next((i for n, i in head.items()
+                           if "원/자재명" in n or "원자재명" in n or "자재명" in n or "원료명" in n), None)
+            if c_code is None or c_name is None:
+                continue
+            for row in table.rows[1:]:
+                texts = _row_texts(row, width)
+                code = str(texts.get(c_code, "")).strip()
+                name = str(texts.get(c_name, "")).strip()
+                if re.match(r"^[A-Z]{1,3}\d{3,6}$", code) and name and code not in out:
+                    out[code] = name
+    return out
 
 
 def _yield_first_row(table):
@@ -979,14 +1093,20 @@ def fill(document, data, product, period, today=None, log=None):
         # 실시하며, 'QC-126 제품품질평가 규정'에 따라 2 그룹으로 선정되어 차년도 3분기 내에 완료한다."
         # — 평가 대상 연도는 '년도', 마감은 연도를 적지 않고 '차년도 N분기' 로 쓴다.
         text = re.sub(r"\d{4}\s*년도?\s*1월", "%d년도 1월" % year_from, p.text)
-        due = None
-        try:
-            due = _dt.date(*[int(x) for x in re.findall(r"\d+", str(product.get("due") or ""))[:3]])
-        except (TypeError, ValueError):
-            due = None
-        q = _quarter(due) if due else _quarter(today)
-        text = re.sub(r"(\d{4}\s*년도|차년도)\s*(상반기|하반기|\d\s*분기)", "차년도 %d분기" % q, text)
         group = str(product.get("group") or "").strip()
+        q = _group_quarter(group)
+        if q is None:                          # 그룹을 모를 때만 마감일(없으면 오늘)의 분기
+            due = None
+            try:
+                due = _dt.date(*[int(x) for x in re.findall(r"\d+", str(product.get("due") or ""))[:3]])
+            except (TypeError, ValueError):
+                due = None
+            q = _quarter(due) if due else _quarter(today)
+        # 회사 배포본 문안('PQR 작성 시 통일 문구')은 '●●●●년도 ○분기 내에 완료한다' — 연도를 적는다.
+        # 기한 연도는 PQR 연도(평가 대상 연도의 다음 해)다. '2026년 1분기'(년도의 '도' 없음)도 잡는다.
+        due_year = _pqr_year or (year_from + 1)
+        text = re.sub(r"(\d{4}\s*년도?|차년도)\s*(상반기|하반기|\d\s*분기)",
+                      "%d년도 %d분기" % (due_year, q), text)
         if group and re.search(r"\S+\s*그룹으로 선정", text):
             text = re.sub(r"\S+\s*그룹으로 선정", "%s 그룹으로 선정" % group, text)
         E.set_para_text(p, text)
@@ -1039,28 +1159,35 @@ def fill(document, data, product, period, today=None, log=None):
             fill_mfg(t6[1], exp, olds6[1] if len(olds6) > 1 else None, getattr(data, "batch_exp", None))
 
     # ---------- 7항 수율 ----------
-    def yield_specs(table):
-        """기준 행('95.0% 이상' · '91.0 ± 4.0%' · '98 ± 2%') → [(lo, hi) or None]"""
-        specs = []
+    def yield_specs(table, columns):
+        """기준 행('95.0% 이상' · '91.0 ± 4.0%' · '98 ± 2%') → 열마다 [(lo, hi) or None]
+
+        자리(cells[-4:-1])로 세면 공정이 넷을 넘는 표(올로원스점안액: 조제·충전·포장 내수/
+        캄보디아/미얀마 다섯 열)에서 기준이 한 칸씩 밀려 엉뚱한 Lot 이 '기준 벗어남' 으로 잡힌다.
+        열 이름을 찾을 때 쓴 그리드 열 번호로 짚는다 (담당자 2026-09-08).
+        """
+        width = E.grid_width(table)
+        specs = [None] * len(columns)
         for row in table.rows[:3]:
-            cells = [E.cell_text(c) for c in E.raw_cells(row)]
-            if any("이상" in c or "±" in c for c in cells):
-                for c in cells[-4:-1] if len(cells) >= 5 else cells:
-                    if "±" in c:
-                        m, d = [float(x) for x in re.findall(r"\d+(?:\.\d+)?", c)[:2]]
-                        specs.append((m - d, m + d))
-                    elif "이상" in c:
-                        specs.append((_num(c), None))
-                    else:
-                        specs.append(None)
-                break
+            texts = _row_texts(row, width)
+            vals = [texts.get(one[0], "") for one in columns]
+            if not any(("이상" in v or "±" in v) for v in vals):
+                continue
+            for k, c in enumerate(vals):
+                if "±" in c:
+                    nums = [float(x) for x in re.findall(r"\d+(?:\.\d+)?", c)[:2]]
+                    if len(nums) == 2:
+                        specs[k] = (nums[0] - nums[1], nums[0] + nums[1])
+                elif "이상" in c:
+                    specs[k] = (_num(c), None)
+            break
         return specs
 
     yield_out, yield_dev = [], []
     dev_lots = {d.get("lot") for d in data.deviations if "수율" in (d.get("title") or "")}
     t7 = _tables(document, "7.")
 
-    def put_sheet_specs(table, stages, is_dom=True):
+    def put_sheet_specs(table, columns, is_dom=True):
         """올해 수율현황표에 적힌 기준을 결재본의 기준 행에 옮긴다.
 
         기준은 해가 바뀌며 개정된다(디겐타안연고 충전: 96.0 ± 3.5% → 86.5 ± 6.5%). 전년도
@@ -1073,28 +1200,34 @@ def fill(document, data, product, period, today=None, log=None):
         fallback = batch.get("yield_specs") or {}
         if not data.yield_specs and not fallback:
             return
+        width = E.grid_width(table)
         for row in table.rows[:3]:
-            cells = E.raw_cells(row)
-            texts = [E.cell_text(c) for c in cells]
-            if not any("이상" in t or "±" in t or "기준" in t for t in texts):
+            texts = _row_texts(row, width)
+            if not any(("이상" in t or "±" in t or "기준" in t) for t in texts.values()):
                 continue
-            targets = cells[-4:-1] if len(cells) >= 5 else cells
-            for k, stage in enumerate(stages):
+            # 자리로 세지 않고 열 이름을 찾을 때 쓴 그리드 열 번호로 짚는다 — 자리로 세면 공정이
+            # 다섯인 표에서 조제·충전 기준이 포장 칸에 적혔다 (담당자 2026-09-08 올로원스점안액:
+            # 포장(내수) 기준이 '99.5±0.45%' 로 적혔다).
+            cells = E.grid_cells(row, width)
+            for one in columns:
+                gi, stage = one[0], one[-1]
+                cell = cells.get(gi)
+                if cell is None:
+                    continue
                 spec = data.yield_specs.get(stage)
-                if spec and k < len(targets):
-                    E.set_cell(targets[k], spec)
-                elif k < len(targets) and fallback.get(stage) and not E.cell_text(targets[k]).strip():
+                if spec:
+                    E.set_cell(cell, spec)
+                elif fallback.get(stage) and not E.cell_text(cell).strip():
                     log("7항: %s 수율 기준을 공 기록서 값(%s)으로 채움" % (stage, fallback[stage]))
-                    E.set_cell(targets[k], fallback[stage])
+                    E.set_cell(cell, fallback[stage])
             return
 
     def fill_yield(table, lots, is_dom):
         # 공정 열은 표에서 읽는다 — 제품에 따라 '포장' 이 내수·베트남으로 갈린다
         # (담당자 2026-09-07: "ELYN01 과 ELYN02 는 내수가 아니고 베트남 포장했네").
         columns = _yield_columns(table)
-        stages = tuple(one[-1] for one in columns)
-        put_sheet_specs(table, stages, is_dom)
-        specs = yield_specs(table)
+        put_sheet_specs(table, columns, is_dom)
+        specs = yield_specs(table, columns)
         첫줄 = _yield_first_row(table)
         f, l = E.fit_rows(table, 첫줄, len(table.rows) - 4, max(1, len(lots)))
         vals = {}
@@ -1270,6 +1403,29 @@ def fill(document, data, product, period, today=None, log=None):
         for group, mats in ((src or {}).get("materials") or {}).items():
             have = {m["code"] for m in batch_mats.get(group, [])}
             batch_mats.setdefault(group, []).extend(m for m in mats if m["code"] not in have)
+    # '코드가 R 로 시작하면 주원료'(담당자 2026-09-06)에는 예외가 있다 — 히프로멜로오스(RGH114)는
+    # R 로 시작해도 부원료다(담당자 2026-09-08: "올로원스의 주원료는 올로파타딘염산염 뿐이야,
+    # 히프로멜로오스는 주성분이 아니야"). 무엇이 주성분인지는 제품마다 다르므로 전년도 결재본의
+    # 8.1.1·8.1.3 이 정답이다 — 거기 적혀 있던 자리로 되돌린다.
+    prev_place = {}
+    for prefix, group in (("8.1.1", "주원료"), ("8.1.3", "부원료")):
+        for grid in olds81.get(prefix) or []:
+            for row in grid or []:
+                for cell in (row or [])[:3]:
+                    code = re.sub(r"\s", "", str(cell or ""))
+                    if re.match(r"^[A-Z]{2,3}\d{3,}$", code):
+                        prev_place.setdefault(code, group)
+                        break
+    for code, want in prev_place.items():
+        for group in ("주원료", "부원료"):
+            if group == want:
+                continue
+            for m in list(batch_mats.get(group) or []):
+                if str(m.get("code") or "").strip() == code:
+                    batch_mats[group].remove(m)
+                    batch_mats.setdefault(want, []).append(m)
+                    log("8.1: %s(%s) 는 전년도 결재본에서 %s 이므로 옮김"
+                        % (code, m.get("name") or "", want))
     if batch_mats:
         for prefix, groups in (("8.1.1", ("주원료",)), ("8.1.3", ("부원료", "포장자재"))):
             tables = _tables(document, prefix)
@@ -1427,7 +1583,11 @@ def fill(document, data, product, period, today=None, log=None):
         for code, test, ls in data.pkg_tests:
             ls = [x for x in ls if x in dom + exp]
             if ls:
-                item = base_rows.get(code) or ("튜브 (수출용)" if ls[0] in exp else "튜브 (내수용)")
+                # 자재명은 ① 전년도 8.2.2 표 ② 이 보고서의 8.1.1·8.1.3 표 ③ ERP 표 차례로 찾는다.
+                # 예전에는 셋 다 없으면 안연고 문안('튜브 (내수용)')을 적어, 점안제 자재(PE 병·
+                # 점안액캡·노즐)가 모두 '튜브' 로 나갔다 (담당자 2026-09-08).
+                item = (base_rows.get(code) or _material_names_in_document(document).get(code)
+                        or (getattr(data, "material_names", None) or {}).get(code) or "")
                 recs.append((code, item, test, ls))
         group_fill(tbl, recs)                  # 1차 포장 자재도 같은 차림새다 (담당자 지적)
 
@@ -1775,7 +1935,7 @@ def fill(document, data, product, period, today=None, log=None):
         prior = prior or {}
 
         def maker(process):
-            def value(lab, lot, i):
+            def value(lab, lot, i, crit=None):
                 r923, r924 = rec(lot, "923"), rec(lot, "924")
                 mine = r923 if process == "충전" else r924
                 part = next((p for p in parts if p and p in lab), "")
@@ -1792,6 +1952,15 @@ def fill(document, data, product, period, today=None, log=None):
                     return ("%.1f" % float(v)) if v is not None else None
                 if "입자도" in lab:
                     return _plain(r924.get("particle"))
+                if "미립자" in lab or re.search(r"\d+\s*(?:㎛|um|μm)", lab):
+                    # 열 이름에 크기가 있으면 그것으로(9.2.4), 없으면 그 줄의 허용기준으로(9.1)
+                    쪽 = lab if re.search(r"\d+\s*(?:㎛|um|μm)", lab) else (crit or "")
+                    return _particle_of(r924.get("particle"), 쪽, i)
+                if any(c in lab for c in CIRCLED):
+                    return _impurity_value(r924, _impurity_legend(document).get(
+                        next(c for c in lab if c in CIRCLED)) or "")
+                if "유연물질" in lab and crit:
+                    return _impurity_value(r924, D.PREFIX.sub("", crit).split(":")[0])
                 if "금속성이물" in lab:
                     # 9.1 표는 '합계' 라는 글 없이 줄만 갈라져 있다 — '개개' 가 아니면 합계 줄이다
                     return _plain(r924.get("metal_each") if "개개" in lab else r924.get("metal_total"))
@@ -1812,8 +1981,10 @@ def fill(document, data, product, period, today=None, log=None):
                 if "튜브인쇄" in lab:
                     return mine.get("tube_print") or _as_result(D.criterion_for(rules, process, "튜브인쇄", part))
                 if "확인" in lab:
+                    # 줄의 허용기준이 있으면 그것을 쓴다 — 없을 때만 규칙에서 찾는다. 예전에는 두
+                    # 줄이 같은 기준을 받아 둘째 줄에 첫째 줄 문안이 그대로 적혔다 (담당자 2026-09-08).
                     sub = (re.search(r"\d\)", lab) or [""])[0] if re.search(r"\d\)", lab) else ""
-                    crit = D.criterion_for(rules, process, "확인", part, sub)
+                    crit = crit or D.criterion_for(rules, process, "확인", part, sub)
                     # 올해 성적서 '확인시험 적합' + 전년도 문안. 없으면 아래에서 성적서의
                     # 시험항목 표('확인시험')를 찾아 결과 글을 그대로 쓴다 (담당자 2026-09-08:
                     # 스캔 성적서를 다 읽고도 '확인'·'포장규격' 열이 비어 있었다).
@@ -1924,6 +2095,10 @@ def fill(document, data, product, period, today=None, log=None):
     def unit_of(crit, item, sub):
         if "금속성" in item:
             return "매" if "개개" in sub else "개"
+        if "미립자" in item:
+            # 허용기준의 '㎛' 는 입자 크기이고 결과 단위는 '개' 다 (담당자 2026-09-08:
+            # 결재본은 'Av. 3개(2 ~ 4개)' 로 적는다)
+            return "개"
         m = UNIT.search(crit or "")
         return m.group(1) if m else ""
 
@@ -1951,6 +2126,11 @@ def fill(document, data, product, period, today=None, log=None):
             return ("%s%s" % (mean, tail)) if mean else None
         one_low = ("이상" in (crit or "") or any("이상" in t for t in texts)) and "평균" not in sub
         one_high = ("이하" in (crit or "") or any("이하" in t for t in texts)) and "평균" not in sub
+        if "미립자" in item:
+            # 허용기준('10㎛ 이상/mL : 50개 이하')의 '이상' 은 **입자 크기** 조건이고 '이하' 는
+            # 개수 한계다 — 둘 다 걸려 한쪽만 적는 셈이 어그러졌다(‘Av.None개(2~None개)’).
+            # 결재본은 개수를 평균과 범위로 적는다: 'Av. 3개(2 ~ 4개)' (담당자 2026-09-08).
+            one_low = one_high = False
         top, bottom, mean = D._stats("이상" if one_low else "이하" if one_high else "", texts)
         if one_low and not one_high:
             return "%s%s 이상" % (bottom, tail)
@@ -1975,6 +2155,12 @@ def fill(document, data, product, period, today=None, log=None):
         for row in t91.rows[1:]:
             cells = E.raw_cells(row)
             texts = [E.cell_text(c) for c in cells]
+            if _is_head_row(texts):
+                # 쪽이 넘어갈 때 되풀이되는 머리행('공정 | 시험항목 | 허용기준 | 결과')은 자료 줄이
+                # 아니다. 예전에는 허용기준 접두('허가)')가 없다는 이유로 '기준이 위 줄과 병합된
+                # 줄' 로 보아 **위 줄의 결과를 머리행에 찍었다** (담당자 2026-09-08: "공정, 시험항목,
+                # 허용기준행은 다음 페이지로 넘어갔어야 했어").
+                continue
             ci = next((i for i, t in enumerate(texts) if D.PREFIX.search(t or "")), None)
             if ci is None:
                 # 허용기준 칸이 위 줄과 병합된 줄(금속성이물 ‘개개’) — 위 줄의 기준을 이어 쓴다.
@@ -2002,7 +2188,9 @@ def fill(document, data, product, period, today=None, log=None):
                 follow.append((hit, crit_text))
             lab = hit["item"] + hit["part"] + hit["sub"]
             value = maker(hit["process"])
-            got = [value(lab, lot, i) for i, lot in enumerate(lots)]
+            # 9.1 은 한 항목(유연물질·불용성미립자·확인)이 여러 줄이고 **줄마다 허용기준이 다르다** —
+            # 줄의 기준을 함께 넘겨야 그 줄의 성분·크기·문안을 고를 수 있다 (담당자 2026-09-08).
+            got = [value(lab, lot, i, crit_text) for i, lot in enumerate(lots)]
             crit = D.PREFIX.sub("", crit_text or "")
             out = summarize([g for g in got if g], crit, hit["item"], hit["sub"],
                             unit_of(crit, hit["item"], hit["sub"]))

@@ -79,7 +79,7 @@ class ERP_시험번호표(unittest.TestCase):
                          ("RSF101", "후메론점안액0.1%", "R202406130032", "EAY101"),
                          ("RSF101", "", "R202406130032", ""))          # 입고·시험 줄
         self.assertEqual(erp.read_material_tests(path, product="디겐타안연고"),
-                         [("RSF101", "R-2024-06-13-0032", "OGY301")])
+                         [("RSF101", "R202406130032", "OGY301")])
 
     def test_Lot_은_표에_있는_것을_쓴다(self):
         # ERP 제조번호(DGTO2025030001)가 아니라 열일곱째 칸의 Lot No. 를 쓴다 — 지어내지 않는다.
@@ -91,8 +91,8 @@ class ERP_시험번호표(unittest.TestCase):
                       ["RBO101", "R202405130070", "OEY101"],
                       ["RBO101", "R202405130070", "OEY102"]])
         self.assertEqual(erp.read_material_tests(path, product="퀴노비드안연고"),
-                         [("RBO101", "R-2024-05-13-0070", "OEY101"),
-                          ("RBO101", "R-2024-05-13-0070", "OEY102")])
+                         [("RBO101", "R202405130070", "OEY101"),
+                          ("RBO101", "R202405130070", "OEY102")])
 
 
 class 적격성_마스터파일(unittest.TestCase):

@@ -202,6 +202,14 @@ def ask_once(prompt, folder=None, timeout=180, extra=()):
     return True, out
 
 
+def _unknown_flag(text):
+    """깃발을 몰라서 넘어졌는가 — 그러면 더 단출한 깃발로 다시 해 볼 값어치가 있다."""
+    low = str(text or "").lower()
+    return any(word in low for word in (
+        "unknown option", "unknown argument", "unknown flag", "unrecognized",
+        "invalid option", "is not supported", "only `claude -p", "usage:", "error: option"))
+
+
 def _ask(exe, prompt, folder, log=None, paths=()):
     r"""읽기(Read)만 허용해 한 번 물어본다 — 시험일지 판독용.
 
@@ -219,13 +227,24 @@ def _ask(exe, prompt, folder, log=None, paths=()):
             continue
         seen.add(key)
         dirs.append(full)
-    extra = ["--restricted", "--allowedTools", "Read", "Glob"]
+    adds = []
     for one in dirs:
-        extra += ["--add-dir", one]
-    ok, text = ask_once(prompt, folder, TIMEOUT, extra=extra)
-    if not ok:
-        raise RuntimeError("claude -p 로 읽지 못했습니다 — %s" % text)
-    return text
+        adds += ["--add-dir", one]
+    # 깃발은 Claude Code 판마다 다르다. `--restricted` 는 있지도 않은 깃발이어서 그것 하나로
+    # 판독이 통째로 넘어졌고(담당자 2026-09-08: 13항·12항·9.2.4 가 모두 '읽지 못했습니다'),
+    # 여러 도구는 쉼표 하나로 준다(--allowedTools "Read,Glob"). 넉넉한 것부터 차례로 해 보고,
+    # 깃발을 몰라 넘어지면 더 단출한 것으로 다시 부른다.
+    variants = [["--allowedTools", "Read,Glob"] + adds, list(adds), []]
+    first = None
+    for extra in variants:
+        ok, text = ask_once(prompt, folder, TIMEOUT, extra=extra)
+        if ok:
+            return text
+        if first is None:
+            first = text
+        if not _unknown_flag(text):
+            break
+    raise RuntimeError("claude -p 로 읽지 못했습니다 — %s" % (first or "까닭을 알 수 없습니다"))
 
 
 def _json_object(text):

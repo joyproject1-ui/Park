@@ -506,15 +506,52 @@ def _spans(document):
         sec = _section(text)
         if sec and len(text) < 80:
             heads.append((i, sec))
-    out = {}
+    out, at = {}, {}
     for n, (i, sec) in enumerate(heads):
         stop = len(items)
         for j, other in heads[n + 1:]:
             if not (other == sec or other.startswith(sec + ".")):
                 stop = j
                 break
-        out.setdefault(sec, (items[i], items[i + 1:stop]))
+        if sec not in out:
+            out[sec] = (items[i], items[i + 1:stop])
+            at[sec] = i
+    _rescue_table_above(out, at, items)
     return out
+
+
+def _rescue_table_above(out, at, items):
+    """제목 바로 앞에 놓인 표를 그 항의 몫으로 되돌린다.
+
+    LibreOffice 가 옛 워드(.doc)를 .docx 로 바꾸면서 제목과 표의 차례를 뒤집어 놓는 일이 있다 —
+    2025 올로원스점안액 결재본에서 '10.2 제조설비' 제목이 그 표 **뒤에** 놓여, 10.2 는 요소가
+    하나도 없는 빈 항이 되고 표는 앞 항(10.1) 몫으로 셈해졌다. 그래서 올해 보고서의 10.2 제조설비
+    표가 통째로 비었다(담당자 2026-09-09).
+
+    되돌리는 조건은 좁게 둔다 — ① 이 항의 몫에 표가 하나도 없고, ② 제목 바로 앞이 표이며,
+    ③ 그 표를 넘겨도 앞 항에 표가 남아 있을 때만.
+    """
+    def tables(elements):
+        return [el for el in elements if el.tag == qn("w:tbl")]
+
+    for sec, (head, elements) in list(out.items()):
+        i = at.get(sec)
+        if not i or tables(elements):
+            continue
+        above = items[i - 1]
+        if above.tag != qn("w:tbl"):
+            continue
+        owner = None
+        for other, (_h, els) in out.items():
+            if other != sec and above in els:
+                owner = other
+                break
+        if owner is not None and len(tables(out[owner][1])) < 2:
+            continue                              # 앞 항의 하나뿐인 표는 가져오지 않는다
+        if owner is not None:
+            oh, oels = out[owner]
+            out[owner] = (oh, [el for el in oels if el is not above])
+        out[sec] = (head, [above] + list(elements))
 
 
 def _text_of(el):

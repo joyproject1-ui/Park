@@ -102,7 +102,14 @@ def _column_names(rows, value_cols, first_data):
             text = str(rows[i][c] or "").strip()
             if not text or SPEC.search(text) or re.search(r"\d", text) or "%" in text:
                 continue                      # 기준 칸이거나 표 제목('…수율 현황 (%)')
-            text = re.sub(r"[(（][^)）]*[)）]", "", text).strip() or text
+            bare = re.sub(r"[(（][^)）]*[)）]", "", text).strip()
+            if not bare:
+                # 칸 전체가 괄호뿐인 머리('(내수)'·'(캄보디아)') — 괄호 안의 말이 이름이다.
+                # 괄호째 남기면 '포장((내수))' 가 되어 결재본의 '포장(내수)' 와 어긋난다
+                # (담당자 2026-09-08 올로원스점안액: 7항 열 값을 모두 놓쳤다).
+                inner = re.search(r"[(（]([^)）]*)[)）]", text)
+                bare = inner.group(1).strip() if inner else text
+            text = bare
             if text and (not parts or text != parts[-1]):
                 parts.append(text)
         if parts:
