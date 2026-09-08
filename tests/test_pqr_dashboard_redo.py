@@ -9,6 +9,8 @@ import os
 import re
 import unittest
 
+os.environ["PQR_REVIEW"] = "0"     # 보고서 뒤 Claude Code 검토는 시험에서 돌리지 않는다 (몇 분 걸리고 진짜 Claude 를 부른다)
+
 HERE = os.path.dirname(os.path.abspath(__file__))
 INDEX = os.path.join(HERE, "..", "docs", "pqr", "index.html")
 

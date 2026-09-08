@@ -50,12 +50,17 @@ class 검토_결과_읽기(unittest.TestCase):
 
 class 검토_단계(unittest.TestCase):
     def setUp(self):
+        self.saved = os.environ.pop("PQR_REVIEW", None)         # 다른 시험 모듈이 꺼 두었을 수 있다 — 끝나면 되돌린다
         self.dir = tempfile.mkdtemp(prefix="pqr-rv-")
         self.folder = os.path.join(self.dir, "QC1-5087 아이퓨어점안액"); os.makedirs(self.folder)
         made = os.path.join(self.folder, "PQR 작성본"); os.makedirs(made)
         self.report = _report(os.path.join(made, "r.docx"))
         with open(os.path.join(self.folder, "7. 수율현황표.txt"), "w", encoding="utf-8") as h:
             h.write("LWY201 99.97 93.47")
+
+    def tearDown(self):
+        if self.saved is not None:
+            os.environ["PQR_REVIEW"] = self.saved
 
     def test_Claude_Code가_없으면_빈_목록(self):
         from pqr.engine import claude_cli
@@ -93,3 +98,18 @@ class 검토_단계(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class 검토_끄기(unittest.TestCase):
+    def test_PQR_REVIEW_0_이면_건너뛴다(self):
+        saved = os.environ.get("PQR_REVIEW")
+        os.environ["PQR_REVIEW"] = "0"
+        try:
+            log = []
+            self.assertEqual(R.review("/no/such", {"code": "X"}, "/no/such/r.docx", [], log.append), [])
+            self.assertTrue(any("건너뜁니다" in l for l in log))
+        finally:
+            if saved is None:
+                os.environ.pop("PQR_REVIEW", None)
+            else:
+                os.environ["PQR_REVIEW"] = saved

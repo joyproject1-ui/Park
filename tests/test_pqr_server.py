@@ -6,6 +6,8 @@ import shutil
 import tempfile
 import threading
 import unittest
+
+os.environ["PQR_REVIEW"] = "0"     # 보고서 뒤 Claude Code 검토는 시험에서 돌리지 않는다 (몇 분 걸리고 진짜 Claude 를 부른다)
 import urllib.error
 import urllib.request
 import uuid

@@ -138,6 +138,9 @@ def _findings(text):
 def review(folder, product, report_path, issues, log=None, period=None):
     """보고서를 첨부와 대조한 검토 결과 [(항, Lot, 설명)]. Claude Code 가 없거나 실패하면 []."""
     say = log or (lambda *a: None)
+    if os.environ.get("PQR_REVIEW", "").strip() == "0":     # 시험이나 급한 작성에서 끄는 스위치
+        say("검토: PQR_REVIEW=0 이라 건너뜁니다")
+        return []
     try:
         from . import claude_cli
         if not claude_cli.available():
