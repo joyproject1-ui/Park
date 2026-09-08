@@ -903,4 +903,57 @@ def collect(folder, product_name=None, log=None):
     # 읽지 못한 파일은 반드시 알린다 — 조용히 지나가면 그 항이 왜 비었는지 아무도 모른다
     for item, path, why in unread_files(got, log):
         note(item, path, why)
+    for item, why in empty_after_read(data, got, log):
+        data.issues.insert(0, (item, "", why))
     return data
+
+
+# 항마다 '읽혔다면 여기에 값이 있어야 한다' — 자료는 올렸는데 값이 없으면 그 항은 빈 채로 나간다.
+# 담당자 2026-09-08: "다른 제품 작성할 때 동일한 문제가 발생 안 되도록 조치해 줘."
+FILLED_BY = (
+    ("6",       lambda d: d.manufacturing or d.batch,        "제조내역·공 기록서"),
+    ("7",       lambda d: d.yields,                          "수율"),
+    ("8.1.1",   lambda d: d.suppliers_raw,                   "주원료 공급업체"),
+    ("8.1.3",   lambda d: d.suppliers_mat,                   "부원료·포장자재 공급업체"),
+    ("8.2.1",   lambda d: d.raw_tests,                       "원료 시험번호"),
+    ("8.2.2",   lambda d: d.pkg_tests,                       "자재 시험번호"),
+    ("9.2.1",   lambda d: any(r.get("921") for r in d.coa.values()), "조제 성적서"),
+    ("9.2.2",   lambda d: any(r.get("922") for r in d.coa.values()), "조제(바이오버든) 성적서"),
+    ("9.2.3",   lambda d: any(r.get("923") for r in d.coa.values()), "충전 성적서"),
+    ("9.2.4",   lambda d: any(r.get("924") for r in d.coa.values()), "완제 성적서"),
+    ("10.1",    lambda d: d.pv,                              "공정밸리데이션"),
+    ("10.2",    lambda d: d.equipment,                       "제조설비 적격성"),
+    ("10.3-5",  lambda d: d.support,                         "제조지원 설비 적격성"),
+    ("11",      lambda d: d.deviations,                      "일탈"),
+    ("12",      lambda d: [c for c in d.changes if not c.get("unread")], "변경관리"),
+    ("13",      lambda d: d.stability_logs or d.stability_files, "안정성 시험일지"),
+)
+
+
+def empty_after_read(data, got, log=None):
+    """자료는 올렸는데 한 칸도 읽지 못한 항 — [(항, 알림 글)].
+
+    형식이 맞는 파일이 있는데도 값이 비면 그 항은 보고서에서 사선으로 남는다. 조용히 넘어가면
+    담당자가 다 만들고 나서야 알게 되므로, 작성이 끝나기 전에 문의 목록 맨 앞에 올린다.
+    """
+    rows = []
+    for item, 채워졌나, 무엇 in FILLED_BY:
+        paths = [p for p in got.get(item, [])
+                 if not os.path.basename(p).startswith(("~$", ".", "PQR "))
+                 and not os.path.basename(p).lower().endswith(".txt")]
+        if not paths:
+            continue                                  # 안 올린 항은 여기서 다루지 않는다
+        try:
+            if 채워졌나(data):
+                continue
+        except Exception:
+            continue
+        rows.append((item, "★ %s항에 파일 %d개를 올리셨는데 %s 값을 한 칸도 읽지 못했습니다 — "
+                           "그 항은 빈 칸으로 남습니다. 파일을 열어 서식이 평소와 같은지 보시고, "
+                           "그대로면 이 알림과 파일을 제작자에게 보내 주세요 (%s)"
+                     % (item, len(paths), 무엇,
+                        ", ".join(os.path.basename(p) for p in paths[:3])
+                        + (" 외 %d개" % (len(paths) - 3) if len(paths) > 3 else ""))))
+    if log and rows:
+        log("  [문제] 자료는 있는데 값을 못 읽은 항: %s" % ", ".join(item for item, _ in rows))
+    return rows

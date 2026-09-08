@@ -22,6 +22,7 @@ def _sheet(path, merge_spec=False):
             [2, "ELYN01", 99.97, 98.52, None, 99.75, None]]
     for r in rows:
         ws.append(r)
+    ws.merge_cells(start_row=2, start_column=3, end_row=2, end_column=6)   # 표 제목이 값 열 전체에 걸친다
     ws.merge_cells(start_row=3, start_column=5, end_row=3, end_column=6)   # '포장' 이 두 열에 걸친다
     if merge_spec:
         ws.merge_cells(start_row=5, start_column=5, end_row=5, end_column=6)
@@ -30,6 +31,8 @@ def _sheet(path, merge_spec=False):
 
 
 class 병합된_머리행(unittest.TestCase):
+    """머리가 여러 줄이고 칸이 병합된 표 — 표 제목 줄은 이름에서 뺀다."""
+
     def setUp(self):
         self.dir = tempfile.mkdtemp(prefix="pqr-yield-")
 
@@ -55,3 +58,30 @@ class 병합된_머리행(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class 머리가_두_줄인_표(unittest.TestCase):
+    """아이퓨어 수율현황표 — '포장' 아래에 '내수'·'온누리에이치엔씨' 가 따로 있다
+    (담당자 2026-09-08: 세 Lot 모두 '포장 수율 값이 수율현황표에 없음')."""
+
+    def _sheet(self, path):
+        from openpyxl import Workbook
+        wb = Workbook(); ws = wb.active
+        for r in [[None, "조제", "충전", "포장", "포장"],
+                  [None, "조제", "충전", "내수", "온누리에이치엔씨"],
+                  [None, "99.5 ± 0.5%", "92.0 ± 8.0%", "98.0 ± 2.0%", "98.0 ± 2.0%"],
+                  ["LWY201", 99.97, 93.47, None, 99.12],
+                  ["LWY501", 99.93, 94.93, 99.41, None]]:
+            ws.append(r)
+        wb.save(path)
+        return path
+
+    def test_두_줄을_이어_포장_내수로_읽는다(self):
+        path = self._sheet(os.path.join(tempfile.mkdtemp(prefix="pqr-y2-"), "y.xlsx"))
+        got = dict(Y.read_yields(path))
+        self.assertEqual(got["LWY201"]["포장(온누리에이치엔씨)"], "99.12")
+        self.assertEqual(got["LWY501"]["포장(내수)"], "99.41")
+        self.assertEqual(got["LWY201"]["조제"], "99.97")     # 한 줄뿐인 공정은 그대로
+        specs = Y.read_specs(path)
+        self.assertEqual(specs["포장(내수)"], "98.0 ± 2.0%")
+        self.assertEqual(specs["충전"], "92.0 ± 8.0%")
