@@ -224,6 +224,27 @@ class 사람이_만든_판독_파일(unittest.TestCase):
         data = self._collect(self._folder({"logs": [one], "reader_version": 3}))
         self.assertFalse(data.stability_all_read)
 
+    def test_covers_all_이면_어떤_시험항목이_들었는지_적는다(self):
+        # covers_all 은 '모든 Lot' 이지 '모든 시험항목' 이 아니다 — 함량만 든 판독을 믿고 시험일지를
+        # 읽지 않아 13.3 의 pH·삼투압 열이 비었다 (담당자 2026-09-09 아이퓨어).
+        from pqr.engine import collect
+        lines = []
+        one = {"lot": "OEX101", "kind": "장기", "points": [
+            {"period": "12M", "assays": {"함량": 101.2, "pH": 7.0}, "unsure": []}]}
+        folder = self._folder({"logs": [one], "reader_version": 3, "covers_all": True})
+        data = collect.collect(folder, product_name="퀴노비드안연고",
+                               log=lambda *a: lines.append(" ".join(map(str, a))))
+        told = [x for x in lines if "들어 있는 시험항목" in x]
+        self.assertEqual(len(told), 1)
+        self.assertIn("pH, 함량", told[0])
+        self.assertFalse(any("시험항목 값이 하나도" in str(i) for i in data.issues))
+
+    def test_covers_all_인데_값이_하나도_없으면_문의로_올린다(self):
+        one = {"lot": "OEX101", "kind": "장기", "points": [{"period": "12M", "assays": {}, "unsure": []}]}
+        data = self._collect(self._folder({"logs": [one], "reader_version": 3, "covers_all": True}))
+        self.assertTrue(data.stability_all_read)
+        self.assertTrue(any("시험항목 값이 하나도" in str(i) for i in data.issues))
+
 
 class 같은_일지_한_번만(unittest.TestCase):
     """이름만 다른 같은 시험일지는 한 번만 읽는다 (담당자 PC 2026-09-07: 24장 가운데 여덟 가지뿐)."""
