@@ -104,6 +104,8 @@ def discover_tree(root, skip=None):
     scan(root, None)
     for name in sorted(os.listdir(root)):
         path = os.path.join(root, name)
+        if name == OUTPUT_DIR:
+            continue          # 우리가 만든 보고서·첨부를 다시 자료로 읽지 않는다
         if os.path.isdir(path) and not name.startswith("."):
             scan(path, _folder_product_code(name))
     return entries, unknown
@@ -139,7 +141,18 @@ def load(input_dir=None, files=None, config=None):
     matcher = item_matcher(config["items"])
 
     def is_evidence(name):
-        return matcher(name) is not None or CLOSE_MARKER in name
+        if matcher(name) is not None or CLOSE_MARKER in name:
+            return True
+        # 프로그램이 스스로 남긴 글·판독 결과는 대장이 아니다. 표로 읽으려 들면 한 줄도
+        # 적재되지 않고 '적재 오류' 만 쌓인다 (담당자 2026-09-09: 아이퓨어 화면의 '적재 오류'
+        # 83건 가운데 83건 모두가 프로그램이 방금 만든 첨부·판독 기록이었다).
+        if any(name.startswith(side) for side in SIDE_FILES):
+            return True
+        if name.startswith("PQR ") and any(w in name for w in ("판독", "기록", "목록", "본문", "대장")):
+            return True
+        if name.endswith("판독.json"):
+            return True
+        return False
 
     entries = []
     unknown = []

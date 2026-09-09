@@ -262,6 +262,40 @@ def _prev_column_text(olds, name):
     return None
 
 
+def _split_91(document, tables, exp_lots):
+    """9.1 표를 내수·수출로 가른다 — ([내수 표], [수출 표]).
+
+    제목에 '수출' 이 붙은 항이 있으면 그것으로 가른다. 없으면 수출 Lot 이 있을 때만
+    둘째 표를 수출로 보고, 수출 Lot 이 아예 없으면 **모두 내수 표**다. 9.1 은 쪽이 넘어가면
+    표가 둘로 갈라지는데, 예전에는 둘째 표를 무조건 수출로 보아 수출이 없는 제품에서
+    둘째 표가 통째로 사선으로 남았다(담당자 2026-09-09 아이퓨어).
+    """
+    from .locate import outline
+    dom, exp, market, seen = [], [], "", False
+    by_id = {id(t._tbl): t for t in tables}
+    for kind, value, _ in outline(document):
+        if kind == "h":
+            m = re.match(r"^\s*(\d+(?:\.\d+)*)", str(value or ""))
+            got = m.group(1) if m else ""
+            if got.startswith("9.1"):
+                seen = True
+                market = "수출" if "수출" in value else "내수" if "내수" in value else market
+            elif got and got != "9":
+                market = ""
+            continue
+        if not market:
+            continue
+        table = document.tables[value]
+        one = by_id.get(id(table._tbl))
+        if one is not None:
+            (exp if market == "수출" else dom).append(one)
+    if seen and (dom or exp) and exp:
+        return dom, exp                      # 제목으로 갈린 서식
+    if not exp_lots:
+        return list(tables), []              # 수출 Lot 이 없으면 모두 내수 표
+    return tables[:1], tables[1:2]           # 예전 방식 — 첫 표 내수, 둘째 표 수출
+
+
 def _mark_header_can(table, word):
     """머리행에 그 글이 그대로 적힌 칸이 있는가 — 각주를 달 이름을 고를 때 쓴다."""
     return any(re.sub(r"\s+", "", cell.text) == word
@@ -1969,8 +2003,13 @@ def fill(document, data, product, period, today=None, log=None):
                            "원본에서 확인해 적으세요"))
         return n
     t91 = _tables(document, "9.1")
+    # 9.1 이 쪽을 넘겨 **표 두 개로 갈라져** 있으면 둘째 표도 내수 표다. 예전에는 둘째 표를
+    # 무조건 수출용으로 보아, 수출이 없는 제품(아이퓨어)에서는 둘째 표가 통째로 사선으로
+    # 남았다 (담당자 2026-09-09: "포장 완료 후 결과도 마찬가지야" — 유연물질·무균·함량·
+    # 포장규격이 모두 빈칸이었다).
+    t91_dom, t91_exp = _split_91(document, t91, exp)
     # 2026 양식(공정별 9.2 표)이면 9.1·9.2 를 모두 머리글·허용기준으로 짚어 채운다.
-    rules = D.criteria(t91[0]) if t91 else []
+    rules = D.criteria(t91_dom[0]) if t91_dom else []
     pairs = D.tables_92(document)
     # 수출 Lot 이 있어도 머리글 기반으로 채운다 — 내수용·수출용 표를 제목으로 갈라 각각 채운다(2026-09-06 퀴노비드:
     # 자리 기반으로 떨어지면 열이 밀려 9.2 의 확인·질량 칸이 비거나 옆 칸에 들어갔다)
@@ -1978,8 +2017,8 @@ def fill(document, data, product, period, today=None, log=None):
     if labelled:
         n_dom, n_exp = numbers(dom), (numbers(exp) if exp else {})
     else:
-        n_dom = fill_91(t91[0], dom, True) if t91 else {}
-        n_exp = fill_91(t91[1], exp, False) if len(t91) > 1 and exp else {}
+        n_dom = fill_91(t91_dom[0], dom, True) if t91_dom else {}
+        n_exp = fill_91(t91_exp[0], exp, False) if t91_exp and exp else {}
 
     # 9.2 세부표 — 항 아래 표들을 머리행 낱말로 고른다
     def fill_detail(table, first, lots, setter, n_summary=5):
@@ -2282,6 +2321,8 @@ def fill(document, data, product, period, today=None, log=None):
         return out
 
     NUMERIC = re.compile(r"[\s\d.,~]+(?:\s*(?:이상|이하|미만|초과))?$")
+    AV_RANGE = re.compile(r"Av\.?\s*([\d.]+)\s*([^\s(]*)[^()]*\(\s*([\d.]+)\s*~\s*([\d.]+)")
+    UNIT_TAIL = re.compile(r"\s*(?:%|㎛|um|μm|mg|kg|mL|g|개|매)\s*(?=$|이상|이하|미만|초과)")
     UNIT = re.compile(r"\d[\d.,]*\s*(㎛|um|μm|%|kg|mg|mL|g|개|매)")
 
     def unit_of(crit, item, sub):
@@ -2303,6 +2344,28 @@ def fill(document, data, product, period, today=None, log=None):
         texts = [t for t in texts if t]
         if not texts:
             return None
+        # 9.2 칸에 단위가 붙어 오면('0.1%') 숫자로 보이지 않아 '가장 많이 나온 글' 로 떨어졌다 —
+        # 전년도 결재본은 유연물질도 'Av. 0.075 % (0.057~0.088 %)' 로 적는다(담당자 2026-09-09).
+        # 단위를 떼고도 모두 숫자면 숫자로 다룬다. 단위는 tail 로 다시 붙는다.
+        # 성적서가 Lot 마다 이미 'Av. 304mOsm/kg (302 ~ 305 mOsm/kg)' 로 적어 오는 항목
+        # (삼투압)은 그 셋을 다시 하나로 묶는다 — 평균의 평균, 최솟값의 최솟값, 최댓값의 최댓값.
+        # 예전에는 글로 보아 '가장 많이 나온 글' 로 떨어졌는데, 셋이 모두 다르면 어느 Lot 의 글이
+        # 뽑힐지 그때그때 달라졌다(담당자 2026-09-09: 9.1 삼투압이 실행할 때마다 바뀌었다).
+        avs = [AV_RANGE.search(t) for t in texts]
+        if len(texts) > 1 and all(avs):
+            소수 = max(len((m.group(1).split(".") + [""])[1]) for m in avs)
+            꼴 = lambda v: "%.*f" % (소수, v)
+            단위 = ((" " + unit) if unit else
+                    ((" " + avs[0].group(2)) if avs[0].group(2) else ""))
+            가운데 = [float(m.group(1)) for m in avs]
+            아래 = [float(m.group(3)) for m in avs]
+            위 = [float(m.group(4)) for m in avs]
+            return ("Av. %s%s\n(%s ~ %s%s)"
+                    % (꼴(sum(가운데) / len(가운데)), 단위, 꼴(min(아래)), 꼴(max(위)), 단위))
+        bare = [UNIT_TAIL.sub("", t).strip() for t in texts]
+        if (all(NUMERIC.match(b) for b in bare) and any(re.search(r"\d", b) for b in bare)
+                and not all(NUMERIC.match(t) for t in texts)):
+            texts = bare
         if not all(NUMERIC.match(t) for t in texts):
             return max(set(texts), key=texts.count)          # 글로 적는 항목 — 가장 많이 나온 글
         tail = (" " + unit) if unit else ""
@@ -2316,8 +2379,12 @@ def fill(document, data, product, period, today=None, log=None):
             # (담당자 2026-09-07: "금속성 이물 결과는 왼쪽 내용 참고해서 작성해 줘")
             mean = D._stats("", texts)[2]
             return ("%s%s" % (mean, tail)) if mean else None
-        one_low = ("이상" in (crit or "") or any("이상" in t for t in texts)) and "평균" not in sub
-        one_high = ("이하" in (crit or "") or any("이하" in t for t in texts)) and "평균" not in sub
+        # 한쪽만 적는 것은 **결과값 자체**가 '이상·이하' 를 달고 올 때뿐이다. 허용기준에 '이하'
+        # 가 있다는 이유로 최댓값만 적으면 결재본과 어긋난다 — 전년도 결재본은 제제균일성
+        # (판정값 15.0% 이내)도 유연물질 B(0.5% 이하)도 'Av. 2.5 % (1.2~3.4 %)' 로 적었다
+        # (담당자 2026-09-09: "기재 방법을 모르면 전년도 PQR 참고해").
+        one_low = any("이상" in t for t in texts) and "평균" not in sub
+        one_high = any("이하" in t for t in texts) and "평균" not in sub
         if "미립자" in item:
             # 허용기준('10㎛ 이상/mL : 50개 이하')의 '이상' 은 **입자 크기** 조건이고 '이하' 는
             # 개수 한계다 — 둘 다 걸려 한쪽만 적는 셈이 어그러졌다(‘Av.None개(2~None개)’).
@@ -2423,14 +2490,18 @@ def fill(document, data, product, period, today=None, log=None):
         pairs_dom = [(t, st) for t, st, mk in triples if mk != "수출"]
         pairs_exp = [(t, st) for t, st, mk in triples if mk == "수출"]
         cpk_dom = fill_92_labelled(pairs_dom, rules, dom, n_dom, _prior_91(data, 0))
-        if t91:
-            log("9.1항: 결과 칸 %d줄을 판독값으로 채움" % fill_91_labelled(t91[0], rules, dom, n_dom, lambda pr: maker_of(pr, 0), 0))
+        if t91_dom:
+            채움 = sum(fill_91_labelled(t, D.criteria(t), dom, n_dom, lambda pr: maker_of(pr, 0), 0)
+                       for t in t91_dom)
+            log("9.1항: 결과 칸 %d줄을 판독값으로 채움 (표 %d개)" % (채움, len(t91_dom)))
         cpk_exp = {}
         if exp and pairs_exp:
-            rules_e = D.criteria(t91[1]) if len(t91) > 1 else rules
+            rules_e = D.criteria(t91_exp[0]) if t91_exp else rules
             cpk_exp = fill_92_labelled(pairs_exp, rules_e, exp, n_exp, _prior_91(data, 1))
-            if len(t91) > 1:
-                log("9.1항(수출): 결과 칸 %d줄을 판독값으로 채움" % fill_91_labelled(t91[1], rules_e, exp, n_exp, lambda pr: maker_of(pr, 1), 1))
+            if t91_exp:
+                채움 = sum(fill_91_labelled(t, D.criteria(t), exp, n_exp, lambda pr: maker_of(pr, 1), 1)
+                           for t in t91_exp)
+                log("9.1항(수출): 결과 칸 %d줄을 판독값으로 채움 (표 %d개)" % (채움, len(t91_exp)))
         log("9.2항: 머리글로 짚어 표 %d개 채움 (%s)" % (len(triples), ", ".join((mk + " " if mk else "") + st for _, st, mk in triples)))
         # 일부 Lot 에만 없는 시험은 **못 읽은 것이 아니라 생략된 것**이다 — 사선을 긋고 12항
         # 변경관리에서 근거를 찾아 각주를 단다 (담당자 2026-09-09 아이퓨어: "주1) 12항 변경관리
@@ -2565,6 +2636,128 @@ def fill(document, data, product, period, today=None, log=None):
                     issues[:] = [one for one in issues
                                  if not (len(one) > 2 and "찾지 못해 비웠습니다" in str(one[2])
                                          and 짧은 in re.sub(r"\s+", "", str(one[2])))]
+        # 9.1 요약표에 남은 사선을 **9.2 상세표에서 그대로 옮겨** 채운다
+        # (담당자 2026-09-09: "왼쪽 결과를 오른쪽 요약 결과표에 옮겨 주면 되는데 안 옮겼네",
+        #  "포장 완료 후 결과도 마찬가지야"). 9.1 은 성적서를 따로 읽어 채우기 때문에, 9.2 가
+        # 다른 경로(전년도 문안·다른 단계 성적서)로 채워진 항목은 9.1 에서 빈 채로 남았다.
+        # 9.2 는 이미 담당자가 눈으로 맞춰 본 값이므로 그것을 근거로 삼는 편이 맞다.
+        def _flat(text):
+            return re.sub(r"[^0-9A-Za-z가-힣]", "", str(text or ""))
+
+        HINT_STOP = ("허가", "자가", "이하", "이상", "각각", "판정값", "및", "또는")
+
+        def _columns_92(lots):
+            """9.2 표에서 읽은 {열 이름: [Lot 차례대로의 값]} — 그 Lot 이 있는 표만 본다."""
+            got = {}
+            for key in ("9.2.1", "9.2.2", "9.2.3", "9.2.4"):
+                for table in _tables(document, key):
+                    width = E.grid_width(table)
+                    rows = [_row_texts(table.rows[i], width) for i in range(len(table.rows))]
+                    head = _head_names(rows)
+                    by_lot = {}
+                    for r in rows:
+                        lot = (r.get(1) or "").strip()
+                        if re.match(r"^\d+$", (r.get(0) or "").strip()) and lot in set(lots):
+                            by_lot[lot] = r
+                    if not by_lot:
+                        continue
+                    for gi, name in head.items():
+                        if gi <= 1 or not (name or "").strip():
+                            continue
+                        값 = [(by_lot.get(lot, {}).get(gi) or "").strip() for lot in lots]
+                        if any(값):
+                            got.setdefault(name, 값)
+            return got
+
+        def _pick_92(cols, item, sub, crit):
+            """그 9.1 줄에 해당하는 9.2 열의 값들 — 못 고르면 None."""
+            want = _flat(item)
+            if len(want) < 2:
+                return None
+            cands = [(name, 값) for name, 값 in cols.items() if want in _flat(name)]
+            if not cands:
+                return None
+            if len(cands) == 1:
+                return cands[0][1]
+            # 여러 열이 걸리면(유연물질 A·B·기타·총, 불용성미립자 10·25·50㎛, 질량용량 평균·개개)
+            # 그 줄의 구분과 허용기준에서 단서를 뽑아 가장 잘 맞는 열을 고른다
+            글 = "%s %s" % (sub or "", D.PREFIX.sub("", crit or ""))
+            hints = [h for h in re.findall(r"[가-힣]+|[A-Za-z]+|\d+", 글)
+                     if h and h not in HINT_STOP and _flat(item) != h and h not in _flat(item)]
+            best = None
+            for name, 값 in cands:
+                flat = _flat(name)
+                score = sum(1 for h in hints if h in flat)
+                if best is None or score > best[0] or (score == best[0] and len(flat) < len(best[1])):
+                    best = (score, flat, 값)
+            return best[2] if best and best[0] > 0 else None
+
+        def fill_91_from_92(t91, rules, lots):
+            cols = _columns_92(lots)
+            if not cols:
+                return 0
+            done, k, follow = 0, 0, []
+            for row in t91.rows[1:]:
+                cells = E.raw_cells(row)
+                texts = [E.cell_text(c) for c in cells]
+                if _is_head_row(texts):
+                    continue
+                ci = next((i for i, t in enumerate(texts) if D.PREFIX.search(t or "")), None)
+                if ci is None:
+                    sub = "".join(D.squeeze(t) for t in texts[1:-1])
+                    if not follow or len(cells) < 2:
+                        continue
+                    prev, crit_text = follow[-1]
+                    if not sub:
+                        if "금속성이물" in prev["item"] and "개개" not in prev["sub"]:
+                            sub = "개개"
+                        else:
+                            continue
+                    hit = dict(prev, sub=sub)
+                elif ci >= len(cells) - 1:
+                    continue
+                else:
+                    crit_text = texts[ci]
+                    hit = rules[k] if k < len(rules) else None
+                    k += 1
+                    if hit is None:
+                        continue
+                    follow.append((hit, crit_text))
+                값 = _pick_92(cols, hit["item"], hit["sub"], crit_text)
+                if not 값 or not any(값):
+                    continue
+                cur = E.cell_text(cells[-1]).strip()
+                if cur:
+                    # 이미 채워져 있어도 그 글이 **어느 한 Lot 의 값 그대로**면 요약이 아니다 —
+                    # 9.1 은 세 Lot 을 묶은 값이어야 한다(담당자 2026-09-09: 삼투압이 한 Lot 의
+                    # 글로만 적혔고, 실행할 때마다 어느 Lot 인지 달라졌다). 그럴 때만 다시 쓴다.
+                    쓴것 = [re.sub(r"\s+", "", v) for v in 값 if v]
+                    if len(set(쓴것)) < 2 or re.sub(r"\s+", "", cur) not in 쓴것:
+                        continue
+                crit = D.PREFIX.sub("", crit_text or "")
+                out = summarize([g for g in 값 if g], crit, hit["item"], hit["sub"],
+                                unit_of(crit, hit["item"], hit["sub"]))
+                if not out:
+                    continue
+                target = cells[-1]
+                left_ok = (ci is None and len(cells) >= 2) or (ci is not None and len(cells) - 2 > ci)
+                if left_ok and not E.cell_text(cells[-2]).strip() and not D.PREFIX.search(E.cell_text(cells[-2])):
+                    E.clear_diag(cells[-2])
+                    E.merge_right(cells[-2], cells[-1])
+                    target = cells[-2]
+                E.clear_diag(target)
+                E.set_cell(target, *out.split("\n"))
+                done += 1
+            return done
+
+        옮김 = sum(fill_91_from_92(t, D.criteria(t), dom) for t in t91_dom)
+        if 옮김:
+            log("9.1항: 남아 있던 사선 %d줄을 9.2 상세표에서 옮겨 채움" % 옮김)
+        if exp:
+            옮김 = sum(fill_91_from_92(t, D.criteria(t), exp) for t in t91_exp)
+            if 옮김:
+                log("9.1항(수출): 남아 있던 사선 %d줄을 9.2 상세표에서 옮겨 채움" % 옮김)
+
         # 공양식의 각주 '1) 모든 시험 결과값이 0매로 동일하여 별도 계산하지 않음.' — 최댓값·최솟값·평균을 적으므로
         # 앞뒤가 맞지 않아 지운다(담당자 2026-09-06: "최댓값, 최솟값 기재가 안 됐네")
         gone = 0
@@ -3260,7 +3453,7 @@ def _fill_131_table(table, rows, why_of, issues, post=False):
         E.set_cell_plain(cell, "특이사항 (Comment)", *kept)
 
 
-def _fill_133_table(table, groups, spec, _trim, marks=None):
+def _fill_133_table(table, groups, spec, _trim, marks=None, issues=None):
     """13.3 경향 분석 — groups: [(줄 이름 '시판 후'|'장기', log, 평가 연도까지의 시점들)]. 성분마다 최솟값 ~ 최댓값."""
     labels = D.labels(table)
     # 줄 이름과 연도가 한 칸에 적힌 서식('시판 후(2023)' | pH | 함량 | 삼투압 — 아이퓨어 2026 공양식)은
@@ -3268,23 +3461,37 @@ def _fill_133_table(table, groups, spec, _trim, marks=None):
     combined = any(re.match(r"(장기|시판후)\(?\d{4}", D.squeeze(E.cell_text(E.raw_cells(r)[0])))
                    for r in table.rows[1:4])
     first_value_col = 1 if combined else 2
-    parts = []
+    # 시험일지 판독에 실제로 있는 열쇠 — 없는 이름을 골라 두면 그 열은 통째로 빈다
+    # (담당자 2026-09-09 아이퓨어 13.3: 판독값의 열쇠는 '함량' 인데 성분 이름을 골라 비었다).
+    keys = set()
+    for _lab, _one, seen in groups:
+        for pt in seen:
+            keys |= set((pt.get("assays") or {}).keys())
+
+    def _key_like(name):
+        plain = re.sub(r"[(（].*?[)）]", "", name or "").strip()
+        if not plain:
+            return None
+        return next((key for key in keys if _norm_item(plain) == _norm_item(key)), None)
+
+    parts, 빈열 = [], []
     for k, name in enumerate(labels):
         if k < first_value_col or not name or "시험항목" in name:
             continue
-        got = next((p for p in spec if D.squeeze(p) and D.squeeze(p) in name), None)
-        if got is None and "함량" in name and len(spec) == 1:
-            got = list(spec)[0]                            # 성분 이름 없이 '함량(%)' 한 열뿐인 표(퀴노비드)
-        if got is None:
-            # pH·삼투압처럼 성분이 아닌 열 — 열 이름(단위 뗀 것)을 그대로 판독값의 열쇠로 쓴다
-            # (담당자 2026-09-08 아이퓨어 13.3: pH·삼투압 열이 통째로 비어 있었다).
-            plain = re.sub(r"[(（].*?[)）]", "", name).strip()
-            if plain and any(_norm_item(plain) == _norm_item(key)
-                             for _lab, one, seen in groups for p in seen for key in (p.get("assays") or {})):
-                got = next(key for _lab, one, seen in groups for p in seen for key in (p.get("assays") or {})
-                           if _norm_item(plain) == _norm_item(key))
+        got = next((p for p in spec if D.squeeze(p) and D.squeeze(p) in name and p in keys), None)
+        # pH·삼투압처럼 성분이 아닌 열, 그리고 '함량(%)' 처럼 판독 열쇠가 그대로인 열
+        got = got or _key_like(name)
+        if got is None and "함량" in name:
+            got = ("함량" if "함량" in keys else
+                   (list(spec)[0] if len(spec) == 1 and list(spec)[0] in keys else None))
         if got:
             parts.append((k, got))
+        else:
+            빈열.append(name)
+    if 빈열 and issues is not None:
+        issues.append(("13.3", ", ".join(빈열),
+                       "시험일지 판독에 이 시험항목의 값이 없어 열을 비웠습니다 — 시험일지에서 "
+                       "확인해 적거나, 판독 파일(13. 안정성시험일지 판독.json)에 값을 넣어 주세요"))
     if not parts:
         return 0
     width = len(labels)
@@ -3646,7 +3853,8 @@ def _fill_stability26(document, logs, period, spec, log, issues, why_of=None, pr
         t = pick("경향", market)
         groups = [("시판 후", one, seen) for one, seen in trend_p] + [("장기", one, seen) for one, seen in trend_l]
         if t is not None and groups:
-            n = _fill_133_table(t, groups, spec, _trim, marks.get(market) or marks.get(""))
+            n = _fill_133_table(t, groups, spec, _trim, marks.get(market) or marks.get(""),
+                                issues=issues)
             wrote.append("경향·%s %d줄" % (market, n))
     log("13항: %s" % (", ".join(wrote) if wrote else "평가 기간에 든 시점이 없음"))
 
