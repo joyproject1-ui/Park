@@ -130,6 +130,143 @@ def cpk_jobs(data, lots, product_name=""):
     return jobs
 
 
+SHEET_NAME = re.compile(r"경향\s*분석\s*Sheet", re.I)
+STAGE_KEYS = {"조제": ("921", "922"), "충전": ("923",), "포장": ("924",)}
+STAGE_WORD = {"조제": "조제 완료 후", "충전": "충전 완료 후", "포장": "포장 완료 후"}
+
+
+def _parse_sheet_name(name):
+    """'16. HLF-QC-126-09 …Sheet(양쪽 규격 용)(Rev.000)_포장 함량(말레인산페니라민) - 복사본.xls'
+    → {"stage": "포장", "item": "함량", "part": "말레인산페니라민", "sided": "Bilateral", "prefix": "16"} — 아니면 None."""
+    base = os.path.basename(name)
+    if not SHEET_NAME.search(base) or base.startswith("~$"):
+        return None
+    m = re.match(r"^\s*(\d+)\.\s*", base)
+    prefix = m.group(1) if m else ""
+    tail = re.sub(r"^.*\(Rev\.?\s*[\d.\-]+\)", "", base)
+    tail = re.sub(r"\s*-\s*복사본\s*", "", tail)
+    tail = re.sub(r"\.xlsx?$", "", tail, flags=re.I).strip(" _-")
+    stage = next((w for w in STAGE_KEYS if tail.startswith(w)), "")
+    rest = tail[len(stage):].strip(" _-") if stage else tail
+    pm = re.match(r"^(.*?)\s*[(（]([^)）]+)[)）]\s*$", rest)
+    item, part = (pm.group(1).strip(), pm.group(2).strip()) if pm else (rest.strip(), "")
+    if not item:
+        return None
+    sided = "Unilateral" if "한쪽" in base else "Bilateral"
+    return {"stage": stage or "포장", "item": item, "part": part, "sided": sided, "prefix": prefix,
+            "path": name}
+
+
+def _norm(text):
+    return re.sub(r"[^0-9a-z가-힣]", "", str(text or "").lower())
+
+
+def _spec_cells(spec, sided):
+    """허용기준 글('6.0 ~ 8.0', '판정값 15.0% 이하', '10CFU/100mL 이하') → {N6, P6}."""
+    out = {}
+    m = re.search(r"(-?\d+(?:\.\d+)?)\s*~\s*(-?\d+(?:\.\d+)?)", spec or "")
+    if m:
+        out["N6"], out["P6"] = float(m.group(1)), float(m.group(2))
+        return out
+    # 한쪽 규격은 **첫 숫자**가 한계다 — '10CFU/100mL 이하' 에서 100 을 집으면 안 된다
+    first = re.search(r"-?\d+(?:\.\d+)?", spec or "")
+    if first and re.search(r"이하|미만", spec or ""):
+        out["P6"] = float(first.group())
+    elif first and re.search(r"이상|초과", spec or ""):
+        out["N6"] = float(first.group())
+    return out
+
+
+def _value_of(rec, item, part):
+    """성적서 판독 한 건에서 (값, 허용기준) — 못 찾으면 (None, '')."""
+    want = _norm(item)
+    if "함량" in item:
+        for a in rec.get("assays") or []:
+            if not part or _norm(a.get("part")) == _norm(part) or _norm(part) in _norm(a.get("part")):
+                lo, hi = a.get("lo"), a.get("hi")
+                return _num(a.get("value")), ("%s ~ %s" % (lo, hi) if lo and hi else "")
+        return _num(rec.get("assay")), str(rec.get("assay_spec") or "")
+    if "바이오버든" in item or "생균수" in item:
+        got = rec.get("bioburden")
+        spec = rec.get("bioburden_spec") or ""
+        if got is None:
+            for name, one in (rec.get("items") or {}).items():
+                if "생균" in name or "바이오버든" in name:
+                    got, spec = one.get("value"), one.get("spec") or ""
+        return _num(got), str(spec)
+    best = None
+    for name, one in (rec.get("items") or {}).items():
+        flat = _norm(re.sub(r"[(（][^)）]*[)）]", "", name))
+        if flat == want or (len(want) >= 2 and (want in flat or flat in want)):
+            if best is None or len(flat) < len(best[0]):
+                best = (flat, one)
+    if best is None:
+        return None, ""
+    value = str(best[1].get("value") or "")
+    if part:
+        m = re.search(re.escape(re.sub(r"\s+", "", part)) + r"\s*[:：]\s*([^,，;；]+)", re.sub(r"\s+", "", value))
+        if m:
+            value = m.group(1)
+    return _num(value), str(best[1].get("spec") or "")
+
+
+def cpk_jobs_from_sheets(input_dir, data, lots, product_name=""):
+    """제품 폴더의 '16. …경향분석 Sheet…' 파일마다 Cpk 일감 하나 — [{"src", "name", "values", "cells", "sided"}].
+
+    담당자 2026-09-09: "앞으로는 16번 첨부 파일 중 엑셀 파일(안정성, Cpk)로 너가 생성하는 PQR 작성본
+    '안정성, Cpk 엑셀 파일' 을 생성해줘 — 단 Cpk 는 10 로트 이상일 때만". 전년도에 어떤 항목의 Cpk
+    Sheet 를 냈는지가 그 제품의 Cpk 항목 목록이다(나조린: 조제 pH·비중·바이오버든, 충전 pH, 포장 pH·
+    함량×2·제제균일성×2). 같은 항목의 '0. … - 복사본'(올해 빈 서식)이 있으면 그것을 서식으로 쓴다.
+    """
+    if not input_dir or not os.path.isdir(input_dir):
+        return []
+    found = {}
+    for name in sorted(os.listdir(input_dir)):
+        if not name.lower().endswith((".xls", ".xlsx")):
+            continue
+        info = _parse_sheet_name(os.path.join(input_dir, name))
+        if not info or info["prefix"] not in ("0", "16"):
+            continue
+        key = (info["stage"], _norm(info["item"]), _norm(info["part"]))
+        slot = found.setdefault(key, {})
+        slot.setdefault(info["prefix"], info)
+    jobs = []
+    for key, slot in found.items():
+        info = slot.get("0") or slot.get("16")
+        src = info["path"]
+        stage, item, part = info["stage"], info["item"], info["part"]
+        values, specs = [], []
+        for lot in lots:
+            # 조제는 IPC(921)와 바이오버든(922) 성적서가 따로다 — 항목이 있는 쪽을 쓴다
+            for k in STAGE_KEYS[stage]:
+                rec = (data.coa.get(lot) or {}).get(k) or {}
+                if not rec:
+                    continue
+                v, sp = _value_of(rec, item, part)
+                if v is not None:
+                    values.append(v)
+                    if sp:
+                        specs.append(re.sub(r"\s+", "", sp))
+                    break
+        label = "%s %s%s" % (stage, item, ("(%s)" % part) if part else "")
+        out_name = re.sub(r"^\s*(?:0|16)\.\s*", "", os.path.basename(src))
+        out_name = re.sub(r"\s*-\s*복사본\s*", "", out_name)
+        # 머리(C4 제품명·C5 공정·K5 항목)는 16번 서식에 적힌 그대로 둔다 — 회사가 쓰는 표기다.
+        # 규격(N6/P6)만 올해 성적서의 허용기준으로 적는다. 연중에 기준이 바뀌었으면(나조린 조제 pH:
+        # 변경관리로 6.2~7.5 → 6.2~7.0) **가장 최근 Lot 의 기준**을 쓰고 문의로 알린다.
+        cells = {}
+        distinct = []
+        for sp in specs:
+            if sp not in distinct:
+                distinct.append(sp)
+        if distinct:
+            cells.update(_spec_cells(distinct[-1], info["sided"]))
+        jobs.append({"src": src, "name": out_name, "label": label, "values": values, "cells": cells,
+                     "sided": info["sided"], "prefix": info["prefix"],
+                     "spec_note": (" → ".join(distinct)) if len(distinct) > 1 else ""})
+    return jobs
+
+
 FORMS = {"Bilateral": "HLF-QC-126-09 경향분석 Sheet(양쪽 규격).xlsx",
          "Unilateral": "HLF-QC-126-08 경향분석 Sheet(한쪽 규격).xlsx"}
 
@@ -160,12 +297,49 @@ def write_cpk_files(folder, data, previous_path, today, lots=None, product_name=
                             % (len(lots), qc.cpk_min_lots())))
         return []
     work = tempfile.mkdtemp(prefix="pqr-cpk-")
+    out = []
+    # 제품 폴더에 전년도 경향분석 Sheet(16번)가 있으면 **그 항목 그대로, 그 서식 그대로** 만든다
+    sheet_jobs = cpk_jobs_from_sheets(getattr(data, "folder", "") or "", data, lots, product_name)
+    if sheet_jobs:
+        log("  Cpk: 16번 경향분석 Sheet %d개를 서식으로 씁니다 — %s"
+            % (len(sheet_jobs), ", ".join(j["label"] for j in sheet_jobs)))
+        for job in sheet_jobs:
+            if not job["values"]:
+                data.issues.append(("첨부", job["name"], "'%s' 성적서 값이 없어 Cpk 계산 파일을 만들지 않음" % job["label"]))
+                continue
+            if len(job["values"]) < len(lots):
+                data.issues.append(("첨부", job["name"], "'%s' 값이 %d/%d Lot 에만 있습니다 — 성적서를 확인하세요"
+                                    % (job["label"], len(job["values"]), len(lots))))
+            if job.get("spec_note"):
+                data.issues.append(("첨부", job["name"], "'%s' 허용기준이 Lot 에 따라 다릅니다(%s) — 가장 최근 기준으로 "
+                                    "규격 칸을 적었습니다. 확인하세요" % (job["label"], job["spec_note"])))
+            cells = dict(job["cells"], K4=today)
+            dst = free_path(os.path.join(folder, job["name"]), data, log)
+            name = os.path.basename(dst)
+            try:
+                xls_fill.fill(job["src"], dst, cells, job["values"])
+                out.append((name, dst))
+                log("  %s: %s번 서식을 그대로 채움 (%d Lot)" % (name, job["prefix"], len(job["values"])))
+                continue
+            except Exception as error:
+                why = str(error)
+            from . import cpk_form
+            dst2 = re.sub(r"\.xls$", ".xlsx", dst)
+            try:
+                converted = os.path.join(work, "form-%d.xlsx" % len(out))
+                convert.to_xlsx(job["src"], converted)
+                cpk_form.fill(converted, dst2, cells, job["values"], today)
+                out.append((os.path.basename(dst2), dst2))
+                log("  %s: 서식을 .xlsx 로 바꿔 채움 — %s" % (os.path.basename(dst2), why))
+            except Exception as error:
+                data.issues.append(("첨부", job["name"], "Cpk 파일을 만들지 못함: %s / %s" % (why, error)))
+        shutil.rmtree(work, ignore_errors=True)
+        return out
     try:
         sources = _previous_xls(previous_path, work)
     except Exception as error:
         sources = {}
         log("  전년도 Cpk 파일을 꺼내지 못함: %s" % error)
-    out = []
     for job in cpk_jobs(data, lots, product_name):
         word = job["word"]
         src = sources.get(word)
