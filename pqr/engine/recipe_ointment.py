@@ -2490,19 +2490,42 @@ def fill(document, data, product, period, today=None, log=None):
                                        "%s 시험이 일부 Lot 에만 없습니다 — 12항 변경관리에서 근거를 찾지 못했습니다" % 짧은))
                     _mark_header(table, 있던것, 번호)
                     E.note_after(document, table, 글)
-        # 같은 번호의 각주가 둘 이상이면 알린다 — 공양식에 손으로 적어 둔 각주가 겹쳐 있으면
-        # 머리글의 윗첨자가 어느 것을 가리키는지 알 수 없다(아이퓨어 공양식에 '주1)' 이 둘이다).
+        # 같은 번호의 각주가 겹치면 자세한 쪽만 남긴다 — 공양식에 손으로 적어 둔 각주가
+        # 두 줄이면 머리글의 윗첨자가 어느 것을 가리키는지 알 수 없다 (담당자 2026-09-09
+        # 아이퓨어: '주1)' 이 둘인데 "1번만 남겨" — 더 자세한 쪽을 남긴다).
+        # **같은 번호 + 같은 12항 문서번호 + 둘 다 생략말** 일 때만 지운다. 근거가 서로
+        # 다르면 사람이 판단할 일이므로 지우지 않고 문의 목록에만 올린다.
         번호별 = {}
         for para in document.paragraphs:
             n = _note_no(para.text)
             if n:
-                번호별.setdefault(n, []).append(para.text.strip())
-        for n, 글들 in sorted(번호별.items()):
-            if len(글들) > 1:
+                번호별.setdefault(n, []).append(para)
+        for n, paras in sorted(번호별.items()):
+            if len(paras) < 2:
+                continue
+            문서 = set()
+            for para in paras:
+                문서 |= set(re.findall(r"[A-Z]{2,3}-\d{6}-\d+", para.text))
+            겹침 = (len(문서) == 1
+                    and all(any(w in para.text for w in OMIT_WORDS) for para in paras))
+            if not 겹침:
                 issues.append(("9.2", "주%d)" % n,
-                               "같은 번호의 각주가 %d줄 있습니다 — 하나만 남기세요: %s"
-                               % (len(글들), " / ".join(글들))))
-
+                               "같은 번호의 각주가 %d줄인데 근거가 서로 달라 그대로 두었습니다 — "
+                               "하나만 남기세요: %s"
+                               % (len(paras), " / ".join(para.text.strip() for para in paras))))
+                continue
+            남길것 = max(paras, key=lambda para: len(re.sub(r"\s+", "", para.text)))
+            지움 = 0
+            for para in paras:
+                if para is 남길것:
+                    continue
+                el = para._p
+                if el.getparent() is not None:
+                    el.getparent().remove(el)
+                    지움 += 1
+            if 지움:
+                log("9.2항: 겹친 '주%d)' 각주 %d줄을 지우고 자세한 쪽만 남김 — %s"
+                    % (n, 지움, 남길것.text.strip()))
         # 통째로 빈 열은 올해 자료에서 못 찾은 것이다 — 해마다 같은 문안을 적는 열(포장규격
         # '각 규격에 적합함')은 전년도 결재본에서 옮기고 노랑으로 표시해 대조하게 한다
         # (담당자 2026-09-09: "전년도 결재본 문안을 가져와 노랑 표시 - 이렇게 진행해줘").
