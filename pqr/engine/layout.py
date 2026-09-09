@@ -305,6 +305,7 @@ def apply(document, log=None, product_title=None, edms=None):
     log("행 분할 금지: %d" % E.no_split_rows(document))
     log("글 든 행 높이 '정확히'→'최소': %d" % E.relax_exact_rows(document))
     log("표 뒤 각주를 표와 함께: %d" % E.keep_notes_with_table(document))
+    log("맞붙은 표 사이 빈 문단: %d" % E.separate_adjacent_tables(document))
     keep = 0
     for ti in _tables_under(document, ("8.2.1", "8.2.2", "13.2")):
         keep += E.keep_merged_groups(T[ti], 3)
@@ -327,10 +328,14 @@ def apply(document, log=None, product_title=None, edms=None):
     log("항 제목 다음과 함께: %d" % E.keep_headings_with_next(document))
     log("표 앞 문단 다음과 함께: %d" % E.keep_paras_before_tables(document))
     log("윗첨자 각주 번호: %d" % len(E.superscript_note_marks(document)))
+    log("윗첨자 차례(1st·2nd): %d" % E.superscript_ordinals(document))
+    log("칸 끝 빈 문단 정리: %d" % E.strip_trailing_blank_paras(document, skip=(toc,)))
     log("빈 쪽 방지 정리: %s" % E.tidy_page_breaks(document))
     log("제목 뒤 본문의 쪽 나눔 제거: %d" % E.drop_break_after_headings(document))
     log("항 사이 한 줄 띄움: %d" % E.space_before_sections(document))
     log("각주 내어쓰기: %d" % E.hanging_indent_notes(document))
+    # 맞붙은 표는 맨 마지막에 한 번 더 뗀다 — 앞 단계(빈 문단 정리)가 사이 문단을 지우기도 한다
+    log("맞붙은 표 사이 빈 문단(마지막): %d" % E.separate_adjacent_tables(document))
     try:
         from .toc import link_toc
         log("목차 쪽수 필드: %d" % link_toc(document, T[toc]))

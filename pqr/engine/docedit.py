@@ -1203,9 +1203,23 @@ def slash_empty_summary(table, n_summary=5, rows=None):
     가로·세로로 한 덩어리로 병합하고 사선(왼쪽 아래→오른쪽 위) 하나를 긋는다.
     (담당자 지시 — 정성 항목의 요약 칸 처리 방식)"""
     from docx.table import _Cell
+    SUMMARY = ("최댓값", "최솟값", "평균", "공정능력지수", "Cpk")
     if rows is None:
-        rows = table.rows[-n_summary:]
-    if not rows or not cell_text(_Cell(rows[0]._tr.findall(qn("w:tc"))[0], table)).strip().startswith("최댓값"):
+        # 요약 블록은 서식마다 줄 수가 다르다 — 5줄(최댓값~Cpk 판정)도, 4줄(최솟값~Cpk 판정, 나조린
+        # 확인·성상 표)도 있다. 표 끝에서 거슬러 올라가며 요약 라벨이 붙은 줄을 모두 잡는다
+        # (담당자 2026-09-09: "정산 칸은 최솟값·평균·Cpk 와 동일한 음영과 사선 처리해줘").
+        picked = []
+        for r in reversed(table.rows):
+            head = re.sub(r"\s+", "", cell_text(_Cell(r._tr.findall(qn("w:tc"))[0], table)))
+            if any(head.startswith(w) for w in SUMMARY):
+                picked.insert(0, r)
+            elif picked:
+                break
+        rows = picked
+    n_summary = len(rows)
+    if n_summary < 2:
+        return 0
+    if not re.sub(r"\s+", "", cell_text(_Cell(rows[0]._tr.findall(qn("w:tc"))[0], table))).startswith(SUMMARY):
         return 0
     tcs = [r._tr.findall(qn("w:tc")) for r in rows]
     n = len(tcs[0])
@@ -1238,9 +1252,28 @@ def slash_empty_summary(table, n_summary=5, rows=None):
             cell = _Cell(first, table)
             set_vmerge(cell, "restart" if r == 0 else None)
             clear_diag(cell)
+            # 라벨 칸(최솟값·평균·Cpk)과 같은 음영을 입힌다 — 서술형 결과라 정산할 수 없는 칸임을
+            # 한눈에 보이게 (담당자 2026-09-09: "최솟값, 평균, Cpk 와 동일한 검은 음영과 … 사선 처리")
+            _copy_shading(tcs[r][0], first)
         add_diag(_Cell(tcs[0][a], table))
         made += 1
     return made
+
+
+def _copy_shading(src_tc, dst_tc):
+    """src 칸의 음영(w:shd)을 dst 칸에 그대로 — 없으면 아무것도 하지 않는다."""
+    import copy
+    spr = src_tc.find(qn("w:tcPr"))
+    shd = spr.find(qn("w:shd")) if spr is not None else None
+    if shd is None:
+        return False
+    dpr = _tcpr(dst_tc)
+    old = dpr.find(qn("w:shd"))
+    if old is not None:
+        dpr.remove(old)
+    from .ooxml_order import place
+    place(dpr, copy.deepcopy(shd))
+    return True
 
 
 def drop_break_after_headings(document):
@@ -1331,6 +1364,90 @@ def renumber_subheadings(document, parent="9.2"):
                 last += 1
                 break
     return fixed
+
+
+def superscript_ordinals(document):
+    """'장기 1st (2025)'·'2025 2nd LKY402' 의 st·nd·rd·th 를 윗첨자로 — 고친 런 수.
+
+    13.3 에서 같은 해 Lot 이 여럿일 때 담당자가 쓰는 표기다(2026-09-09 나조린: '장기 1st (2025)').
+    글자 자체는 그대로 두고 꼬리 두 글자만 윗첨자 런으로 갈라 낸다.
+    """
+    import copy as _copy
+    import re as _re
+    pat = _re.compile(r"(?<=\d)(st|nd|rd|th)(?=\b|\s|\(|,|$)")
+    n = 0
+    for tbl in document.element.body.iter(qn("w:tbl")):
+        for tc in tbl.iter(qn("w:tc")):
+            for p in tc.findall(qn("w:p")):
+                for t in list(p.iter(qn("w:t"))):
+                    text = t.text or ""
+                    if not pat.search(text):
+                        continue
+                    run = t.getparent()
+                    pieces, at = [], 0
+                    for m in pat.finditer(text):
+                        pieces.append((text[at:m.start()], False))
+                        pieces.append((m.group(1), True))
+                        at = m.end()
+                    pieces.append((text[at:], False))
+                    prev = run
+                    first = True
+                    for chunk, sup in pieces:
+                        if not chunk:
+                            continue
+                        if first:
+                            t.text = chunk
+                            t.set(qn("xml:space"), "preserve")
+                            if sup:
+                                rpr = run.find(qn("w:rPr"))
+                                if rpr is None:
+                                    rpr = run.makeelement(qn("w:rPr"), {}); run.insert(0, rpr)
+                                get_or_add(rpr, "vertAlign").set(qn("w:val"), "superscript")
+                            first = False
+                            continue
+                        new = _copy.deepcopy(run)
+                        for x in list(new.iter(qn("w:t"))):
+                            x.getparent().remove(x)
+                        rpr = new.find(qn("w:rPr"))
+                        if rpr is None:
+                            rpr = new.makeelement(qn("w:rPr"), {}); new.insert(0, rpr)
+                        va = rpr.find(qn("w:vertAlign"))
+                        if sup:
+                            get_or_add(rpr, "vertAlign").set(qn("w:val"), "superscript")
+                        elif va is not None:
+                            rpr.remove(va)
+                        t2 = new.makeelement(qn("w:t"), {})
+                        t2.text = chunk
+                        t2.set(qn("xml:space"), "preserve")
+                        new.append(t2)
+                        prev.addnext(new)
+                        prev = new
+                    n += 1
+    return n
+
+
+def strip_trailing_blank_paras(document, skip=()):
+    """표 칸 끝에 남은 빈 문단을 지운다 — 지운 문단 수.
+
+    빈 문단이 칸 끝에 붙어 있으면 글이 칸 가운데에 오지 않고 위로 밀린다(담당자 2026-09-09
+    나조린 10.1 비고·13.3 시판 후(2023): "불필요한 엔터 삭제, 표 안 가운데에 글이 위치하도록").
+    글이 하나라도 있는 칸에서만, 마지막 문단이 비어 있을 때 지운다(칸에는 문단이 하나는 남는다).
+    """
+    n = 0
+    skip_tbls = {document.tables[i]._tbl for i in skip}
+    for tbl in document.element.body.iter(qn("w:tbl")):
+        if tbl in skip_tbls:
+            continue
+        for tc in tbl.iter(qn("w:tc")):
+            ps = tc.findall(qn("w:p"))
+            if len(ps) < 2:
+                continue
+            if not any("".join(t.text or "" for t in p.iter(qn("w:t"))).strip() for p in ps):
+                continue
+            while len(ps) > 1 and is_blank_para(ps[-1]) and ps[-1].find(".//" + qn("w:drawing")) is None \
+                    and ps[-1].find(".//" + qn("w:pict")) is None:
+                tc.remove(ps[-1]); ps.pop(); n += 1
+    return n
 
 
 def superscript_note_marks(document):
@@ -1795,6 +1912,34 @@ def keep_tail_together(table, n=6):
     for r in rows[-n:-1]:
         _keep_next(r)
     return min(n, len(rows)) - 1
+
+
+def separate_adjacent_tables(document):
+    """맞붙은 표 사이에 빈 문단 하나를 끼운다 — 끼운 수.
+
+    표 두 개가 사이에 문단 없이 붙어 있으면 Word 는 하나의 표로 이어 보고, 앞 표의 '머리행 반복'
+    을 다음 표가 쪽을 넘길 때마다 위에 찍는다(담당자 2026-09-09 나조린 19~21쪽: "맨 위의 연번·
+    Lot No.·pH·함량 칸은 삭제되어야 함"). 끼우는 문단은 글자 1pt·간격 0 이라 눈에 띄지 않는다.
+    """
+    body = document.element.body
+    n = 0
+    for tbl in list(body.findall(qn("w:tbl"))):
+        nxt = tbl.getnext()
+        if nxt is None or not nxt.tag.endswith("}tbl"):
+            continue
+        p = tbl.makeelement(qn("w:p"), {})
+        ppr = p.makeelement(qn("w:pPr"), {})
+        sp = ppr.makeelement(qn("w:spacing"), {qn("w:before"): "0", qn("w:after"): "0", qn("w:line"): "20",
+                                                qn("w:lineRule"): "exact"})
+        ppr.append(sp)
+        rpr = ppr.makeelement(qn("w:rPr"), {})
+        for tag in ("sz", "szCs"):
+            rpr.append(rpr.makeelement(qn("w:" + tag), {qn("w:val"): "2"}))
+        ppr.append(rpr)
+        p.append(ppr)
+        tbl.addnext(p)
+        n += 1
+    return n
 
 
 def keep_notes_with_table(document):

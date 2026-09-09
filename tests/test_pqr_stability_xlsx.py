@@ -334,18 +334,20 @@ class TrendSeedTest(unittest.TestCase):
             excel_attach.stability_xlsx.build_multi = original
         return made.get("sheets") or []
 
-    def test_지난_값에_올해_시점만_덧붙인다(self):
+    def test_올해_시험일지의_lot_만_적고_지난_경향표_값은_잇지_않는다(self):
+        """담당자 2026-09-09: "안정성을 이전 PQR 에서 가져오지 말고 첨부된 자료로만 빈칸 기재해줘".
+        지난 경향표(seed)는 시트 서식만 빌리고, Lot 과 값은 올해 시험일지에서만 온다."""
         sheets = self._sheets(self._seed(), self._logs())
         self.assertEqual(len(sheets), 1)
         lots = dict(sheets[0]["lots"])
-        self.assertEqual(lots["OGW701"], {"Initial": 98.3, "12M": 98.8, "18M": 97.9})
-        self.assertEqual(lots["OGTD01"], {"Initial": 100.4, "12M": 97.2})   # 지난 값 그대로
-        self.assertEqual(lots["OGY301"], {"Initial": 97.7})                 # 새 Lot 은 뒤에
-        self.assertEqual([lot for lot, _ in sheets[0]["lots"]], ["OGTD01", "OGW701", "OGY301"])
+        self.assertEqual(lots["OGW701"], {"18M": 97.9})                     # 올해 시험일지에 있는 시점만
+        self.assertNotIn("OGTD01", lots)                                     # 지난 경향표에만 있던 Lot 은 빠진다
+        self.assertEqual(lots["OGY301"], {"Initial": 97.7})
+        self.assertEqual([lot for lot, _ in sheets[0]["lots"]], ["OGW701", "OGY301"])
 
-    def test_시험일지가_없어도_지난_경향표로_만든다(self):
+    def test_시험일지가_없으면_지난_경향표만으로는_만들지_않는다(self):
         sheets = self._sheets(self._seed(), [])
-        self.assertEqual(len(dict(sheets[0]["lots"])), 2)
+        self.assertFalse(sheets or any(dict(sh["lots"]) for sh in sheets))
 
     def test_평가_기간을_넘어선_시점은_넣지_않는다(self):
         sheets = self._sheets(self._seed(), self._logs())

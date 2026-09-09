@@ -593,12 +593,20 @@ def _assay_limits(data):
     """{성분: (하한, 상한)} — 완제 성적서의 함량 규격. 제품마다 다르므로 여기서 읽는다."""
     out = {}
     for lot in (data.coa or {}).values():
-        for a in (lot.get("924") or {}).get("assays") or []:
+        rec = lot.get("924") or {}
+        for a in rec.get("assays") or []:
             part = (a.get("part") or "").strip()
             if part and part not in out:
                 lo, hi = _num(a.get("lo")), _num(a.get("hi"))
                 if lo is not None and hi is not None:
                     out[part] = (lo, hi)
+        # pH·삼투압·보존제도 경향표 항목이다 — 완제 성적서 시험항목 표의 허용기준('6.0 ~ 8.0')에서
+        for name, one in (rec.get("items") or {}).items():
+            plain = re.sub(r"[(（][^)）]*[)）]", "", name).strip()
+            if plain in ("pH", "삼투압", "보존제") and plain not in out:
+                m = re.search(r"(-?\d+(?:\.\d+)?)\s*~\s*(-?\d+(?:\.\d+)?)", str(one.get("spec") or ""))
+                if m:
+                    out[plain] = (float(m.group(1)), float(m.group(2)))
     return out
 
 
@@ -670,13 +678,29 @@ def _trend_file(form, folder, data, product, today, report_path, seed, logs, suf
         return points_by_part(one, part, year_to, shaky)
 
     parts = []                                    # [(성분, 시험항목 글, 하한, 상한, 지난 Lot)]
-    for sheet in seed:
-        part = trend_reader.component_of(sheet.get("item"))
-        lo, hi = limits.get(next((k for k in limits if _same_part(k, part)), ""), (None, None))
-        parts.append((part, sheet.get("item") or ("함량 - %s(%%)" % part),
-                      lo if lo is not None else sheet.get("lcl"),
-                      hi if hi is not None else sheet.get("ucl"),
-                      list(sheet.get("lots") or [])))
+    # 13항은 **올해 시험일지만으로** 적는다 — 지난 경향표(seed)의 Lot·값은 잇지 않고, 시트 서식만 빌린다
+    # (담당자 2026-09-09: "안정성을 이전 PQR 에서 가져오지 말고 첨부된 자료로만 빈칸 기재해줘";
+    #  나조린의 지난 경향표는 다른 제품 시트(HNV701·함량(총 유연물질))가 섞여 있어 pH 만 채워지고
+    #  함량 시트는 엉뚱한 것이 남았다). 항목은 시험일지 판독의 숫자 값 가운데 pH·삼투압·보존제와
+    #  완제 성적서에 규격이 있는 함량 성분만 — 제제균일성·불용성미립자는 경향표 항목이 아니다.
+    keys = []
+    for one in logs:
+        for pt in one.get("points") or []:
+            for k, v in (pt.get("assays") or {}).items():
+                if _num(v) is not None and k not in keys:
+                    keys.append(k)
+    for key in keys:
+        kind = key if key in ("pH", "삼투압", "보존제") else None
+        # 함량 성분은 이름이 **같아야** 한다 — '제제균일성 말레인산페니라민' 을 함량으로 잘못 잡지 않게
+        flat = re.sub(r"[\s()（）·∙]", "", key)
+        lim = limits.get(next((k for k in limits if re.sub(r"[\s()（）·∙]", "", k) == flat), ""))
+        if kind is None and lim is None:
+            continue
+        lo, hi = lim or (None, None)
+        if kind and lim is None:
+            sh = next((x for x in seed if trend_reader.component_of(x.get("item")) == key), None)
+            lo, hi = (sh.get("lcl"), sh.get("ucl")) if sh else (None, None)
+        parts.append((key, key if kind else "함량 - %s(%%)" % key, lo, hi, []))
     if not parts:                                 # 지난 경향표가 없는 첫해 — 성적서·시험일지에서
         names = list(limits)
         if not names:

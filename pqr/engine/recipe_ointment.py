@@ -3364,6 +3364,21 @@ def fill(document, data, product, period, today=None, log=None):
                 after.addnext(el)
                 after = el
             log("17·18항: 첨부 문서 %d줄을 18항으로 나눔" % len(moved))
+    # '허가증(제품허가사항) 대비 비교 검토 체크리스트(HLF-GR-06-02)' 줄은 PQR 첨부가 아니다 — 모든 제품에서
+    # 17·18항의 그 줄을 지운다 (담당자 2026-09-09: "모든 PQR 첨부문서에서 이 파일은 삭제해줘").
+    빠진 = 0
+    for para in list(document.paragraphs):
+        flat = re.sub(r"\s+", "", para.text)
+        if "허가증" in flat and "비교검토체크리스트" in flat:
+            el = para._p
+            nxt = el.getnext()
+            # 둘째 줄('(HLF-GR-06-02)')로 이어진 문단도 함께
+            if nxt is not None and nxt.tag.endswith("}p") and re.search(r"HLF-GR-06-02", "".join(t.text or "" for t in nxt.iter(qn("w:t")))):
+                nxt.getparent().remove(nxt)
+            el.getparent().remove(el)
+            빠진 += 1
+    if 빠진:
+        log("18항: '허가증 대비 비교 검토 체크리스트' 줄 %d개 지움" % 빠진)
 
     return {"issues": issues, "cover_title": (cover.text.strip() if cover is not None else None), "cpk": cpk_dom}
 
@@ -3662,19 +3677,27 @@ def _fill_133_table(table, groups, spec, _trim, marks=None, issues=None):
         if marks:                                          # 서식 각주('1) OEX101 …')의 번호를 그대로
             mark = marks.get(one["lot"], "")
         elif len(same) > 1:
-            mark = "%d)" % (sum(1 for g in groups[:i] if g[0] == label and g[1]["year"] == one["year"]) + 1)
+            # 같은 해 Lot 이 여럿이면 '1st·2nd·3rd' 차례를 단다 — 담당자 표기(2026-09-09 나조린:
+            # '장기 1st (2025)', 특이사항 '장기: 2025 1st LKY401, 2025 2nd LKY402'). 뒤에서 윗첨자로 바뀐다.
+            k = sum(1 for g in groups[:i] if g[0] == label and g[1]["year"] == one["year"]) + 1
+            mark = "%d%s" % (k, {1: "st", 2: "nd", 3: "rd"}.get(k, "th"))
+        year = one.get("year") or ""
+        # 서식 각주 번호('1)')는 연도에 바로 붙이고(2024¹⁾), 차례말('1st')은 띄운다(2025 1st)
+        sep = " " if mark and mark[-1:].isalpha() else ""
+        year_mark = ("%s%s%s" % (year, sep, mark)) if mark else year
         if combined:
-            if cells.get(0) is not None:                   # '시판 후(2023)' — 줄 이름과 연도를 한 칸에
+            if cells.get(0) is not None:                   # '시판 후 (2023)' — 줄 이름과 연도를 한 칸에
                 E.set_vmerge(cells[0], False)
-                E.set_cell(cells[0], "%s(%s%s)" % (label, one.get("year") or "", mark))
+                E.set_cell(cells[0], ("%s %s (%s)" % (label, mark, year)) if sep else
+                           ("%s (%s%s)" % (label, year, mark)))
         else:
             if cells.get(0) is not None:
                 E.set_cell(cells[0], label if head else "")
                 E.set_vmerge(cells[0], "restart" if head else None)
             if cells.get(1) is not None:
-                E.set_cell(cells[1], "%s%s" % (one.get("year") or "", mark))
+                E.set_cell(cells[1], year_mark)
                 E.set_vmerge(cells[1], False)
-        notes.append((label, "%s%s" % (one.get("year") or "", mark), one["lot"]))
+        notes.append((label, year_mark, one["lot"]))
         for k, part in parts:
             if cells.get(k) is None:
                 continue
