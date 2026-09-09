@@ -3469,10 +3469,20 @@ def _fill_133_table(table, groups, spec, _trim, marks=None, issues=None):
             keys |= set((pt.get("assays") or {}).keys())
 
     def _key_like(name):
+        """열 이름에 맞는 판독 열쇠 — 똑같은 것이 없으면 **이름 안에 든** 것 가운데 가장 긴 것.
+
+        머리글이 두 줄인 열은 이름이 이어 붙어 온다('유연물질1(%)유연물질 A') — 그대로 견주면
+        어느 열쇠와도 같지 않다(담당자 2026-09-09 아이퓨어 13.3 유연물질).
+        """
         plain = re.sub(r"[(（].*?[)）]", "", name or "").strip()
         if not plain:
             return None
-        return next((key for key in keys if _norm_item(plain) == _norm_item(key)), None)
+        flat = _norm_item(plain)
+        같은것 = next((key for key in keys if _norm_item(key) == flat), None)
+        if 같은것:
+            return 같은것
+        든것 = [key for key in keys if _norm_item(key) and _norm_item(key) in flat]
+        return max(든것, key=lambda k: len(_norm_item(k))) if 든것 else None
 
     parts, 빈열 = [], []
     for k, name in enumerate(labels):
@@ -3508,7 +3518,8 @@ def _fill_133_table(table, groups, spec, _trim, marks=None, issues=None):
     heads = [i for i, tr in enumerate(table._tbl.findall(qn("w:tr")))          # 줄 수를 맞춘 뒤 다시 찾는다 — 번호가 밀린다
              if D.squeeze(_text(tr.findall(qn("w:tc"))[0])).startswith(("관리규격", "최소", "최대", "경향"))]
     values = {k: [] for k, _ in parts}
-    guessed = {k: set() for k, _ in parts}                 # 애매하게 읽힌 예상값 — 최소·최대가 여기서 나오면 노랑
+    guessed = {k: set() for k, _ in parts}
+    말들 = {k: [] for k, _ in parts}                        # '불검출'·'음성' 처럼 숫자가 아닌 결과                 # 애매하게 읽힌 예상값 — 최소·최대가 여기서 나오면 노랑
     # 열마다 자릿수를 따로 — 삼투압(302)은 정수, 함량(100.6)은 소수 한 자리. 함량 자릿수를 삼투압에
     # 씌우면 '302.0 ~ 319.0' 처럼 시험일지에 없는 자릿수가 생긴다.
     def _dec_of(part):
@@ -3547,8 +3558,18 @@ def _fill_133_table(table, groups, spec, _trim, marks=None, issues=None):
             if cells.get(k) is None:
                 continue
             shaky = [p for p in taken if part in (p.get("unsure") or [])]
-            got = [p["assays"].get(part) for p in taken]
-            got = [float(x) for x in got if x is not None]
+            raw = [p["assays"].get(part) for p in taken]
+            raw = [x for x in raw if x is not None and str(x).strip() != ""]
+            # 유연물질·무균처럼 '불검출'·'음성' 이 섞여 오는 항목이 있다 — 숫자만 골라 범위를 내고,
+            # 글은 글대로 남긴다 (담당자 2026-09-09 아이퓨어 13.3 유연물질).
+            got, words = [], []
+            for x in raw:
+                try:
+                    got.append(float(x))
+                except (TypeError, ValueError):
+                    말 = str(x).strip()
+                    if 말:
+                        words.append(말)
             E.clear_diag(cells[k])
             if not got and not shaky and one.get("carried"):
                 # 전년도 결재본 13.3 의 그 Lot 줄 — 올해 시점 값이 더해져야 하니 노랑으로 남긴다
@@ -3560,6 +3581,13 @@ def _fill_133_table(table, groups, spec, _trim, marks=None, issues=None):
                 values[k] += nums
                 guessed[k].update(nums)
                 continue
+            말들[k] += words
+            if not got and words:
+                # 모두 글이면 가장 많이 나온 글 그대로 ('불검출'·'음성')
+                E.set_cell(cells[k], max(set(words), key=words.count))
+                if shaky:
+                    E.highlight_cell(cells[k])
+                continue
             if not got and not shaky:
                 E.set_cell(cells[k], "")
                 continue
@@ -3567,8 +3595,10 @@ def _fill_133_table(table, groups, spec, _trim, marks=None, issues=None):
                 values[k] += got
                 guessed[k].update(float(p["assays"][part]) for p in shaky if p["assays"].get(part) is not None)
                 tk = trims[k]
-                E.set_cell(cells[k], "%s ~ %s" % (tk(min(got)), tk(max(got))) if min(got) != max(got)
-                           else tk(got[0]))                # 값이 모두 같으면 '7.0 ~ 7.0' 이 아니라 '7.0'
+                # '불검출' 이 섞여 있으면 그것이 아래쪽 끝이다 — '불검출 ~ 0.16'
+                아래 = (max(set(words), key=words.count) if words else tk(min(got)))
+                E.set_cell(cells[k], "%s ~ %s" % (아래, tk(max(got)))
+                           if (words or min(got) != max(got)) else tk(got[0]))
             else:
                 E.set_cell(cells[k], "확인 필요")                 # 그해 값을 하나도 못 읽었다
             if shaky:
@@ -3578,7 +3608,14 @@ def _fill_133_table(table, groups, spec, _trim, marks=None, issues=None):
         cells = _grid_cells_of(table.rows[ri], width)
         head = D.squeeze(E.cell_text(cells[0])) if cells.get(0) is not None else ""
         for k, part in parts:
-            if cells.get(k) is None or not values[k]:
+            if cells.get(k) is None:
+                continue
+            if not values[k]:
+                # 숫자가 하나도 없고 '불검출' 뿐인 열도 최소·최대·경향을 적는다
+                if 말들[k] and head in ("최소", "최대", "경향분석결과"):
+                    E.clear_diag(cells[k])
+                    E.set_cell(cells[k], max(set(말들[k]), key=말들[k].count)
+                               if head != "경향분석결과" else "적합")
                 continue
             if "관리규격" in head:
                 if spec.get(part):                          # 서식에 적힌 pH·삼투압 규격은 그대로 둔다
@@ -3708,7 +3745,9 @@ def _fill_stability26(document, logs, period, spec, log, issues, why_of=None, pr
                 if not upto(p):
                     shaky = []
                 if shaky:
-                    what = ", ".join("완료 일자" if u == "done" else "함량(%s)" % u for u in shaky)
+                    # 예전에는 시험항목을 무엇이든 '함량(…)' 으로 적었다 — 이제 pH·삼투압·유연물질도
+                    # 판독에 들어오므로 항목 이름을 그대로 적는다(담당자 2026-09-09)
+                    what = ", ".join("완료 일자" if u == "done" else str(u) for u in shaky)
                     issues.append(("13", one.get("lot", ""), "%s 시점 손글씨 판독이 애매함 — %s (노랑/주황 표시) 시험일지와 대조하세요"
                                    % (p.get("period"), what)))
             taken = [p for p in one.get("points", []) if during(p)]
@@ -3721,12 +3760,19 @@ def _fill_stability26(document, logs, period, spec, log, issues, why_of=None, pr
 
     tabs = _stability_tables(document)
 
-    def pick(kind, market):
+    def pick_all(kind, market):
+        """그 종류·시장의 표를 **모두** — 13.3 은 수치 표와 유연물질 표가 따로다.
+
+        예전에는 첫 표만 채워 유연물질 경향표가 통째로 비었다(담당자 2026-09-09 아이퓨어).
+        """
         same = [t for k, m, t in tabs if k == kind and m == market]
         if same:
-            return same[0]
-        blank = [t for k, m, t in tabs if k == kind and not m]
-        return blank[0] if blank else None
+            return same
+        return [t for k, m, t in tabs if k == kind and not m]
+
+    def pick(kind, market):
+        got = pick_all(kind, market)
+        return got[0] if got else None
 
     packs = prev_packs or {}
     # 갈음(대신하는) 제품 — 서식의 특이사항이 스스로 알려 준다:
@@ -3850,12 +3896,12 @@ def _fill_stability26(document, logs, period, spec, log, issues, why_of=None, pr
         elif rows_p:
             issues.append(("13.2", ", ".join(one["lot"] for one, _ in rows_p),
                            "시판 후 안정성 시험 표가 서식에 없어 넣지 못함 — 서식을 확인하세요"))
-        t = pick("경향", market)
+        trend_tables = pick_all("경향", market)
         groups = [("시판 후", one, seen) for one, seen in trend_p] + [("장기", one, seen) for one, seen in trend_l]
-        if t is not None and groups:
-            n = _fill_133_table(t, groups, spec, _trim, marks.get(market) or marks.get(""),
-                                issues=issues)
-            wrote.append("경향·%s %d줄" % (market, n))
+        if trend_tables and groups:
+            n = sum(_fill_133_table(t, groups, spec, _trim, marks.get(market) or marks.get(""),
+                                    issues=issues) for t in trend_tables)
+            wrote.append("경향·%s %d줄(표 %d개)" % (market, n, len(trend_tables)))
     log("13항: %s" % (", ".join(wrote) if wrote else "평가 기간에 든 시점이 없음"))
 
 

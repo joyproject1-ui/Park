@@ -883,7 +883,20 @@ def collect(folder, product_name=None, log=None):
                 # (담당자 2026-09-07: "API 키를 발급받지 않고 Claude 로 확인할 수는 없나?")
                 if not isinstance(got_json, list) and got_json.get("covers_all"):
                     data.stability_all_read = True
-                    log("  [13] 이 판독 파일이 13항 자료 전부라고 적혀 있어(covers_all) 시험일지를 더 읽지 않습니다")
+                    # covers_all 은 '모든 Lot 을 읽었다' 는 뜻이지 '모든 시험항목을 읽었다' 는 뜻이
+                    # 아니다. 판독에 함량만 들어 있으면 13.3 의 pH·삼투압·유연물질 열이 조용히
+                    # 빈다(담당자 2026-09-09 아이퓨어). 그래서 **어떤 시험항목이 들어 있는지**를
+                    # 반드시 적어 남긴다 — 13.3 을 채울 때 빠진 항목은 문의 목록으로도 올라간다.
+                    있는것 = sorted({key for one in (data.stability_logs or [])
+                                     for pt in (one.get("points") or [])
+                                     for key in (pt.get("assays") or {})})
+                    log("  [13] 이 판독 파일이 13항 자료 전부라고 적혀 있어(covers_all) 시험일지를 더 "
+                        "읽지 않습니다 — 들어 있는 시험항목: %s"
+                        % (", ".join(있는것) if 있는것 else "없음(값이 하나도 없습니다)"))
+                    if not 있는것:
+                        note("13", p, "판독 파일에 covers_all 이 있는데 시험항목 값이 하나도 "
+                                      "없습니다 — 13항이 통째로 빕니다. covers_all 을 지우거나 "
+                                      "값을 채워 주세요")
             except Exception as error:
                 note("13", p, "안정성 판독 파일을 읽지 못했습니다 — %s" % error)
     # 판독 파일(.json)도 없고 Claude 비전(API 키)도 없으면 PC 에서 오프라인으로 손글씨를 읽는다
