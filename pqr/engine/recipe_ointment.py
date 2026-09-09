@@ -105,80 +105,131 @@ def _note_numbers_under(document, prefix):
     return numbers
 
 
-def _change_for_item(data, item_name):
-    """그 시험항목을 다룬 12항 변경관리 — 없으면 None.
+def _head_names(rows, limit=3):
+    """머리행들을 위에서 아래로 이어 붙인 {그리드 열: 이름}.
 
-    시험을 도중에 생략·추가하는 것은 변경관리로 정해진다(담당자 2026-09-09 아이퓨어:
-    "12항 변경관리(CC-250423-16)에 따라 LWYO01 부터 비중 시험 생략됨"). 변경요청서의 변경명·
-    변경내용에 그 시험항목 이름이 들어 있으면 그 건으로 본다.
+    9.2 표의 머리는 한 줄일 때도, 두세 줄일 때도 있다(불용성미립자 / 10㎛이상/mL). 세로로
+    병합돼 같은 글이 두 줄에 걸쳐 오면 **한 번만** 쓴다 — 그러지 않으면 '포장규격 포장규격'
+    같은 이름이 되어 전년도 결재본의 '포장규격' 과 어긋난다(저장소 검토 2026-09-09).
+    올해 표와 전년도 결재본 양쪽이 **같은 함수**를 쓰게 해서 규칙이 갈리지 않도록 한다.
     """
-    want = re.sub(r"[\s()（）]", "", str(item_name or ""))
-    if len(want) < 2:
-        return None
-    for one in (getattr(data, "changes", None) or []):
-        글 = " ".join(str((one or {}).get(k) or "") for k in ("title", "description", "reason"))
-        if want in re.sub(r"[\s()（）]", "", 글):
-            return one
-    return None
+    head = {}
+    for r in rows[:limit]:
+        vals = r if isinstance(r, dict) else dict(enumerate(r))
+        # 연번이 숫자로 나오면 그 줄부터는 자료 줄이다
+        if any(re.match(r"^\d+$", str(v or "").strip()) for v in vals.values()):
+            break
+        for i, v in vals.items():
+            v = re.sub(r"\s+", " ", str(v or "")).strip()
+            if not v:
+                continue
+            was = (head.get(i) or "").strip()
+            if not was:
+                head[i] = v
+            elif v == was or v in was.split(" "):
+                continue                      # 세로 병합 — 같은 글이 되풀이된 것
+            else:
+                head[i] = was + " " + v
+    return head
 
 
-def _omitted_columns(table, lots):
-    """자료 줄에서 **일부 Lot 에만 비어 있는** 값 열 — [(그리드 열, 열 이름, [빈 Lot])].
+GROUP_WORDS = ("유연물질", "불용성미립자", "질량용량", "질량·용량", "이물검사", "금속성이물")
 
-    모두 비면 그 시험이 없는 것이고, 모두 차 있으면 정상이다. 섞여 있으면 도중에
-    생략·추가된 시험이라는 뜻이다.
+
+def _name_candidates(name):
+    """이어 붙인 열 이름에서 찾아볼 이름들 — 긴 것부터 짧은 것까지.
+
+    '유연물질(%) A' 는 성적서에서 '유연물질 A' 로, 12항 변경요청서에서는 '유연물질' 로 걸린다.
+    한 가지 꼴만 고집하면 못 찾는다(저장소 검토 2026-09-09).
     """
-    width = E.grid_width(table)
-    rows = [_row_texts(table.rows[i], width) for i in range(len(table.rows))]
-    if not rows:
+    full = re.sub(r"\s+", " ", str(name or "")).strip()
+    if not full:
         return []
-    head = dict(rows[0])
-    if len(rows) > 1 and not any(re.match(r"^\d+$", (rows[1].get(i) or "").strip()) for i in rows[1]):
-        for i, v in rows[1].items():
-            if v:
-                head[i] = ((head.get(i) or "") + " " + v).strip()
-    data_rows = [(i, r) for i, r in enumerate(rows)
-                 if re.match(r"^\d+$", (r.get(0) or "").strip()) and (r.get(1) or "").strip() in set(lots)]
-    if len(data_rows) < 2:
+    plain = re.sub(r"[(（][^)）]*[)）]", "", full).strip()
+    out = [full, plain]
+    꼬리 = re.findall(r"(기타\s*유연물질|총\s*유연물질|유연물질\s*[A-Za-z0-9]+)", plain)
+    if 꼬리:
+        out.insert(0, 꼬리[-1])
+    조각 = [x for x in plain.split(" ") if x]
+    if len(조각) > 1:
+        out.append(조각[-1])
+        out.append(조각[0])
+    seen, keep = set(), []
+    for one in out:
+        one = one.strip()
+        if one and one not in seen:
+            seen.add(one)
+            keep.append(one)
+    return keep
+
+
+OMIT_WORDS = ("생략", "제외", "삭제", "미실시", "폐지", "없앰")
+
+
+def _changes_for_item(data, item_name):
+    """그 시험항목을 다룬 12항 변경관리 후보들 — 확실한 것부터 [(변경관리, 생략말 있음?)].
+
+    시험을 도중에 빼거나 더하는 것은 변경관리로 정해진다(담당자 2026-09-09 아이퓨어:
+    "12항 변경관리(CC-250423-16)에 따라 LWYO01 부터 비중 시험 생략됨"). 다만 **이름이
+    걸렸다는 것만으로 근거를 단정하면 안 된다** — 같은 시험항목의 기준을 손댄 다른 건도
+    함께 걸린다(저장소 검토 2026-09-09: CC-250423-16 은 '점안제 비중 기준 설정 건' 이다).
+    그래서 생략·제외 같은 낱말이 든 건을 앞에 두고, 고른 결과는 반드시 문의 목록에 올려
+    담당자가 확인하게 한다.
+    """
+    names = [re.sub(r"[\s()（）·∙]", "", one) for one in _name_candidates(item_name)]
+    names = [one for one in names if len(one) >= 2]
+    if not names:
         return []
     out = []
-    for gi in sorted(head):
-        if gi <= 1:
+    for one in (getattr(data, "changes", None) or []):
+        글 = " ".join(str((one or {}).get(k) or "") for k in ("title", "description", "reason"))
+        납작 = re.sub(r"[\s()（）·∙]", "", 글)
+        if not any(want in 납작 for want in names):
             continue
-        빈것 = [(r.get(1) or "").strip() for _i, r in data_rows if not (r.get(gi) or "").strip()]
-        찬것 = [(r.get(1) or "").strip() for _i, r in data_rows if (r.get(gi) or "").strip()]
-        if 빈것 and 찬것:
-            out.append((gi, (head.get(gi) or "").strip(), 빈것))
+        out.append((one, any(w in 글 for w in OMIT_WORDS)))
+    out.sort(key=lambda x: not x[1])          # 생략말이 든 건을 앞으로
     return out
 
 
-def _empty_columns(table, lots):
-    """자료 줄이 **모두** 비어 있는 값 열 — [(그리드 열, 열 이름)].
+def _value_columns(table, lots):
+    """9.2 표의 값 열을 훑어 (그리드 열, 이름, [빈 Lot], [찬 Lot]) 를 돌려준다.
 
-    _omitted_columns 가 '일부만 빈 열'(도중에 생략된 시험)을 잡는다면 이 쪽은 '통째로 빈 열'
-    (올해 자료에서 아예 못 찾은 시험)을 잡는다.
+    머리글 조립은 _head_names 하나로만 한다 — 예전에는 여기와 전년도 결재본 쪽 규칙이
+    달라 같은 열이 다른 이름이 됐다(저장소 검토 2026-09-09).
     """
     width = E.grid_width(table)
     rows = [_row_texts(table.rows[i], width) for i in range(len(table.rows))]
     if not rows:
         return []
-    head = dict(rows[0])
-    if len(rows) > 1 and not any(re.match(r"^\d+$", (rows[1].get(i) or "").strip()) for i in rows[1]):
-        for i, v in rows[1].items():
-            if v:
-                head[i] = ((head.get(i) or "") + " " + v).strip()
-    data_rows = [r for i, r in enumerate(rows)
-                 if re.match(r"^\d+$", (r.get(0) or "").strip()) and (r.get(1) or "").strip() in set(lots)]
+    head = _head_names(rows)
+    data_rows = [r for r in rows
+                 if re.match(r"^\d+$", (r.get(0) or "").strip())
+                 and (r.get(1) or "").strip() in set(lots)]
     if not data_rows:
         return []
     out = []
     for gi in sorted(head):
         if gi <= 1 or not (head.get(gi) or "").strip():
             continue
-        if any((r.get(gi) or "").strip() for r in data_rows):
-            continue
-        out.append((gi, (head.get(gi) or "").strip()))
+        빈것 = [(r.get(1) or "").strip() for r in data_rows if not (r.get(gi) or "").strip()]
+        찬것 = [(r.get(1) or "").strip() for r in data_rows if (r.get(gi) or "").strip()]
+        out.append((gi, (head.get(gi) or "").strip(), 빈것, 찬것))
     return out
+
+
+def _omitted_columns(table, lots):
+    """**일부 Lot 에만 비어 있는** 값 열 — [(그리드 열, 열 이름, [빈 Lot])].
+
+    모두 비면 그 시험이 없는 것이고, 모두 차 있으면 정상이다. 섞여 있으면 도중에
+    생략·추가된 시험이라는 뜻이다.
+    """
+    return [(gi, 이름, 빈것) for gi, 이름, 빈것, 찬것 in _value_columns(table, lots)
+            if 빈것 and 찬것 and len(빈것) + len(찬것) >= 2]
+
+
+def _empty_columns(table, lots):
+    """자료 줄이 **모두** 비어 있는 값 열 — [(그리드 열, 열 이름)]."""
+    return [(gi, 이름) for gi, 이름, 빈것, 찬것 in _value_columns(table, lots) if 빈것 and not 찬것]
 
 
 def _prev_column_text(olds, name):
@@ -194,17 +245,13 @@ def _prev_column_text(olds, name):
     for grid in olds or []:
         if len(grid) < 3:
             continue
-        head = [re.sub(r"\s+", "", c or "") for c in grid[0]]
-        second = [re.sub(r"\s+", "", c or "") for c in grid[1]]
-        if not any(re.match(r"^\d+$", c) for c in second):
-            head = [(a + b) if (b and b != a) else a
-                    for a, b in zip(head, second + [""] * len(head))]
-        lot_rows = [row for row in grid[1:]
+        head = _head_names(grid)
+        lot_rows = [row for row in grid
                     if row and re.match(r"^\d+$", re.sub(r"\s+", "", row[0] or ""))]
         if not lot_rows:
             continue
-        for gi, h in enumerate(head):
-            if h != want:
+        for gi, h in head.items():
+            if re.sub(r"\s+", "", h) != want:
                 continue
             값 = [(row[gi] or "").strip() for row in lot_rows if gi < len(row)]
             if len(값) != len(lot_rows) or not all(값):
@@ -213,6 +260,12 @@ def _prev_column_text(olds, name):
                 continue
             return 값[0]
     return None
+
+
+def _mark_header_can(table, word):
+    """머리행에 그 글이 그대로 적힌 칸이 있는가 — 각주를 달 이름을 고를 때 쓴다."""
+    return any(re.sub(r"\s+", "", cell.text) == word
+               for row in table.rows[:3] for cell in row.cells)
 
 
 def _mark_header(table, word, number):
@@ -698,7 +751,9 @@ def _impurity_value(rec924, name):
                 continue
             head = re.sub(r"\s+", "", bits[0]).lower()
             if head == want or (len(want) > 4 and (head.startswith(want) or want.startswith(head))):
-                return bits[1].strip()
+                # ':' 뒤가 비어 있으면 못 찾은 것으로 본다 — 빈 글자를 값으로 돌려주면
+                # 부르는 쪽이 '찾았다' 고 여겨 칸을 비운 채 끝낸다(저장소 검토 2026-09-09)
+                return bits[1].strip() or None
     return None
 
 
@@ -2069,8 +2124,31 @@ def fill(document, data, product, period, today=None, log=None):
                 if any(c in lab for c in CIRCLED):
                     return _impurity_value(r924, _impurity_legend(document).get(
                         next(c for c in lab if c in CIRCLED)) or "")
-                if "유연물질" in lab and crit:
-                    return _impurity_value(r924, D.PREFIX.sub("", crit).split(":")[0])
+                if "유연물질" in lab:
+                    # 성적서는 '유연물질 A : 불검출, 유연물질 B : 0.1%, …' 한 덩어리다. 열마다 제
+                    # 성분만 뽑지 않으면 네 칸에 같은 글이 통째로 들어간다 (담당자 2026-09-09 아이퓨어).
+                    # 열 이름이 성분명이면(유연물질 A·기타 유연물질·총 유연물질) 그것으로,
+                    # 9.1 처럼 열 이름이 뭉뚱그려져 있으면 그 줄의 허용기준에 적힌 성분으로 찾는다.
+                    plain = re.sub(r"[(（][^)）]*[)）]", "", lab).strip()
+                    # 열 이름은 머리글이 겹쳐 붙어 온다('유연물질(%)유연물질 A(%)') — 뒤쪽의
+                    # 성분 이름만 떼어 낸다.
+                    꼬리 = re.findall(r"(기타\s*유연물질|총\s*유연물질|유연물질\s*[A-Za-z0-9]+)", plain)
+                    # 열 이름이 '유연물질' 뿐이면(9.1 처럼 뭉뚱그려져 있으면) 그것으로 찾지
+                    # 않는다 — 성적서의 첫 성분이 아무 근거 없이 걸린다. 그럴 때는 그 줄의
+                    # 허용기준에 적힌 성분명을 먼저 쓴다(저장소 검토 2026-09-09).
+                    두루뭉술 = re.sub(r"\s+", "", plain) in ("유연물질", "유연물질%")
+                    이름들 = list(꼬리[-1:])
+                    if crit:
+                        이름들.append(D.PREFIX.sub("", crit).split(":")[0])
+                    if not 두루뭉술:
+                        이름들.append(plain)
+                    got = None
+                    for 이름 in 이름들:
+                        got = _impurity_value(r924, 이름)
+                        if got is not None:
+                            break
+                    if got is not None:
+                        return got
                 if "금속성이물" in lab:
                     # 9.1 표는 '합계' 라는 글 없이 줄만 갈라져 있다 — '개개' 가 아니면 합계 줄이다
                     return _plain(r924.get("metal_each") if "개개" in lab else r924.get("metal_total"))
@@ -2083,7 +2161,11 @@ def fill(document, data, product, period, today=None, log=None):
                             return (" ~ ".join(got[:2])) if len(got) >= 2 else _plain(mine.get("mass_each"))
                         return ("%s 이상" % _plain(mine.get("mass_each_min"))) if mine.get("mass_each_min") else None
                 if "무균" in lab:
-                    return r924.get("sterility") or D.criterion_for(rules, process, "무균")
+                    # 전용 값이 없다고 여기서 끝내면, 성적서 시험항목 표에 '무균: 음성' 이 있어도
+                    # 칸이 빈다 (담당자 2026-09-09 아이퓨어 9.2.4). 아래 _item_value 까지 내려간다.
+                    got = r924.get("sterility") or D.criterion_for(rules, process, "무균")
+                    if got:
+                        return got
                 if "기밀도" in lab:
                     return mine.get("leak") or D.criterion_for(rules, process, "기밀도")
                 if "튜브개봉" in lab:
@@ -2353,7 +2435,13 @@ def fill(document, data, product, period, today=None, log=None):
         # 일부 Lot 에만 없는 시험은 **못 읽은 것이 아니라 생략된 것**이다 — 사선을 긋고 12항
         # 변경관리에서 근거를 찾아 각주를 단다 (담당자 2026-09-09 아이퓨어: "주1) 12항 변경관리
         # (CC-250423-16)에 따라 LWYO01 부터 비중 시험 생략됨").
-        번호 = 0
+        # 번호는 0 이 아니라 **문서에 이미 있는 마지막 각주 다음**부터 매긴다 — 전년도 결재본의
+        # '주1)' 을 살려 둔 채 새로 '주1)' 을 달면 같은 번호가 둘이 된다(저장소 검토 2026-09-09).
+        def _note_no(text):
+            m = re.match(r"^\s*주\s*(\d+)\s*\)", str(text or ""))
+            return int(m.group(1)) if m else 0
+
+        번호 = max([_note_no(para.text) for para in document.paragraphs] or [0])
         for key in ("9.2.1", "9.2.2", "9.2.3", "9.2.4"):
             for table in _tables(document, key):
                 width = E.grid_width(table)
@@ -2364,31 +2452,57 @@ def fill(document, data, product, period, today=None, log=None):
                             cell = cells.get(gi)
                             if cell is not None and not E.cell_text(cell).strip():
                                 E.add_diag(cell)
-                    cc = _change_for_item(data, 이름)
+                    # 각주·머리글 표시에 쓸 이름 — 머리 칸에 실제로 적힌 조각을 고른다
+                    짧은 = next((one for one in _name_candidates(이름)
+                                 if _mark_header_can(table, re.sub(r"\s+", "", one))), 이름)
+                    있던것 = re.sub(r"\s+", "", 짧은)
                     # 전년도 결재본에 이미 같은 뜻의 각주가 있으면 새로 달지 않는다 — 해마다
                     # 겹쳐 쌓인다 (담당자 2026-09-09 아이퓨어: '주1)' 이 세 줄이 됐다).
-                    있던것 = re.sub(r"\s+", "", 이름)
+                    # **'주n)' 으로 시작하는 문단만** 본다 — 본문 서술까지 훑으면 문서번호의
+                    # '…-16)' 을 각주 번호로 잘못 읽는다(저장소 검토 2026-09-09).
                     옛각주 = next((para.text for para in document.paragraphs
-                                if 있던것 in re.sub(r"\s+", "", para.text)
-                                and ("생략" in para.text or "제외" in para.text)), None)
+                                if _note_no(para.text)
+                                and 있던것 in re.sub(r"\s+", "", para.text)
+                                and any(w in para.text for w in OMIT_WORDS)), None)
                     if 옛각주 is not None:
-                        # 각주는 이미 있으니 열 머리에 그 번호만 달아 준다
-                        m = re.search(r"주?\s*(\d+)\s*\)", 옛각주)
-                        _mark_header(table, 있던것, int(m.group(1)) if m else 1)
+                        _mark_header(table, 있던것, _note_no(옛각주))
                         continue
+                    ccs = _changes_for_item(data, 이름)
                     번호 += 1
-                    if cc and cc.get("doc_no"):
+                    if ccs and ccs[0][0].get("doc_no"):
+                        cc, 생략말 = ccs[0]
                         글 = ("주%d) 12항 변경관리(%s)에 따라 %s 부터 %s 시험 생략됨"
-                              % (번호, cc["doc_no"], 빈Lot[0], 이름))
+                              % (번호, cc["doc_no"], 빈Lot[0], 짧은))
                         log("%s: %s 열이 %s 부터 비어 있어 변경관리 %s 각주를 달았습니다"
-                            % (key, 이름, 빈Lot[0], cc["doc_no"]))
+                            % (key, 짧은, 빈Lot[0], cc["doc_no"]))
+                        # 이름이 걸렸다고 근거를 단정할 수는 없다 — 반드시 확인받는다
+                        후보 = ", ".join(str((one or {}).get("doc_no") or "?") for one, _ in ccs)
+                        issues.append((key, ", ".join(빈Lot),
+                                       "%s 시험을 %s 부터 생략한 근거로 %s 를 적었습니다%s — "
+                                       "그 변경관리가 정말 시험 생략 근거인지 확인하세요%s"
+                                       % (짧은, 빈Lot[0], cc["doc_no"],
+                                          "" if 생략말 else " (변경요청서에 '생략·제외' 라는 말은 없습니다)",
+                                          (" · 걸린 변경관리 %s" % 후보) if len(ccs) > 1 else "")))
                     else:
                         글 = ("주%d) %s 부터 %s 시험 결과가 없습니다 — 생략 사유(12항 변경관리)를 적으세요"
-                              % (번호, 빈Lot[0], 이름))
+                              % (번호, 빈Lot[0], 짧은))
                         issues.append((key, ", ".join(빈Lot),
-                                       "%s 시험이 일부 Lot 에만 없습니다 — 12항 변경관리에서 근거를 찾지 못했습니다" % 이름))
-                    _mark_header(table, re.sub(r"\s+", "", 이름), 번호)
+                                       "%s 시험이 일부 Lot 에만 없습니다 — 12항 변경관리에서 근거를 찾지 못했습니다" % 짧은))
+                    _mark_header(table, 있던것, 번호)
                     E.note_after(document, table, 글)
+        # 같은 번호의 각주가 둘 이상이면 알린다 — 공양식에 손으로 적어 둔 각주가 겹쳐 있으면
+        # 머리글의 윗첨자가 어느 것을 가리키는지 알 수 없다(아이퓨어 공양식에 '주1)' 이 둘이다).
+        번호별 = {}
+        for para in document.paragraphs:
+            n = _note_no(para.text)
+            if n:
+                번호별.setdefault(n, []).append(para.text.strip())
+        for n, 글들 in sorted(번호별.items()):
+            if len(글들) > 1:
+                issues.append(("9.2", "주%d)" % n,
+                               "같은 번호의 각주가 %d줄 있습니다 — 하나만 남기세요: %s"
+                               % (len(글들), " / ".join(글들))))
+
         # 통째로 빈 열은 올해 자료에서 못 찾은 것이다 — 해마다 같은 문안을 적는 열(포장규격
         # '각 규격에 적합함')은 전년도 결재본에서 옮기고 노랑으로 표시해 대조하게 한다
         # (담당자 2026-09-09: "전년도 결재본 문안을 가져와 노랑 표시 - 이렇게 진행해줘").
