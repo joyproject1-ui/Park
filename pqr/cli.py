@@ -12,6 +12,7 @@
 import argparse
 import io
 import json
+import datetime as _dt
 import os
 import sys
 
@@ -342,6 +343,7 @@ UPDATE_URL = ("https://github.com/joyproject1-ui/Park/archive/refs/heads/"
 
 # 프로그램 파일만 바꿉니다. 담당자가 모아 둔 자료와 만들어 둔 보고서는 그대로 둡니다.
 UPDATE_KEEP = ("PQR_입력폴더", "입력폴더", "PQR입력폴더", "out", ".git")
+BACKUP_DIR = "코드백업_%s"        # 업데이트가 덮어쓴 옛 파일을 두는 곳 (프로그램 폴더 안)
 
 
 def _program_root():
@@ -521,10 +523,17 @@ def cmd_update(args):
             return 2
         source = os.path.join(workspace, tops[0])
 
-        changed = _copy_program(source, root)
+        # 덮어쓰기 전에 바뀌는 옛 파일을 백업 폴더에 남긴다 — 저장소에 아직 안 올린 수정
+        # (Cowork 패치)이 PC 프로그램 폴더에만 있을 때 업데이트가 그것을 지웠다
+        # (담당자 2026-09-09 22:09: patch07 이 통째로 사라져 22:17 보고서가 옛 코드로 만들어짐).
+        backup = os.path.join(root, BACKUP_DIR % _dt.datetime.now().strftime("%Y%m%d-%H%M"))
+        changed = _copy_program(source, root, backup)
         _print("")
         _print("  %d개 파일을 새 것으로 바꿨습니다." % changed)
         _print("  입력 폴더와 out 폴더는 그대로 두었습니다.")
+        if os.path.isdir(backup):
+            _print("  바뀐 옛 파일은 여기에 남겨 두었습니다:  %s" % backup)
+            _print("  (저장소에 안 올린 수정이 있었다면 이 폴더에서 되살릴 수 있습니다)")
         _print("")
         _print("  화면을 다시 띄우세요:  PQR-대시보드-실행.bat")
         return 0
@@ -532,8 +541,11 @@ def cmd_update(args):
         shutil.rmtree(workspace, ignore_errors=True)
 
 
-def _copy_program(source, target):
-    """새 파일을 덮어씁니다. 지우지는 않습니다 — 담당자 자료가 섞여 있을 수 있습니다."""
+def _copy_program(source, target, backup=None):
+    """새 파일을 덮어씁니다. 지우지는 않습니다 — 담당자 자료가 섞여 있을 수 있습니다.
+
+    backup 폴더를 주면, 내용이 달라 덮어쓰는 옛 파일을 먼저 그 폴더에 같은 상대 경로로 복사한다.
+    """
     import shutil
     changed = 0
     for base, dirs, files in os.walk(source):
@@ -551,7 +563,15 @@ def _copy_program(source, target):
             src, dst = os.path.join(base, name), os.path.join(destination, name)
             if _same_file(src, dst):
                 continue                      # 같은 내용이면 건드리지 않는다 — 실행 중인 .bat 를
-            shutil.copy2(src, dst)            # 덮어쓰면 cmd 가 다음 줄을 엉뚱한 자리에서 읽는다
+            if backup and os.path.isfile(dst):     # 덮어쓰면 cmd 가 다음 줄을 엉뚱한 자리에서 읽는다
+                keep = os.path.join(backup, relative, name) if relative else os.path.join(backup, name)
+                try:
+                    if not os.path.isdir(os.path.dirname(keep)):
+                        os.makedirs(os.path.dirname(keep))
+                    shutil.copy2(dst, keep)
+                except OSError:
+                    pass                      # 백업이 안 돼도 업데이트는 계속한다
+            shutil.copy2(src, dst)
             changed += 1
     return changed
 

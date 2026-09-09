@@ -67,6 +67,23 @@ class CopyProgramTest(unittest.TestCase):
         cli._copy_program(self.source, self.target)
         self.assertTrue(os.path.exists(mine))
 
+    def test_overwritten_files_are_backed_up(self):
+        """덮어쓰기 전에 옛 파일을 백업 폴더에 남긴다 — 저장소에 안 올린 PC 수정이 사라지지 않게.
+
+        담당자 2026-09-09 22:09: patch07 이 프로그램 폴더에만 있는 채로 업데이트를 돌려 통째로
+        지워졌고, 22:17 보고서가 옛 코드로 만들어졌다.
+        """
+        self.write(self.source, os.path.join("pqr", "build.py"), "새 버전")
+        self.write(self.target, os.path.join("pqr", "build.py"), "PC 에서만 고친 판")
+        self.write(self.source, "README.md", "같은 글")
+        self.write(self.target, "README.md", "같은 글")
+        backup = os.path.join(self.target, "코드백업_20260909-2209")
+        cli._copy_program(self.source, self.target, backup)
+        self.assertEqual(self.read(self.target, os.path.join("pqr", "build.py")), "새 버전")
+        self.assertEqual(self.read(backup, os.path.join("pqr", "build.py")), "PC 에서만 고친 판")
+        # 같은 내용이라 안 바꾼 파일과 새로 생기는 파일은 백업하지 않는다
+        self.assertFalse(os.path.exists(os.path.join(backup, "README.md")))
+
     def test_new_folders_are_created(self):
         self.write(self.source, os.path.join("docs", "pqr", "index.html"), "화면")
         cli._copy_program(self.source, self.target)
