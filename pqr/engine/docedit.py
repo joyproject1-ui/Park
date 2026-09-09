@@ -711,6 +711,20 @@ def tidy_page_breaks(document):
             before += 1
     moved = hard_breaks_to_page_break_before(document)
     before += strip_blanks_before_page_breaks(document)
+    # 1b) '앞에서 쪽 나눔(pageBreakBefore)' 이 붙은 제목 바로 앞의 빈 문단도 지운다 — 표가 쪽을
+    #     꽉 채우면 그 빈 문단 하나가 다음 쪽에 홀로 남아 **빈 쪽**이 된다 (담당자 2026-09-09
+    #     나조린 15쪽: "아무 내용 없는 빈 페이지가 없도록 해, 모든 PQR 작성 시 기본이야").
+    for el in list(body):
+        if not el.tag.endswith("}p"):
+            continue
+        ppr = el.find(qn("w:pPr"))
+        if ppr is None or ppr.find(qn("w:pageBreakBefore")) is None:
+            continue
+        prev = el.getprevious()
+        while prev is not None and prev.tag.endswith("}p") and is_blank_para(prev) and not _has_page_break(prev):
+            gone, prev = prev, prev.getprevious()
+            body.remove(gone)
+            before += 1
     tail = 0
     for el in reversed(list(body)):
         if el.tag.endswith("}sectPr"):
@@ -1465,6 +1479,27 @@ def keep_table_together(table):
     return len(rows) - 1
 
 
+def relax_exact_rows(document):
+    """글이 든 행의 높이 규칙 '정확히(exact)' 를 '최소(atLeast)' 로 바꾼다 — 바꾼 행 수.
+
+    공양식은 자료 줄 높이를 '정확히' 로 못 박아 두었다. 그 줄에 두 줄짜리 글('플라스틱 용기에 든
+    무색투명한 액체')을 넣으면 둘째 줄이 잘려 보인다(담당자 2026-09-09 나조린: "글자가 칸에 다
+    나오지 않아 — 다음부터 모든 PQR 작성할 때 이런 실수는 없게"). '정확히' 는 사선을 긋는 빈 블록
+    (draw_block_line) 에만 필요하므로, **글이 하나라도 든 행**은 모두 '최소' 로 돌린다.
+    """
+    n = 0
+    for tbl in document.element.body.iter(qn("w:tbl")):
+        for tr in tbl.findall(qn("w:tr")):
+            pr = tr.find(qn("w:trPr"))
+            h = pr.find(qn("w:trHeight")) if pr is not None else None
+            if h is None or h.get(qn("w:hRule")) != "exact":
+                continue
+            if any((t.text or "").strip() for t in tr.iter(qn("w:t"))):
+                h.set(qn("w:hRule"), "atLeast")
+                n += 1
+    return n
+
+
 def trim_row_heights(document, floor=340, skip=()):
     """행의 '최소 높이'가 필요 이상으로 크면 floor 로 낮춘다.
 
@@ -1762,9 +1797,46 @@ def keep_tail_together(table, n=6):
     return min(n, len(rows)) - 1
 
 
+def keep_notes_with_table(document):
+    """표 바로 뒤의 각주 줄('1) …', '주1) …', '※ …')이 다음 쪽에 홀로 남지 않게 한다 — 손댄 표 수.
+
+    표가 쪽을 꽉 채우면 그 뒤 각주 한 줄이 다음 쪽 머리글 아래에 덩그러니 남는다(담당자 2026-09-09
+    나조린 13·15쪽: "아무 내용 없는 빈 페이지가 없도록 해"). 표 마지막 두 행에 keepNext 를 걸어
+    각주와 함께 넘어가게 한다. 각주 줄 자체도 서로 keepNext 로 잇는다.
+    """
+    from docx.table import Table
+    body = document.element.body
+    n = 0
+    for tbl in body.findall(qn("w:tbl")):
+        nxt = tbl.getnext()
+        notes = []
+        while nxt is not None and nxt.tag.endswith("}p"):
+            text = "".join(t.text or "" for t in nxt.iter(qn("w:t"))).strip()
+            if not text:
+                nxt = nxt.getnext()
+                continue
+            if re.match(r"^(?:주\s*)?\d{1,2}\s*\)|^[※*]", text):
+                notes.append(nxt)
+                nxt = nxt.getnext()
+                continue
+            break
+        if not notes:
+            continue
+        table = Table(tbl, document)
+        for r in table.rows[-2:]:
+            _keep_next(r)
+        for para in notes[:-1]:
+            get_or_add(get_or_add(para, "pPr"), "keepNext")
+        n += 1
+    return n
+
+
 def est_height(table, line=240):
     """표 높이 어림(dxa): 행마다 max(최소 높이, 가장 긴 칸의 줄 수 × 줄 높이)."""
+    import math
     total = 0
+    grid = table._tbl.find(qn("w:tblGrid"))
+    cols = [int(g.get(qn("w:w")) or 0) for g in grid.findall(qn("w:gridCol"))] if grid is not None else []
     for tr in table._tbl.findall(qn("w:tr")):
         pr = tr.find(qn("w:trPr"))
         h = pr.find(qn("w:trHeight")) if pr is not None else None
@@ -1772,7 +1844,27 @@ def est_height(table, line=240):
             hv = int(h.get(qn("w:val")))
         except (AttributeError, TypeError, ValueError):
             hv = 0
-        lines = max(len(tc.findall(qn("w:p"))) for tc in tr.findall(qn("w:tc")))
+        lines, at = 1, 0
+        for tc in tr.findall(qn("w:tc")):
+            tcpr = tc.find(qn("w:tcPr"))
+            span_el = tcpr.find(qn("w:gridSpan")) if tcpr is not None else None
+            span = int(span_el.get(qn("w:val"))) if span_el is not None else 1
+            width = sum(cols[at:at + span]) if cols else 0
+            at += span
+            if not width:
+                w_el = tcpr.find(qn("w:tcW")) if tcpr is not None else None
+                try:
+                    width = int(w_el.get(qn("w:w")))
+                except (AttributeError, TypeError, ValueError):
+                    width = 2000
+            # 글이 칸 폭을 넘으면 접힌다 — 문단 수만 세면 두 줄짜리 칸을 한 줄로 보아 표를
+            # 한 쪽에 넣으려다 제목만 홀로 남는 빈 쪽이 생겼다 (담당자 2026-09-09 나조린 20쪽).
+            # 굴림 10pt 한글 한 자 ≈ 200 twips, 칸 안쪽 여백 ≈ 200 twips.
+            for para in tc.findall(qn("w:p")):
+                text = "".join(t.text or "" for t in para.iter(qn("w:t")))
+                need = math.ceil(len(text) * 200 / max(width - 200, 400)) if text else 1
+                lines = max(lines, need)
+            lines = max(lines, len(tc.findall(qn("w:p"))))
         total += max(hv, lines * line + 60)
     return total
 

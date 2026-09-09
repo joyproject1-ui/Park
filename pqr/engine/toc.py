@@ -193,3 +193,40 @@ def fill_page_numbers(docx_path, log=None):
         document.save(docx_path)
         log("목차 쪽 번호 %d개를 PDF 에서 세어 적었습니다" % n)
     return n
+
+
+def blank_pages(docx_path, log=None):
+    """빈 쪽 검사 — 머리글·제목 한 줄 말고는 아무것도 없는 쪽의 목록. ['13쪽(…)', …]
+
+    쪽마다 문서 머리글(제품 품질 평가 보고서 …)이 들어가므로 그것을 뺀 글자를 본다. 아예 빈 쪽 ·
+    각주 한두 줄만 남은 쪽 · 항 제목만 남은 쪽이 '빈 쪽' 이다. 짧더라도 표가 든 쪽(10.2 제조설비
+    'N/A' 한 줄)은 정상이다 (담당자 2026-09-09 나조린 13·15·20쪽: "아무 내용 없는 빈 페이지가
+    없도록 해 — 모든 PQR 작성 시 기본이야"). 목차 쪽 번호를 적은 **뒤** 최종 파일로 다시 그려
+    본다 — 머리글의 'Page n/m' 글자 폭에 따라 줄이 밀려 쪽 배치가 조금 달라진다.
+    """
+    import shutil
+    import tempfile
+    from . import convert
+    log = log or (lambda *a: None)
+    work = tempfile.mkdtemp(prefix="pqr-blank-")
+    try:
+        pdf = os.path.join(work, "pages.pdf")
+        convert.to_pdf(docx_path, pdf)
+        pages = _pdf_pages(pdf)
+    finally:
+        shutil.rmtree(work, ignore_errors=True)
+    빈쪽 = []
+    for i, text in enumerate(pages, 1):
+        body = _squeeze(text)
+        for pat in (r"Page\d+/\d+", r"ProductQualityReview", r"Report", r"제품품질평가보고서", r"문서번호",
+                    r"Rev\.?No\.?", r"EHLF-\d+/Rev\.\d+", r"[()（）]"):
+            body = re.sub(pat, "", body)
+        footnote_only = re.match(r"^(?:주\s*)?\d{1,2}\)", body) and len(body) < 160
+        heading_only = re.fullmatch(r"\d+(?:\.\d+)*[가-힣A-Za-z·()]+", body)
+        if len(body) < 40 or footnote_only or heading_only:
+            빈쪽.append("%d쪽(%s)" % (i, body[:24] or "빈 쪽"))
+    if 빈쪽:
+        log("★ 빈 쪽 검사: %s — 앞 표의 줄 수나 쪽 나눔을 손봐야 합니다" % ", ".join(빈쪽))
+    else:
+        log("빈 쪽 검사: %d쪽 모두 내용이 있습니다" % len(pages))
+    return 빈쪽

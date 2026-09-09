@@ -522,6 +522,14 @@ def write_report(folder, product, period, out_path, today=None, recipe=None, log
                 log_("목차 쪽 번호를 세지 못했습니다 — 파일을 열고 Ctrl+A, F9 를 누르세요")
     except Exception as error:
         log_("목차 쪽 번호 계산 실패: %s — Ctrl+A, F9 로 갱신하세요" % error)
+    try:
+        빈쪽 = toc_module.blank_pages(out_path, log_)
+        if 빈쪽:
+            data.issues.append(("서식", ", ".join(빈쪽),
+                           "★ 머리글 말고는 내용이 없는 쪽이 있습니다 — 앞 표의 줄 수·쪽 나눔을 손봐 주세요. "
+                           "이 알림과 파일을 제작자에게 보내 주세요"))
+    except Exception as error:
+        log_("빈 쪽 검사 실패: %s" % error)
     # 첨부 엑셀 — Cpk 계산 파일 4종(결재본 것을 물려받아 값 갱신) + 안정성 경향 분석
     attachments = []
     started = time.time() - 1                      # 이번 실행에서 새로 쓰였는지 재는 기준

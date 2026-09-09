@@ -291,9 +291,25 @@ def _split_91(document, tables, exp_lots):
             (exp if market == "수출" else dom).append(one)
     if seen and (dom or exp) and exp:
         return dom, exp                      # 제목으로 갈린 서식
-    if not exp_lots:
+    if not exp_lots or len(tables) < 2:
         return list(tables), []              # 수출 Lot 이 없으면 모두 내수 표
-    return tables[:1], tables[1:2]           # 예전 방식 — 첫 표 내수, 둘째 표 수출
+
+    # 수출 Lot 이 있어도 둘째 표가 **수출 표라는 보장은 없다** — 9.1 은 쪽이 넘어가면 표가
+    # 갈라진다. 수출 표라면 공정이 처음(조제)부터 다시 시작하고, 이어지는 표라면 앞 표가
+    # 끝난 다음 공정(포장)부터 시작한다. 그것으로 가른다 (담당자 2026-09-09 나조린: 수출 Lot 이
+    # 있다는 이유로 둘째 표를 수출로 보아 '포장 완료 후' 가 통째로 사선이었다).
+    def _first_stage(table):
+        for row in table.rows[1:]:
+            글 = re.sub(r"\s+", "", E.cell_text(E.raw_cells(row)[0]))
+            for k, name in enumerate(("조제", "충전", "포장")):
+                if name in 글:
+                    return k
+        return -1
+
+    앞, 뒤 = _first_stage(tables[0]), _first_stage(tables[1])
+    if 뒤 <= 앞:
+        return tables[:1], tables[1:2]       # 공정이 처음부터 다시 — 수출 표
+    return list(tables), []                  # 이어지는 표 — 모두 내수
 
 
 def _mark_header_can(table, word):
@@ -2037,7 +2053,9 @@ def fill(document, data, product, period, today=None, log=None):
     # 포장규격이 모두 빈칸이었다).
     t91_dom, t91_exp = _split_91(document, t91, exp)
     # 2026 양식(공정별 9.2 표)이면 9.1·9.2 를 모두 머리글·허용기준으로 짚어 채운다.
-    rules = D.criteria(t91_dom[0]) if t91_dom else []
+    # 9.1 이 표 둘로 갈라져 있으면(쪽 넘김) 둘째 표의 허용기준(포장규격·무균 …)도 규칙에 든다 —
+    # 첫 표만 보면 포장 항목의 기준을 못 찾는다(담당자 2026-09-09 나조린 '포장규격' 사선).
+    rules = [r for t in t91_dom for r in D.criteria(t)]
     pairs = D.tables_92(document)
     # 수출 Lot 이 있어도 머리글 기반으로 채운다 — 내수용·수출용 표를 제목으로 갈라 각각 채운다(2026-09-06 퀴노비드:
     # 자리 기반으로 떨어지면 열이 밀려 9.2 의 확인·질량 칸이 비거나 옆 칸에 들어갔다)
@@ -2163,16 +2181,32 @@ def fill(document, data, product, period, today=None, log=None):
     def fill_92_labelled(pairs, rules, lots, n, prior=None):
         """9.2 표를 머리글 이름으로 채운다 (2026 양식: 조제·충전·포장 공정별 표)."""
         parts = [r["part"] for r in rules if r["part"]]
+        if not parts:
+            # 9.1 허용기준에서 성분을 못 가르면(나조린: 성분이 '구분' 칸에 있다) 완제 성적서의
+            # 성분별 함량 목록에서 성분 이름을 가져온다 — 이것이 비면 성분별 열 두 개에 같은
+            # 값이 들어간다(담당자 2026-09-09).
+            parts = sorted({str(a.get("part") or "").strip() for lot in lots
+                            for a in (rec(lot, "924").get("assays") or []) if a.get("part")})
         found = {}
         prior = prior or {}
 
         def maker(process):
             def value(lab, lot, i, crit=None):
-                r923, r924 = rec(lot, "923"), rec(lot, "924")
-                mine = r923 if process == "충전" else r924
-                part = next((p for p in parts if p and p in lab), "")
+                r921, r922, r923, r924 = rec(lot, "921"), rec(lot, "922"), rec(lot, "923"), rec(lot, "924")
+                # 그 공정의 성적서 — 조제는 조제(921·바이오버든 922), 충전은 923, 포장은 924.
+                # 예전에는 조제도 포장 성적서를 봐서 조제 성상에 '플라스틱 용기에 든 …' 이 적혔다
+                # (담당자 2026-09-09 나조린: 조제 성적서는 '무색 투명한 액').
+                mine = (r923 if "충전" in str(process) else
+                        (r921 or r922) if "조제" in str(process) else r924)
+                납작 = re.sub(r"\s+", "", lab)
+                part = next((p for p in parts if p and re.sub(r"\s+", "", p) in 납작), "")
                 if "성상" in lab:
-                    return app(lots) or D.criterion_for(rules, process, "성상")
+                    내것 = ((mine.get("items") or {}).get("성상") or {}).get("value") or mine.get("appearance")
+                    if 내것:
+                        return 내것.strip()
+                    if "포장" in str(process):
+                        return app(lots) or D.criterion_for(rules, process, "성상")
+                    return D.criterion_for(rules, process, "성상")
                 if "바이오버든" in lab or "생균수" in lab:
                     return bio_full(lot)
                 if "함량" in lab:
@@ -2187,7 +2221,14 @@ def fill(document, data, product, period, today=None, log=None):
                 if "미립자" in lab or re.search(r"\d+\s*(?:㎛|um|μm)", lab):
                     # 열 이름에 크기가 있으면 그것으로(9.2.4), 없으면 그 줄의 허용기준으로(9.1)
                     쪽 = lab if re.search(r"\d+\s*(?:㎛|um|μm)", lab) else (crit or "")
-                    return _particle_of(r924.get("particle"), 쪽, i)
+                    got = _particle_of(r924.get("particle"), 쪽, i)
+                    if got is not None:
+                        return got
+                    # 10·25·50㎛ 셋으로 갈리지 않은 제품(나조린 '300㎛ 이상/mL : 1개 이하')은
+                    # 성적서 값을 그대로 쓴다 — 여기서 None 으로 끝내면 칸이 빈다(담당자 2026-09-09)
+                    plain = _plain(r924.get("particle"))
+                    if plain is not None and not re.search(r"\d+\s*(?:㎛|um|μm)", lab):
+                        return plain
                 if any(c in lab for c in CIRCLED):
                     return _impurity_value(r924, _impurity_legend(document).get(
                         next(c for c in lab if c in CIRCLED)) or "")
@@ -2228,13 +2269,17 @@ def fill(document, data, product, period, today=None, log=None):
                             return (" ~ ".join(got[:2])) if len(got) >= 2 else _plain(mine.get("mass_each"))
                         return ("%s 이상" % _plain(mine.get("mass_each_min"))) if mine.get("mass_each_min") else None
                 if "무균" in lab:
-                    # 전용 값이 없다고 여기서 끝내면, 성적서 시험항목 표에 '무균: 음성' 이 있어도
-                    # 칸이 빈다 (담당자 2026-09-09 아이퓨어 9.2.4). 아래 _item_value 까지 내려간다.
-                    got = r924.get("sterility") or D.criterion_for(rules, process, "무균")
+                    # 성적서 값만 쓴다. 예전에는 성적서에 없으면 **허용기준 글('음성(불검출)')을 결과처럼**
+                    # 적었다 — 시험을 생략한 Lot 에 결과가 있는 것처럼 보였다(담당자 2026-09-09
+                    # 나조린: "무균 시험 생략됐으면 그 다음 생산 배치도 생략이야"). 없으면 아래
+                    # _item_value 까지 내려가고, 거기서도 없으면 빈 칸(사선)으로 둔다.
+                    got = r924.get("sterility")
                     if got:
                         return got
                 if "기밀도" in lab:
-                    return mine.get("leak") or D.criterion_for(rules, process, "기밀도")
+                    got = mine.get("leak")
+                    if got:
+                        return got
                 if "튜브개봉" in lab:
                     return mine.get("tube_open")              # 변경관리로 더해진 항목 — 성적서에 없는 Lot 은 빈 칸(사선)
                 if "튜브인쇄" in lab:
@@ -2256,10 +2301,10 @@ def fill(document, data, product, period, today=None, log=None):
                         return got
                 # 코드에 박아 두지 않은 항목(pH·삼투압·비중 …)은 성적서의 시험항목 표에서 찾는다
                 # (담당자 2026-09-08: "9.2.1 시험 압축 파일을 참고해서 9.2.1 표를 작성하면 돼").
-                return _item_value(lot, process, lab)
+                return _item_value(lot, process, lab, crit)
             return value
 
-        def _item_value(lot, process, lab):
+        def _item_value(lot, process, lab, crit=None):
             """성적서 시험항목 표에서 이 열에 맞는 결과 — 없으면 None.
 
             열 이름의 단위 괄호('불용성미립자(개)', '삼투압(mOsmol/kg)')는 떼고 견주고,
@@ -2270,21 +2315,65 @@ def fill(document, data, product, period, today=None, log=None):
             keys = ("921", "922", "923") if process != "포장" else ("924",)
             if process == "충전":
                 keys = ("923", "921", "922")
-            want = _norm_item(re.sub(r"\d+\)", "", lab))
+            # 열 이름에 성분이 붙어 있으면('확인(HPLC) 말레인산페니라민', '제제균일성 나파졸린염산염')
+            # 성분을 떼고 항목 이름으로 찾고, 값이 '말레인산페니라민 : 3.0%, 나파졸린염산염 : 5.4%'
+            # 처럼 성분별로 붙어 오면 그 성분 것만 뽑는다 (담당자 2026-09-09 나조린: 두 성분 칸에
+            # 같은 글이 들어가고, 확인(HPLC) 열은 비었다).
+            part = next((p for p in parts if p and re.sub(r"\s+", "", p) in re.sub(r"\s+", "", lab)), "")
+            bare = lab
+            if part:
+                bare = re.sub(re.escape(re.sub(r"\s+", "", part)), "", re.sub(r"\s+", "", lab))
+            want = _norm_item(re.sub(r"\d+\)", "", bare))
             if not want:
                 return None
+            # '확인(HPLC)' 처럼 괄호 안이 단위가 아닌 것은 _norm_item 이 남긴다 — 괄호를 다 뗀 꼴도 본다
+            want2 = _norm_item(re.sub(r"[(（][^)）]*[)）]", "", re.sub(r"\d+\)", "", bare)))
+
+            def _of_part(value):
+                if not part:
+                    return value
+                m = re.search(re.escape(re.sub(r"\s+", "", part)) + r"\s*[:：]\s*([^,，;；]+)",
+                              re.sub(r"\s+", "", value))
+                got = m.group(1).strip() if m else value
+                # 성분별 열은 숫자만 적는다 — '3.0%' 의 % 를 뗀다(전년도 결재본: 제제균일성 '2.4')
+                if re.match(r"^-?\d+(?:\.\d+)?\s*%$", got):
+                    got = got.rstrip("% ").strip()
+                return got
             찾은것 = None
+            # 한 항목에 기준이 둘인 줄(이물검사 1)·2))은 그 줄의 허용기준과 가장 비슷한 쪽을 고른다 —
+            # 성적서 판독이 '이물검사 1)'·'이물검사 2)' 로 따로 두었다 (담당자 2026-09-09 나조린)
+            if crit:
+                crit_flat = _norm_item(D.PREFIX.sub("", crit))
+                best = None
+                for key in keys + ("924", "923", "922", "921"):
+                    for name, one in (rec(lot, key).get("items") or {}).items():
+                        m = re.match(r"^(.+?)\s+\d+\)$", name)
+                        if not m or _norm_item(m.group(1)) not in (want, want2):
+                            continue
+                        spec_flat = _norm_item(one.get("spec") or "")
+                        같은 = 0
+                        for a, b in zip(spec_flat, crit_flat):
+                            if a != b:
+                                break
+                            같은 += 1
+                        if best is None or 같은 > best[0]:
+                            best = (같은, one.get("value") or "")
+                    if best is not None:
+                        break
+                if best is not None and best[0] >= 4 and best[1]:
+                    return _drop_unit(_of_part(best[1]), lab)
             for key in keys + ("924", "923", "922", "921"):
                 for name, one in (rec(lot, key).get("items") or {}).items():
                     flat = _norm_item(name)
                     value = (one.get("value") or "").strip()
                     if not flat or not value or value == "N/A":
                         continue
-                    if flat == want:
-                        return _drop_unit(value, lab)
-                    if (flat in want or want in flat) and (찾은것 is None or len(flat) > len(찾은것[0])):
+                    if flat == want or (want2 and flat == want2):
+                        return _drop_unit(_of_part(value), lab)
+                    if ((flat in want or want in flat or (want2 and (flat in want2 or want2 in flat)))
+                            and (찾은것 is None or len(flat) > len(찾은것[0]))):
                         찾은것 = (flat, value)
-            return _drop_unit(찾은것[1], lab) if 찾은것 else None
+            return _drop_unit(_of_part(찾은것[1]), lab) if 찾은것 else None
 
         def cpk_of(lab, texts):
             if not qc.cpk_applies(len(lots)):
@@ -2682,11 +2771,15 @@ def fill(document, data, product, period, today=None, log=None):
                     width = E.grid_width(table)
                     rows = [_row_texts(table.rows[i], width) for i in range(len(table.rows))]
                     head = _head_names(rows)
+                    # 값은 빈칸을 뭉개지 않은 글 그대로 — _row_texts 는 머리글 견주기용이라 빈칸을 지운다
+                    # ('1)육안으로관찰할때…' 가 9.1 에 그대로 적혔다, 담당자 2026-09-09 나조린)
                     by_lot = {}
-                    for r in rows:
+                    for i, r in enumerate(rows):
                         lot = (r.get(1) or "").strip()
                         if re.match(r"^\d+$", (r.get(0) or "").strip()) and lot in set(lots):
-                            by_lot[lot] = r
+                            cells_ = E.grid_cells(table.rows[i], width)
+                            by_lot[lot] = {gi: (E.cell_text(c).strip() if c is not None else "")
+                                           for gi, c in cells_.items()}
                     if not by_lot:
                         continue
                     for gi, name in head.items():
@@ -3831,13 +3924,15 @@ def _fill_stability26(document, logs, period, spec, log, issues, why_of=None, pr
     # 못한 Lot 은 옮겨 놓고 '확인 필요' 노랑으로 남긴다 — 빈 표로 두지 않는다 (담당자 2026-09).
     carried = []
     read = {(one.get("kind") or "장기", one.get("market") or "내수", one["lot"]) for one in logs}
-    for e in prev_entries or []:
-        if not e.get("ongoing") or (e["kind"], e["market"], e["lot"]) in read:
-            continue
-        carried.append({"lot": e["lot"], "lot_text": e.get("lot_text") or e["lot"], "year": e.get("year") or "",
-                        "pack": e.get("pack") or "", "store": e.get("store") or "", "why": e.get("last") or "",
-                        "kind": e["kind"], "market": e["market"], "points": [], "carried": True,
-                        "prev_range": dict(e.get("range") or {})})
+    # 13항은 **올려 주신 시험일지만으로** 적는다 — 전년도 결재본의 Lot 을 옮겨 오지 않는다
+    # (담당자 2026-09-09 나조린: "안정성을 이전 PQR 에서 가져오지 말고 첨부된 자료로만 빈칸
+    # 기재해줘"). 전년도에 있던 Lot 이 올해 시험일지에 없으면 줄을 세우지 않고 문의 목록에만 적는다.
+    빠진것 = [e for e in prev_entries or []
+             if e.get("ongoing") and (e["kind"], e["market"], e["lot"]) not in read]
+    if 빠진것:
+        issues.append(("13", ", ".join(sorted({e["lot"] for e in 빠진것})),
+                       "전년도 결재본에서 진행 중이던 Lot 인데 올해 시험일지가 없어 표에 넣지 않았습니다 — "
+                       "이어지는 시험이면 시험일지를 올려 주세요 (전년도 값은 옮기지 않습니다)"))
     # 서식 13.3 각주에 적힌 Lot 가운데 시험일지에도 전년도 결재본에도 없는 것(올해 새로 시작한 장기 시험)
     # 도 줄을 세운다 — 값은 '확인 필요' 노랑. 시험일지가 올라오면 그 값으로 바뀐다.
     marks = {}

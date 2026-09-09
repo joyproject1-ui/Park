@@ -42,6 +42,9 @@ def headings_of_tables(document):
     return result
 
 
+FOOTNOTE = re.compile(r"^\s*(?:주\s*)?\d{1,2}\s*\)|^\s*[※*]")
+
+
 def find_tables(document, heading_prefix, header_words=(), after=None):
     """heading_prefix 로 시작하는 제목 뒤에 오는 표들 (header_words 가 머리행에 모두 있으면).
 
@@ -51,6 +54,11 @@ def find_tables(document, heading_prefix, header_words=(), after=None):
     key = re.sub(r"\s+", "", heading_prefix)
     for kind, value, el in outline(document):
         if kind == "h":
+            # 표 사이의 각주 줄('1) 변경관리(CC-…)에 따라 …', '주1) …', '※ …')은 제목이 아니다 —
+            # 그것으로 항을 끊으면 뒤에 이어지는 표(쪽을 넘긴 9.1 둘째 표)를 놓친다
+            # (담당자 2026-09-09 나조린: 9.1 '포장 완료 후' 표가 통째로 사선이었다).
+            if FOOTNOTE.match(str(value or "")):
+                continue
             current = re.sub(r"\s+", "", value).startswith(key)
             continue
         if not current:

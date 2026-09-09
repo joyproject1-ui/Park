@@ -65,6 +65,77 @@ def _head_index(cells, names):
     return None
 
 
+def _cell_text(page, bbox):
+    """칸 상자 안의 글 — 위아래 1pt 여유를 둔다(마지막 낱말이 괘선에 걸쳐 잘리곤 한다)."""
+    if bbox is None:
+        return ""
+    x0, y0, x1, y1 = bbox
+    try:
+        text = page.crop((x0, max(0, y0 - 1), x1, y1 + 1)).extract_text() or ""
+    except Exception:
+        return ""
+    # 낱말 가운데서 줄이 접힌 것('무색투명한 액' / '체')은 붙인다 — 다음 줄이 한두 글자뿐이면 앞 낱말의 꼬리다
+    text = re.sub(r"\s*\n\s*(?=[가-힣]\s*(?:\n|$))", "", text)
+    return re.sub(r"\s*\n\s*", " ", text).strip()
+
+
+def _read_by_grid(page):
+    """괘선 표를 칸 단위로 읽는다 — {항목: {"spec", "value"}}. 표를 못 찾으면 {}.
+
+    시험항목 칸이 빈 줄은 윗 항목의 이어지는 줄이다. 시험기준이 '평균 :'·'개개 :' 로 시작하면
+    하위 줄('질량·용량(평균)'), 아니면 같은 항목의 둘째 기준(이물검사)이라 '1) … 2) …' 로 잇는다
+    (담당자 2026-09-09: "2가지를 기재할 때는 1) 육안으로 … 2) 이물이 … 이렇게 기재하면 돼").
+    """
+    for table in page.find_tables():
+        rows = [[_cell_text(page, b) for b in row.cells] for row in table.rows]
+        head = None
+        for i, cells in enumerate(rows):
+            flat = [_flat(c) for c in cells]
+            if any(any(n in c for n in HEAD_ITEM) for c in flat) and \
+               (any(any(n in c for n in HEAD_SPEC) for c in flat) or any(any(n in c for n in HEAD_VALUE) for c in flat)):
+                head = i
+                break
+        if head is None:
+            continue
+        flat = [_flat(c) for c in rows[head]]
+        ci = next((k for k, c in enumerate(flat) if any(n in c for n in HEAD_ITEM)), None)
+        cs = next((k for k, c in enumerate(flat) if any(n in c for n in HEAD_SPEC)), None)
+        cv = next((k for k, c in enumerate(flat) if any(n in c for n in HEAD_VALUE)), None)
+        if ci is None or cs is None or cv is None or not (ci < cs < cv):
+            continue
+        out, name, lines_of = {}, "", {}
+        for cells in rows[head + 1:]:
+            item = cells[ci] if ci < len(cells) else ""
+            spec = cells[cs] if cs < len(cells) else ""
+            value = cells[cv] if cv < len(cells) else ""
+            if any(_flat(item).startswith(n) for n in STOP) or any(_flat(c).startswith(n) for n in STOP for c in cells[:1]):
+                break
+            if item:
+                name = item.strip()
+            if not name or not (spec or value):
+                continue
+            m = SUB.match(spec)
+            if m:
+                key = "%s(%s)" % (name, m.group(1))
+                out[key] = {"spec": m.group(2).strip(), "value": value}
+                continue
+            lines_of.setdefault(name, []).append((spec, value))
+        for name, pairs in lines_of.items():
+            if len(pairs) == 1:
+                out[name] = {"spec": pairs[0][0], "value": pairs[0][1]}
+            else:
+                out[name] = {"spec": " ".join("%d) %s" % (k + 1, sp) for k, (sp, _) in enumerate(pairs)),
+                             "value": " ".join("%d) %s" % (k + 1, v) for k, (_, v) in enumerate(pairs))}
+                for k, (sp, v) in enumerate(pairs):        # 9.1 처럼 줄이 갈라진 표를 위해 따로도 둔다
+                    out["%s %d)" % (name, k + 1)] = {"spec": sp, "value": v}
+        for k in list(out):
+            base = k.split("(")[0]
+            if base != k and base not in out:
+                out[base] = dict(out[k])
+        return out
+    return {}
+
+
 def read_table(path, page_no=1):
     """{항목: {"spec": 기준, "value": 결과}} — 못 읽으면 {}.
 
@@ -79,7 +150,18 @@ def read_table(path, page_no=1):
         with pdfplumber.open(path) as pdf:
             if len(pdf.pages) < page_no:
                 return {}
-            words = pdf.pages[page_no - 1].extract_words(x_tolerance=1.5)
+            page = pdf.pages[page_no - 1]
+            # 괘선이 있는 글자 PDF(ERP 공정시험성적서)는 **칸 상자 그대로** 읽는 것이 정확하다.
+            # 낱말을 줄로 묶어 읽으면 두 줄로 접힌 칸('플라스틱 용기에 든 무색투명한 액 / 체')과
+            # 시험자·시험일자 줄이 끼어들어 글이 뒤섞였다 (담당자 2026-09-09 나조린 충전 성적서:
+            # 기밀도 '침투 없음 메틸렌블루시액의 침투 없음', 이물검사 '때 맑으며, 쉽게 육안으로 …').
+            try:
+                got = _read_by_grid(page)
+            except Exception:
+                got = {}
+            if len(got) >= 2:
+                return got
+            words = page.extract_words(x_tolerance=1.5)
     except Exception:
         return {}
     lines = _lines(words)

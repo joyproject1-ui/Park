@@ -97,7 +97,10 @@ class 옮겨_채우기(unittest.TestCase):
                           log.append, issues, {}, carry.stability_packs(_prev()), prev, "PQR25.docx")
         return d, issues
 
-    def test_시험일지가_없는_장기_lot_은_전년도와_각주에서_세우고_노랑으로_남긴다(self):
+    def test_시험일지가_없는_장기_lot_은_각주에서만_세우고_전년도_값은_옮기지_않는다(self):
+        """담당자 2026-09-09: "안정성을 이전 PQR 에서 가져오지 말고 첨부된 자료로만 빈칸 기재해줘".
+        서식 13.3 각주에 적힌 Lot 은 줄을 세우되(올해 서식이 스스로 말한 것), 전년도 결재본의 실시 사유·
+        값 범위는 옮기지 않는다. 전년도에서 진행 중이던 Lot 은 문의 목록에만 적는다."""
         logs = [{"lot": "OEV301", "year": "2022", "kind": "시판후", "market": "내수", "market_hint": True,
                  "pack": "5g tube/갑", "store": STORE, "mfg": "2022.03.18", "expiry": "2025.03.17",
                  "points": [{"period": "36M", "done": "2025.03.10", "assays": {"오플록사신": 99.1}}]}]
@@ -107,23 +110,21 @@ class 옮겨_채우기(unittest.TestCase):
         self.assertEqual([r[3] for r in rows[1:4]], ["OEX101", "OEXO01", "OEY301"])
         self.assertEqual([r[1] for r in rows[1:4]], ["2024", "2024", "2025"])
         self.assertEqual(rows[1][2], "확인 필요"); self.assertEqual(rows[1][6], "확인 필요")
-        self.assertEqual(rows[1][7], "제품 멸균 조건 변경")                    # 실시 사유는 전년도 것
+        self.assertEqual(rows[1][7], "")                                          # 실시 사유는 전년도에서 옮기지 않는다
         self.assertEqual(rows[3][4], "5g tube/갑")                                # 각주 Lot 의 포장은 그 시장 전년도 표기
-        self.assertTrue(E.cell_text(E.raw_cells(long.rows[-1])[0]).startswith("특이사항"))
-        self.assertIn("옮긴 것입니다", E.cell_text(E.raw_cells(long.rows[-1])[0]))
-        self.assertEqual(len(E.raw_cells(long.rows[-1])), 1)
         # 시판 후는 올해 읽은 값 그대로
         post = _tables(d, "13.2.1")[0]
         self.assertEqual([E.cell_text(c) for c in E.raw_cells(post.rows[1])][3:4], ["OEV301"])
-        # 13.3 — 전년도 범위는 노랑, 각주 Lot 은 '확인 필요', 번호는 각주대로, 장기 줄이 먼저(서식 차례)
+        # 13.3 — 각주 Lot 은 모두 '확인 필요'(전년도 범위를 옮기지 않는다), 번호는 각주대로, 장기 줄이 먼저
         trend = _tables(d, "13.3")[0]
         body = [[E.cell_text(c) for c in E.raw_cells(r)] for r in trend.rows[1:5]]
         self.assertEqual([b[0] for b in body], ["장기", "", "", "시판 후"])
         self.assertEqual([b[1] for b in body], ["20241)", "20242)", "20253)", "2022"])
-        self.assertEqual([b[2] for b in body], ["103.4 ~ 107.5", "105.3", "확인 필요", "99.1"])
-        from docx.oxml.ns import qn
-        self.assertTrue(list(E.raw_cells(trend.rows[1])[2]._tc.iter(qn("w:highlight"))))      # 전년도 범위는 노랑
-        self.assertEqual(len([i for i in issues if i[0] == "13" and "옮겼고" in i[2] and "OEY301" in i[2]]), 1)
+        self.assertEqual([b[2] for b in body], ["확인 필요", "확인 필요", "확인 필요", "99.1"])
+        # 전년도에서 진행 중이던 Lot 은 문의 목록에만
+        self.assertEqual(len([i for i in issues if i[0] == "13" and "전년도 값은 옮기지 않습니다" in i[2]
+                              and "OEX101" in i[1]]), 1)
+        self.assertEqual(len([i for i in issues if i[0] == "13" and "옮겼고" in i[2]]), 0)
 
     def test_올해_읽은_lot_은_옮기지_않는다(self):
         logs = [{"lot": "OEX101", "year": "2024", "kind": "장기", "market": "내수", "market_hint": True,

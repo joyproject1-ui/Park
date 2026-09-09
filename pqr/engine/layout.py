@@ -303,6 +303,8 @@ def apply(document, log=None, product_title=None, edms=None):
     # 프로그램이 남긴 안내(전년도 값을 옮겼으니 갱신하라는 줄)도 노랑 — 담당자 2026-09
     log("옮김 안내 노랑 표시: %d" % E.highlight(document, "옮긴 것입니다"))
     log("행 분할 금지: %d" % E.no_split_rows(document))
+    log("글 든 행 높이 '정확히'→'최소': %d" % E.relax_exact_rows(document))
+    log("표 뒤 각주를 표와 함께: %d" % E.keep_notes_with_table(document))
     keep = 0
     for ti in _tables_under(document, ("8.2.1", "8.2.2", "13.2")):
         keep += E.keep_merged_groups(T[ti], 3)
