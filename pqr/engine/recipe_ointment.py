@@ -1555,11 +1555,22 @@ def fill(document, data, product, period, today=None, log=None):
         """
         both = list(data.suppliers_raw) + list(data.suppliers_mat)
         code, docno, vendor = (code or "").strip(), _key(docno), _key(vendor)
+
+        def _var(v):
+            """VAR-R-Woojin 과 VAR-P-Woojin 을 같은 것으로 본다 — 가운데 한 글자는 원료(R)·
+            자재(P) 구분이라 결재본에 잘못 적혀 있곤 한다(담당자 2026-09-09 아이퓨어 우진켐:
+            공양식은 VAR-R-Woojin, 자재 목록은 VAR-P-Woojin 이라 완료일을 못 찾았다)."""
+            return re.sub(r"^var[a-z](?=[a-z])", "var", _key(v))
+
+        # 한글 업체명은 세 글자가 흔하다(우진켐·한신인쇄). 넉 자를 요구하면 '우진켐' 이 걸리지
+        # 않는다 — 두 글자 이상이면 보되, 여럿이 걸리면 아래에서 가장 최근 줄을 고른다.
+        vendor_ok = len(vendor) >= 4 or (len(vendor) >= 2 and re.search(r"[가-힣]", vendor or ""))
         tests = [lambda r_: bool(code) and code == str(r_.get("원료코드") or "").strip(),
                  lambda r_: bool(docno) and _key(r_.get("문서번호")) == docno,
+                 lambda r_: bool(docno) and _var(r_.get("문서번호")) == _var(docno),
                  lambda r_: bool(docno) and _key(r_.get("문서번호")) and
                  (_key(r_.get("문서번호")).startswith(docno) or docno.startswith(_key(r_.get("문서번호")))),
-                 lambda r_: bool(vendor) and len(vendor) >= 4 and _key(r_.get("공급업체명")) and
+                 lambda r_: bool(vendor) and vendor_ok and _key(r_.get("공급업체명")) and
                  (vendor in _key(r_.get("공급업체명")) or _key(r_.get("공급업체명")).startswith(vendor))]
         for k, test in enumerate(tests):
             got = [r_ for r_ in both if test(r_)]
@@ -1663,7 +1674,16 @@ def fill(document, data, product, period, today=None, log=None):
                     # 제조원 이름과 다를 수 있다(‘린하르트 GmbH (Pausa) Linhardt GmbH (Pausa)’).
                     # 코드로 정확히 찾았을 때만 덮어쓰고, 아니면 쓰여 있는 이름을 둔다.
                     upd81 += _put(cells, col["maker"], _company(got.get("공급업체명")))
-                upd81 += _put(cells, col["doc"], (got.get("문서번호") or "").strip())
+                옛문서 = take("doc")
+                새문서 = (got.get("문서번호") or "").strip()
+                if 옛문서 and 새문서 and _key(옛문서) != _key(새문서):
+                    # 공양식·전년도 결재본의 평가문서번호가 목록과 다르면 조용히 고치지 않고 알린다
+                    # (담당자 2026-09-09 아이퓨어: 'VAR-R-Woojin' 이라 적혀 있어 완료일을 못 찾았다)
+                    issues.append((prefix, take("name") or take("code"),
+                                   "평가문서번호가 공급업체 목록과 달라 목록 쪽으로 고쳤습니다 — "
+                                   "'%s' → '%s' (%s). 어느 쪽이 맞는지 확인하세요"
+                                   % (옛문서, 새문서, _company(got.get("공급업체명")))))
+                upd81 += _put(cells, col["doc"], 새문서)
                 upd81 += _put(cells, col["day"], _norm_date(got.get("평가승인일")))
                 if grade in ("A", "B"):
                     upd81 += _put(cells, col["result"], "적합")
