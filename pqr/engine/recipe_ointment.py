@@ -105,6 +105,116 @@ def _note_numbers_under(document, prefix):
     return numbers
 
 
+def _change_for_item(data, item_name):
+    """그 시험항목을 다룬 12항 변경관리 — 없으면 None.
+
+    시험을 도중에 생략·추가하는 것은 변경관리로 정해진다(담당자 2026-09-09 아이퓨어:
+    "12항 변경관리(CC-250423-16)에 따라 LWYO01 부터 비중 시험 생략됨"). 변경요청서의 변경명·
+    변경내용에 그 시험항목 이름이 들어 있으면 그 건으로 본다.
+    """
+    want = re.sub(r"[\s()（）]", "", str(item_name or ""))
+    if len(want) < 2:
+        return None
+    for one in (getattr(data, "changes", None) or []):
+        글 = " ".join(str((one or {}).get(k) or "") for k in ("title", "description", "reason"))
+        if want in re.sub(r"[\s()（）]", "", 글):
+            return one
+    return None
+
+
+def _omitted_columns(table, lots):
+    """자료 줄에서 **일부 Lot 에만 비어 있는** 값 열 — [(그리드 열, 열 이름, [빈 Lot])].
+
+    모두 비면 그 시험이 없는 것이고, 모두 차 있으면 정상이다. 섞여 있으면 도중에
+    생략·추가된 시험이라는 뜻이다.
+    """
+    width = E.grid_width(table)
+    rows = [_row_texts(table.rows[i], width) for i in range(len(table.rows))]
+    if not rows:
+        return []
+    head = dict(rows[0])
+    if len(rows) > 1 and not any(re.match(r"^\d+$", (rows[1].get(i) or "").strip()) for i in rows[1]):
+        for i, v in rows[1].items():
+            if v:
+                head[i] = ((head.get(i) or "") + " " + v).strip()
+    data_rows = [(i, r) for i, r in enumerate(rows)
+                 if re.match(r"^\d+$", (r.get(0) or "").strip()) and (r.get(1) or "").strip() in set(lots)]
+    if len(data_rows) < 2:
+        return []
+    out = []
+    for gi in sorted(head):
+        if gi <= 1:
+            continue
+        빈것 = [(r.get(1) or "").strip() for _i, r in data_rows if not (r.get(gi) or "").strip()]
+        찬것 = [(r.get(1) or "").strip() for _i, r in data_rows if (r.get(gi) or "").strip()]
+        if 빈것 and 찬것:
+            out.append((gi, (head.get(gi) or "").strip(), 빈것))
+    return out
+
+
+def _empty_columns(table, lots):
+    """자료 줄이 **모두** 비어 있는 값 열 — [(그리드 열, 열 이름)].
+
+    _omitted_columns 가 '일부만 빈 열'(도중에 생략된 시험)을 잡는다면 이 쪽은 '통째로 빈 열'
+    (올해 자료에서 아예 못 찾은 시험)을 잡는다.
+    """
+    width = E.grid_width(table)
+    rows = [_row_texts(table.rows[i], width) for i in range(len(table.rows))]
+    if not rows:
+        return []
+    head = dict(rows[0])
+    if len(rows) > 1 and not any(re.match(r"^\d+$", (rows[1].get(i) or "").strip()) for i in rows[1]):
+        for i, v in rows[1].items():
+            if v:
+                head[i] = ((head.get(i) or "") + " " + v).strip()
+    data_rows = [r for i, r in enumerate(rows)
+                 if re.match(r"^\d+$", (r.get(0) or "").strip()) and (r.get(1) or "").strip() in set(lots)]
+    if not data_rows:
+        return []
+    out = []
+    for gi in sorted(head):
+        if gi <= 1 or not (head.get(gi) or "").strip():
+            continue
+        if any((r.get(gi) or "").strip() for r in data_rows):
+            continue
+        out.append((gi, (head.get(gi) or "").strip()))
+    return out
+
+
+def _prev_column_text(olds, name):
+    """전년도 결재본 같은 항·같은 이름 열의 값 — 모든 Lot 이 같은 글자면 그 글자, 아니면 None.
+
+    포장규격처럼 해마다 같은 문안('각 규격에 적합함')을 적는 열은 올해 자료에서 못 찾아도
+    전년도 결재본 문안을 옮겨 온다(담당자 2026-09-09: "전년도 결재본 문안을 가져와 노랑 표시 -
+    이렇게 진행해줘"). 숫자가 든 값은 해마다 달라지므로 옮기지 않는다.
+    """
+    want = re.sub(r"\s+", "", str(name or ""))
+    if len(want) < 2:
+        return None
+    for grid in olds or []:
+        if len(grid) < 3:
+            continue
+        head = [re.sub(r"\s+", "", c or "") for c in grid[0]]
+        second = [re.sub(r"\s+", "", c or "") for c in grid[1]]
+        if not any(re.match(r"^\d+$", c) for c in second):
+            head = [(a + b) if (b and b != a) else a
+                    for a, b in zip(head, second + [""] * len(head))]
+        lot_rows = [row for row in grid[1:]
+                    if row and re.match(r"^\d+$", re.sub(r"\s+", "", row[0] or ""))]
+        if not lot_rows:
+            continue
+        for gi, h in enumerate(head):
+            if h != want:
+                continue
+            값 = [(row[gi] or "").strip() for row in lot_rows if gi < len(row)]
+            if len(값) != len(lot_rows) or not all(값):
+                continue
+            if len(set(값)) != 1 or re.search(r"\d", 값[0]):
+                continue
+            return 값[0]
+    return None
+
+
 def _mark_header(table, word, number):
     """머리행 칸(예: '개개')의 글 끝에 각주 번호 'n)' 를 붙인다 — 뒤에서 윗첨자로 바뀐다."""
     for row in table.rows[:3]:
@@ -2240,6 +2350,84 @@ def fill(document, data, product, period, today=None, log=None):
             if len(t91) > 1:
                 log("9.1항(수출): 결과 칸 %d줄을 판독값으로 채움" % fill_91_labelled(t91[1], rules_e, exp, n_exp, lambda pr: maker_of(pr, 1), 1))
         log("9.2항: 머리글로 짚어 표 %d개 채움 (%s)" % (len(triples), ", ".join((mk + " " if mk else "") + st for _, st, mk in triples)))
+        # 일부 Lot 에만 없는 시험은 **못 읽은 것이 아니라 생략된 것**이다 — 사선을 긋고 12항
+        # 변경관리에서 근거를 찾아 각주를 단다 (담당자 2026-09-09 아이퓨어: "주1) 12항 변경관리
+        # (CC-250423-16)에 따라 LWYO01 부터 비중 시험 생략됨").
+        번호 = 0
+        for key in ("9.2.1", "9.2.2", "9.2.3", "9.2.4"):
+            for table in _tables(document, key):
+                width = E.grid_width(table)
+                for gi, 이름, 빈Lot in _omitted_columns(table, dom + exp):
+                    for row in table.rows:
+                        cells = E.grid_cells(row, width)
+                        if (E.cell_text(cells.get(1)).strip() if cells.get(1) is not None else "") in 빈Lot:
+                            cell = cells.get(gi)
+                            if cell is not None and not E.cell_text(cell).strip():
+                                E.add_diag(cell)
+                    cc = _change_for_item(data, 이름)
+                    # 전년도 결재본에 이미 같은 뜻의 각주가 있으면 새로 달지 않는다 — 해마다
+                    # 겹쳐 쌓인다 (담당자 2026-09-09 아이퓨어: '주1)' 이 세 줄이 됐다).
+                    있던것 = re.sub(r"\s+", "", 이름)
+                    옛각주 = next((para.text for para in document.paragraphs
+                                if 있던것 in re.sub(r"\s+", "", para.text)
+                                and ("생략" in para.text or "제외" in para.text)), None)
+                    if 옛각주 is not None:
+                        # 각주는 이미 있으니 열 머리에 그 번호만 달아 준다
+                        m = re.search(r"주?\s*(\d+)\s*\)", 옛각주)
+                        _mark_header(table, 있던것, int(m.group(1)) if m else 1)
+                        continue
+                    번호 += 1
+                    if cc and cc.get("doc_no"):
+                        글 = ("주%d) 12항 변경관리(%s)에 따라 %s 부터 %s 시험 생략됨"
+                              % (번호, cc["doc_no"], 빈Lot[0], 이름))
+                        log("%s: %s 열이 %s 부터 비어 있어 변경관리 %s 각주를 달았습니다"
+                            % (key, 이름, 빈Lot[0], cc["doc_no"]))
+                    else:
+                        글 = ("주%d) %s 부터 %s 시험 결과가 없습니다 — 생략 사유(12항 변경관리)를 적으세요"
+                              % (번호, 빈Lot[0], 이름))
+                        issues.append((key, ", ".join(빈Lot),
+                                       "%s 시험이 일부 Lot 에만 없습니다 — 12항 변경관리에서 근거를 찾지 못했습니다" % 이름))
+                    _mark_header(table, re.sub(r"\s+", "", 이름), 번호)
+                    E.note_after(document, table, 글)
+        # 통째로 빈 열은 올해 자료에서 못 찾은 것이다 — 해마다 같은 문안을 적는 열(포장규격
+        # '각 규격에 적합함')은 전년도 결재본에서 옮기고 노랑으로 표시해 대조하게 한다
+        # (담당자 2026-09-09: "전년도 결재본 문안을 가져와 노랑 표시 - 이렇게 진행해줘").
+        prev_all = getattr(data, "prev_sections_all", None) or {}
+        for key in ("9.2.1", "9.2.2", "9.2.3", "9.2.4"):
+            olds = prev_all.get(key) or []
+            if not olds:
+                continue
+            for table in _tables(document, key):
+                width = E.grid_width(table)
+                for gi, 이름 in _empty_columns(table, dom + exp):
+                    글 = _prev_column_text(olds, 이름)
+                    if not 글:
+                        continue
+                    옮김 = 0
+                    for row in table.rows:
+                        cells = E.grid_cells(row, width)
+                        키 = E.cell_text(cells.get(1)).strip() if cells.get(1) is not None else ""
+                        if 키 not in set(dom + exp):
+                            continue
+                        cell = cells.get(gi)
+                        if cell is None or E.cell_text(cell).strip():
+                            continue
+                        E.clear_diag(cell)
+                        E.set_cell(cell, 글)
+                        E.highlight_cell(cell)
+                        옮김 += 1
+                    if not 옮김:
+                        continue
+                    log("%s: '%s' 열 %d칸을 전년도 결재본 문안('%s')으로 채우고 노랑 표시함"
+                        % (key, 이름, 옮김, 글))
+                    issues.append((key, 이름,
+                                   "올해 자료에서 값을 찾지 못해 전년도 결재본 문안('%s')을 옮겼습니다"
+                                   " — 노랑 표시한 칸을 첨부 자료와 대조하세요" % 글))
+                    # 같은 열을 두고 '비웠습니다' 문의가 이미 올라와 있으면 지운다 — 채웠으니까
+                    짧은 = re.sub(r"\s+", "", 이름)
+                    issues[:] = [one for one in issues
+                                 if not (len(one) > 2 and "찾지 못해 비웠습니다" in str(one[2])
+                                         and 짧은 in re.sub(r"\s+", "", str(one[2])))]
         # 공양식의 각주 '1) 모든 시험 결과값이 0매로 동일하여 별도 계산하지 않음.' — 최댓값·최솟값·평균을 적으므로
         # 앞뒤가 맞지 않아 지운다(담당자 2026-09-06: "최댓값, 최솟값 기재가 안 됐네")
         gone = 0
