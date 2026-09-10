@@ -59,5 +59,31 @@ class 기준변경각주(unittest.TestCase):
         self.assertFalse(R.RANGE_SPEC.match("무색 투명한 액"))
 
 
+
+class 판독이상치(unittest.TestCase):
+    def test_다른_Lot_과_크게_다르면_애매함(self):
+        logs = [{"lot": "A", "kind": "장기", "market": "내수", "points": [{"period": "6M", "assays": {"X": 107.0, "pH": 6.4}}]},
+                {"lot": "B", "kind": "장기", "market": "내수", "points": [{"period": "6M", "assays": {"X": 103.4, "pH": 6.4}}]},
+                {"lot": "C", "kind": "장기", "market": "내수", "points": [{"period": "6M", "assays": {"X": 102.9, "pH": 7.5}}]}]
+        issues = []
+        self.assertEqual(R._flag_outliers(logs, issues, lambda *a: None), 1)
+        self.assertEqual(logs[0]["points"][0]["unsure"], ["X"])
+        self.assertEqual(len(issues), 1)
+        self.assertNotIn("pH", str(issues))
+
+    def test_비슷하면_그대로(self):
+        logs = [{"lot": "A", "kind": "장기", "market": "내수", "points": [{"period": "6M", "assays": {"X": 103.0}}]},
+                {"lot": "B", "kind": "장기", "market": "내수", "points": [{"period": "6M", "assays": {"X": 103.4}}]}]
+        self.assertEqual(R._flag_outliers(logs, [], lambda *a: None), 0)
+
+
+class 유효기간(unittest.TestCase):
+    def test_허가증_유효기간(self):
+        class D: license = {"shelf_life": "제조일로부터 36개월"}
+        self.assertEqual(R._shelf_months(D()), 36)
+        class E: license = None
+        self.assertIsNone(R._shelf_months(E()))
+
+
 if __name__ == "__main__":
     unittest.main()

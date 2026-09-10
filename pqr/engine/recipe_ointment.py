@@ -1894,22 +1894,31 @@ def fill(document, data, product, period, today=None, log=None):
                     upd81 += _put(cells, col["maker"], _company(got.get("공급업체명")))
                 옛문서 = take("doc")
                 새문서 = (got.get("문서번호") or "").strip()
+                쓸문서 = 새문서
                 if 옛문서 and 새문서 and _key(옛문서) != _key(새문서):
-                    # 공양식·전년도 결재본의 평가문서번호가 목록과 다르면 목록 쪽으로 고치고 **기록**에만
-                    # 남긴다 — 목록이 맞다(담당자 2026-09-09 아이퓨어 VAR-R-Woojin, 2026-09-10 나조린
-                    # 'VAR-R-LGChem → VAR-P-LGChem', 'VAR-P-YUNGLIM → VAR-P-YOUNGLIM': "맞아 목록이 정확해").
-                    # 글자 하나(R·P)나 철자만 다른 것은 문의로 올리지 않고, 업체가 아예 다른 꼴이면 올린다.
+                    # 공양식·전년도 결재본의 평가문서번호가 목록과 다를 때(담당자 2026-09-10 나조린):
+                    #  · 가운데 글자 R·P(원료·자재)만 다르면 목록이 맞다 — 'VAR-R-LGChem → VAR-P-LGChem'
+                    #    ("맞아 목록이 정확해"), 아이퓨어 VAR-R-Woojin 도 같은 경우.
+                    #  · 업체 이름 철자만 다르면 **결재본 것**을 지킨다 — 'VAR-P-YUNGLIM'(목록은 YOUNGLIM)
+                    #    ("VAR-P-YUNGLIM" 이 맞다). 완료일은 목록 줄에서 가져온다.
+                    #  · 아예 다른 꼴이면 목록대로 고치고 문의로 올린다.
+                    # 어느 쪽이든 기록에 남긴다.
                     import difflib as _difflib
                     _vk = lambda v: re.sub(r"^var[a-z](?=[a-z])", "var", _key(v))
-                    가벼움 = (_vk(옛문서) == _vk(새문서)
-                              or _difflib.SequenceMatcher(None, _vk(옛문서), _vk(새문서)).ratio() >= 0.8)
-                    log("  %s %s: 평가문서번호 '%s' → '%s' (공급업체 목록)" % (prefix, take("name") or take("code"), 옛문서, 새문서))
-                    if not 가벼움:
+                    if _vk(옛문서) == _vk(새문서):
+                        log("  %s %s: 평가문서번호 '%s' → '%s' (R·P 구분은 공급업체 목록대로)"
+                            % (prefix, take("name") or take("code"), 옛문서, 새문서))
+                    elif _difflib.SequenceMatcher(None, _vk(옛문서), _vk(새문서)).ratio() >= 0.8:
+                        쓸문서 = 옛문서
+                        log("  %s %s: 평가문서번호 '%s' 는 결재본 표기를 지킴 (목록은 '%s')"
+                            % (prefix, take("name") or take("code"), 옛문서, 새문서))
+                    else:
+                        log("  %s %s: 평가문서번호 '%s' → '%s' (공급업체 목록)" % (prefix, take("name") or take("code"), 옛문서, 새문서))
                         issues.append((prefix, take("name") or take("code"),
                                        "평가문서번호가 공급업체 목록과 달라 목록 쪽으로 고쳤습니다 — "
                                        "'%s' → '%s' (%s). 어느 쪽이 맞는지 확인하세요"
                                        % (옛문서, 새문서, _company(got.get("공급업체명")))))
-                upd81 += _put(cells, col["doc"], 새문서)
+                upd81 += _put(cells, col["doc"], 쓸문서)
                 upd81 += _put(cells, col["day"], _norm_date(got.get("평가승인일")))
                 if grade in ("A", "B"):
                     upd81 += _put(cells, col["result"], "적합")
@@ -3348,8 +3357,9 @@ def fill(document, data, product, period, today=None, log=None):
     for k, docs in 빠진것.items():
         보이는 = [d for d in dict.fromkeys(docs)]
         if 보이는 and k in 본문:
-            issues.append(("10.3~10.5", k, "다른 라인·다른 방 공사라 빼 둠: %s — 확인 필요"
-                           % ", ".join(보이는)))
+            # 다른 라인·다른 방의 적격성 문서를 빼는 것은 담당자가 확인한 규칙이다(2026-09-10 나조린
+            # HCA5152_1·HCA5152_2·HEA5030·HEA5029: "제외하는 게 맞아") — 문의가 아니라 기록에 남긴다
+            log("  10.3~10.5 %s: 다른 라인·다른 방 공사라 빼 둠 — %s" % (k, ", ".join(보이는)))
     for k, docs in 대신넣음.items():
         보이는 = [d for d in dict.fromkeys(docs)]
         if 보이는 and k in 본문:
@@ -3513,7 +3523,8 @@ def fill(document, data, product, period, today=None, log=None):
         why = dict(getattr(data, "pv_reasons", None) or {})
         why.update(CARRY.pv_reasons(document))
         _fill_stability26(document, logs, period, spec, log, issues, why, getattr(data, "prev_packs", None),
-                          getattr(data, "prev_entries", None), getattr(data, "previous_name", ""))
+                          getattr(data, "prev_entries", None), getattr(data, "previous_name", ""),
+                          shelf_months=_shelf_months(data))
     elif stab:
         _fill_stability(document, stab, log, limits["assay"])
     elif _carry_stability(document, getattr(data, "prev_stability", None) or {},
@@ -4126,8 +4137,52 @@ def _declared_lots(table):
     return out
 
 
+OUTLIER_GAP = 3.0        # 같은 시험 구분·같은 시점의 어느 다른 Lot 과도 이만큼(%) 넘게 다르면 판독 의심
+
+
+def _flag_outliers(logs, issues, log):
+    """손글씨 판독값이 같은 시점의 다른 Lot 과 크게 다르면 '애매함' 으로 올린다 → 표시한 수.
+
+    나조린 LKY401 6M 말레인산페니라민이 107.0 으로 읽혔는데 스캔은 103.0 이었다(LKY402 103.4·LKY403 102.9) —
+    글씨체(0 을 n 처럼)를 잘못 본 것. 옆 Lot 과 견주면 잡힌다(담당자 2026-09-10 답변 뒤 대조에서 발견).
+    """
+    n = 0
+    groups = {}
+    for one in logs or []:
+        for p in one.get("points") or []:
+            for name, v in (p.get("assays") or {}).items():
+                if isinstance(v, (int, float)) and "pH" not in str(name):
+                    groups.setdefault((one.get("kind"), one.get("market"), p.get("period"), name), []).append((one, p, float(v)))
+    for (kind, market, period, name), items in groups.items():
+        if len(items) < 2:
+            continue
+        for one, p, v in items:
+            others = sorted(x for o_, p_, x in items if p_ is not p)
+            if not others:
+                continue
+            if min(abs(v - x) for x in others) > OUTLIER_GAP:      # 어느 Lot 과도 3% 넘게 다르다
+                un = p.setdefault("unsure", [])
+                if name not in un:
+                    un.append(name)
+                issues.append(("13", one.get("lot", ""),
+                               "%s 시점 %s 판독값 %s 이 같은 시점 다른 Lot(%s)과 크게 다릅니다 — 시험일지 원본과 대조하세요 (노랑 표시)"
+                               % (period, name, v, ", ".join(str(x) for x in others))))
+                log("  13항: %s %s %s = %s — 다른 Lot %s 과 달라 애매함으로 표시" % (one.get("lot"), period, name, v, others))
+                n += 1
+    return n
+
+
+def _shelf_months(data):
+    """허가증의 유효기간(개월) — 못 읽으면 None (부르는 쪽이 24개월로 본다)."""
+    lic = getattr(data, "license", None) or {}
+    text = str((lic.get("shelf_life") if isinstance(lic, dict) else "") or
+               (lic.get("storage_and_shelf") if isinstance(lic, dict) else "") or "")
+    m = re.search(r"(\d{1,3})\s*개월", text)
+    return int(m.group(1)) if m else None
+
+
 def _fill_stability26(document, logs, period, spec, log, issues, why_of=None, prev_packs=None,
-                      prev_entries=None, previous_name=""):
+                      prev_entries=None, previous_name="", shelf_months=None):
     """2026 양식의 13항 — 장기(13.1)·시판 후(13.2) 실시 내역 · 경향 분석(13.3).
 
     logs: [{"lot", "year", "pack", "store", "kind", "market", "mfg", "expiry", "why",
@@ -4157,6 +4212,8 @@ def _fill_stability26(document, logs, period, spec, log, issues, why_of=None, pr
     def during(point):      # 13.1 실시 내역: 평가 연도에 끝난 시점
         years = years_of(point)
         return (not year_to) or (year_to in years)
+
+    _flag_outliers(logs, issues, log)
 
     def split(some):
         rows, trend = [], []
@@ -4233,6 +4290,18 @@ def _fill_stability26(document, logs, period, spec, log, issues, why_of=None, pr
     # 기재해줘"). 전년도에 있던 Lot 이 올해 시험일지에 없으면 줄을 세우지 않고 문의 목록에만 적는다.
     빠진것 = [e for e in prev_entries or []
              if e.get("ongoing") and (e["kind"], e["market"], e["lot"]) not in read]
+    # 유효기한이 평가 연도 전에 끝난 Lot(24개월 제품의 2021·2022년 Lot)은 올해 시험이 있을 수 없다 —
+    # 묻지 않고 기록만 (담당자 2026-09-10: "U=2021, V=2022 … 유효기한이 경과한 제품이라서 제외하는 게 맞아").
+    # Lot 셋째 글자가 제조 연도(U=2021 … Z=2026, A=2027). 유효기간은 허가증 것, 없으면 24개월.
+    eval_year = lotcode.year_of((period or {}).get("to") or (period or {}).get("from")) if period else None
+    if eval_year and 빠진것:
+        months = shelf_months or 24
+        expired = [e for e in 빠진것
+                   if lotcode.made_year(e["lot"]) and lotcode.made_year(e["lot"]) + (months // 12) < eval_year]
+        if expired:
+            log("13항: 전년도 결재본의 %s 은 유효기한(%d개월)이 %d년 전에 끝나 올해 표에서 뺌"
+                % (", ".join(sorted({e["lot"] for e in expired})), months, eval_year))
+            빠진것 = [e for e in 빠진것 if e not in expired]
     if 빠진것:
         issues.append(("13", ", ".join(sorted({e["lot"] for e in 빠진것})),
                        "전년도 결재본에서 진행 중이던 Lot 인데 올해 시험일지가 없어 표에 넣지 않았습니다 — "
