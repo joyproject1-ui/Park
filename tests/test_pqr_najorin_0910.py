@@ -85,5 +85,52 @@ class 유효기간(unittest.TestCase):
         self.assertIsNone(R._shelf_months(E()))
 
 
+
+class 퀴노비드_0910(unittest.TestCase):
+    def test_항보다_깊은_번호는_위_항으로(self):
+        from pqr import build as B
+        m = B.item_matcher(B.load_config()["items"])
+        self.assertEqual(m("8.2.2.1 P12060 -1차 자재 ERP.xls"), "8.2.2")
+        self.assertEqual(m("9.2.1.1 x.pdf"), "9.2.1")
+        self.assertIsNone(m("3M필름.pdf"))
+
+    def test_판독_시험항목_이름_맞춤(self):
+        from pqr.engine import collect as C
+
+        class D:
+            coa = {"L1": {"924": {"assays": [{"part": "오플록사신"}, {"part": "벤잘코늄염화물"}]}}}
+            stability_logs = [{"lot": "A", "points": [{"period": "12M", "assays": {"오플록사신": 100.1, "벤잘코늄염화물": 92.8}, "unsure": ["오플록사신"]}]},
+                              {"lot": "B", "points": [{"period": "12M", "assays": {"함량": 100.6, "보존제": 89.5, "pH": 6.4}}]}]
+        d = D()
+        self.assertEqual(C.normalize_stability_keys(d), 2)
+        self.assertEqual(d.stability_logs[0]["points"][0]["assays"], {"함량": 100.1, "보존제": 92.8})
+        self.assertEqual(d.stability_logs[0]["points"][0]["unsure"], ["함량"])
+        self.assertEqual(d.stability_logs[1]["points"][0]["assays"], {"함량": 100.6, "보존제": 89.5, "pH": 6.4})
+
+    def test_형제_Lot_끼리만_이상치(self):
+        logs = [{"lot": "EHV101", "kind": "시판후", "market": "내수", "year": "2022", "points": [{"period": "36M", "assays": {"보존제": 96.0}}]},
+                {"lot": "EHW101", "kind": "시판후", "market": "내수", "year": "2023", "points": [{"period": "36M", "assays": {"보존제": 83.7}}]}]
+        self.assertEqual(R._flag_outliers(logs, [], lambda *a: None, {"보존제": "80.0 ~ 120.0%"}), 0)
+
+    def test_단위_뒤_이상(self):
+        self.assertEqual(R._drop_unit("5.1mL이상", "질량∙용량(mL)개개"), "5.1 이상")
+        self.assertEqual(R._drop_unit("5.3mL", "질량∙용량(mL)평균"), "5.3")
+
+    def test_첨부_문서_줄_맞춤(self):
+        import docx
+        from pqr.engine import docedit as E
+        d = docx.Document()
+        d.add_paragraph("18. 첨부 문서")
+        d.add_paragraph("- 안정성 시험 결과표(HLF-QC-104-01)")
+        d.add_paragraph("- 안정성 시험 결과표(HLF-QC-104-22)")
+        d.add_paragraph("- 안정성 시험 경향 분석 결과(HLF-QC-126-06)")
+        r, a = E.sync_attachment_list(d, ["HLF-QC-126-06 안정성 시험 경향 분석 결과 - 퀴노비드점안액.xlsx",
+                                         "HLF-QC-126-09 제품품질평가 경향분석 Sheet(양쪽 규격 용)_조제 pH.xls"])
+        self.assertEqual((r, a), (2, 1))
+        texts = [p.text for p in d.paragraphs]
+        self.assertEqual(texts, ["18. 첨부 문서", "- 안정성 시험 경향 분석 결과(HLF-QC-126-06)",
+                                 "- 제품품질평가 경향분석 Sheet(양쪽 규격 용)(HLF-QC-126-09)"])
+
+
 if __name__ == "__main__":
     unittest.main()

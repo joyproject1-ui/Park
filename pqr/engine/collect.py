@@ -489,6 +489,59 @@ def _deviation_by_claude(path, folder, log, note):
             "description": one.get("description") or ""}
 
 
+PRESERVATIVES = ("벤잘코늄", "염화벤잘코늄", "클로르헥시딘", "클로로부탄올", "파라벤", "소르빈산", "티메로살", "보존제")
+
+
+def normalize_stability_keys(data, log=None):
+    """13항 판독의 시험항목 이름을 한 가지로 맞춘다 → 바꾼 칸 수.
+
+    판독기가 장마다 다른 이름을 붙인다 — 퀴노비드 2026-09-10: EHV101 은 '오플록사신'·'벤잘코늄염화물',
+    나머지 Lot 은 '함량'·'보존제'. 13.3 표 머리(함량·보존제)와 경향 엑셀 시트가 그 이름으로 값을 찾으므로
+    이름이 갈리면 어떤 Lot 은 비고 어떤 Lot 은 다른 시트로 갔다.
+      · 주성분이 하나인 제품: 그 성분 이름 → '함량'   (둘 이상이면 성분 이름을 그대로 둔다)
+      · 보존제 성분 이름(벤잘코늄염화물 …) → '보존제'
+      · '함량 (오플록사신)' 처럼 붙여 적은 것도 같은 규칙
+    """
+    log = log or (lambda *a: None)
+    parts = []
+    for recs in data.coa.values():
+        for a in (recs.get("924") or {}).get("assays") or []:
+            name = str(a.get("part") or "").strip()
+            # 성적서가 보존제(벤잘코늄염화물)도 '함량' 줄로 적는 제품(퀴노비드)이 있다 — 주성분이 아니다
+            if name and name not in parts and not any(w in name for w in PRESERVATIVES):
+                parts.append(name)
+    flat = lambda t: re.sub(r"[\s()（）%]", "", str(t or ""))
+    n = 0
+    for one in data.stability_logs or []:
+        for pt in one.get("points") or []:
+            assays = pt.get("assays") or {}
+            new = {}
+            renamed = {}
+            for key, value in assays.items():
+                k = flat(key)
+                canon = key
+                if any(w in k for w in PRESERVATIVES) and "함량" not in k.replace("보존제", ""):
+                    canon = "보존제"
+                elif len(parts) == 1 and (k == "함량" or k == flat(parts[0]) or (flat(parts[0]) and flat(parts[0]) in k and "함량" in k)):
+                    canon = "함량"
+                elif len(parts) > 1 and k.startswith("함량") and k[2:] in [flat(x) for x in parts]:
+                    canon = next(x for x in parts if flat(x) == k[2:])       # '함량(말레인산페니라민)' → 성분 이름
+                if canon != key:
+                    renamed[key] = canon
+                    n += 1
+                if canon in new and new[canon] != value:
+                    continue                                       # 같은 이름이 둘이면 먼저 것
+                new[canon] = value
+            pt["assays"] = new
+            un = pt.get("unsure") or []
+            if un:
+                pt["unsure"] = [renamed.get(u, u) for u in un]
+    if n:
+        log("  [13] 시험항목 이름 %d칸을 한 가지로 맞춤 (주성분 %s → 함량, 보존제 성분 → 보존제)"
+            % (n, ", ".join(parts) or "없음"))
+    return n
+
+
 COA_CACHE = "PQR 시험성적서 판독.json"
 
 
@@ -572,6 +625,11 @@ def collect(folder, product_name=None, log=None):
     # 6. 제조내역 (수출용 ERP)  · 7. 수율
     records = []
     for p in got.get("6", []):
+        if p.lower().endswith(".pdf") and re.search(r"기록서", os.path.basename(p)):
+            # 스캔한 공 기록서(PDF)는 제조내역이 아니다 — 읽지 않고 대장에만 남긴다 (퀴노비드 2026-09-10:
+            # '6. 퀴노비드점안액(이라크) 포장기록서 rev0.pdf' 가 "제조내역 0줄" ★ 로 올라왔다)
+            saw(p, "공 기록서(PDF) — 제조·충전·포장 기록서는 .docx 만 읽습니다")
+            continue
         if p.lower().endswith(".pdf"):
             try:
                 got_rows = erp.read_manufacturing(p)
@@ -1040,6 +1098,8 @@ def collect(folder, product_name=None, log=None):
         elif pc_on and not handwriting.available():
             note("13", "", "이 PC 로 읽으라고 되어 있는데 판독기가 없습니다 — PQR-업데이트.bat 을 실행하거나 "
                            "'%s' 를 지우고 Claude 판독 묶음을 쓰세요" % handreq.PC_OPT_IN)
+    if data.stability_logs:
+        normalize_stability_keys(data, log)
     # 담당자가 손으로 옮겨 적어 둔 값이라 스캔 판독보다 믿을 만하다.
     for item in ("13", "16", "첨부"):
         for p in got.get(item, []):

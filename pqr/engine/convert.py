@@ -415,6 +415,8 @@ def _fields_via_vbscript(path):
         'w.DisplayAlerts = 0\n'
         'Set d = w.Documents.Open(%s, False, False, False)\n'
         'If Err.Number <> 0 Then w.Quit : WScript.Quit 1\n'
+        'w.Options.Pagination = True\n'
+        'd.ActiveWindow.View.Type = 3\n'
         'For pass = 1 To 2\n'
         '  d.Repaginate\n'
         '  For Each s In d.StoryRanges\n'
@@ -445,6 +447,7 @@ def _fields_via_powershell(path):
         "$w.DisplayAlerts = 0\n"
         "try {\n"
         "  $d = $w.Documents.Open(%s, $false, $false, $false)\n"
+        "  try { $w.Options.Pagination = $true; $d.ActiveWindow.View.Type = 3 } catch {}\n"
         "  for ($i = 0; $i -lt 2; $i++) {\n"
         "    $d.Repaginate()\n"
         "    foreach ($s in $d.StoryRanges) {\n"
@@ -483,6 +486,11 @@ def _fields_via_pywin32(path):
     try:
         doc = word.Documents.Open(os.path.abspath(path), False, False, False)
         try:
+            try:
+                word.Options.Pagination = True
+                doc.ActiveWindow.View.Type = 3          # wdPrintView — 초안 보기에서는 쪽 나눔이 늦어 NUMPAGES 가 어긋난다
+            except Exception:
+                pass
             for _ in range(2):
                 doc.Repaginate()
                 for story in doc.StoryRanges:
@@ -493,7 +501,10 @@ def _fields_via_pywin32(path):
             _drop_top_blanks(doc)
             doc.Repaginate()
             for story in doc.StoryRanges:
-                story.Fields.Update()
+                here = story
+                while here is not None:
+                    here.Fields.Update()
+                    here = here.NextStoryRange
             doc.Save()
         finally:
             doc.Close(0)

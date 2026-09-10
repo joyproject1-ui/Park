@@ -526,9 +526,11 @@ def write_report(folder, product, period, out_path, today=None, recipe=None, log
     # dirty 필드를 다시 계산하지 않아 빈 칸이 그대로 보였다 (담당자 2026-09).
     from . import toc as toc_module
     try:
-        if toc_module.empty_results(out_path):
-            if not toc_module.fill_page_numbers(out_path, log_):
-                log_("목차 쪽 번호를 세지 못했습니다 — 파일을 열고 Ctrl+A, F9 를 누르세요")
+        # Word 가 계산했더라도 목차 쪽 번호와 머리글 전체 쪽수를 **한 PDF** 로 다시 맞춘다 — Word 의 필드
+        # 갱신은 머리글(NUMPAGES)과 본문(PAGEREF)이 서로 다른 시점의 쪽 나눔을 볼 수 있다
+        # (담당자 2026-09-10: 목차는 22쪽까지인데 머리글은 '1 / 21').
+        if not toc_module.fill_page_numbers(out_path, log_):
+            log_("목차 쪽 번호를 세지 못했습니다 — 파일을 열고 Ctrl+A, F9 를 누르세요")
     except Exception as error:
         log_("목차 쪽 번호 계산 실패: %s — Ctrl+A, F9 로 갱신하세요" % error)
     try:
@@ -544,6 +546,10 @@ def write_report(folder, product, period, out_path, today=None, recipe=None, log
                 doc_.save(out_path)
                 log_("머리행만 남은 쪽: 표 %s 의 머리행 반복을 껐습니다" % ", ".join(str(i + 1) for i in hit))
                 convert.refresh_fields(out_path)
+                try:
+                    toc_module.fill_page_numbers(out_path, log_)
+                except Exception as error:
+                    log_("목차 쪽 번호 다시 계산 실패: %s" % error)
                 toc_module.LAST_BODIES.clear()
                 빈쪽 = toc_module.blank_pages(out_path, log_)
         if 빈쪽:
@@ -567,6 +573,19 @@ def write_report(folder, product, period, out_path, today=None, recipe=None, log
             product_dir=folder)
         log_("첨부 엑셀: %s" % ", ".join(n for n, _ in attachments))
         _check_attachments(os.path.dirname(out_path), attachments, started, data, log_)
+        # 18항 첨부 문서 줄을 실제로 만든 파일에 맞춘다 (담당자 2026-09-10: "PQR 생성 폴더에 본문과 함께 저장된
+        # 파일을 기재하면 돼")
+        try:
+            import docx as _docx
+            from . import docedit as _E
+            doc_ = _docx.Document(out_path)
+            r_, a_ = _E.sync_attachment_list(doc_, [n for n, _ in attachments], log_)
+            if r_ or a_:
+                doc_.save(out_path)
+                convert.refresh_fields(out_path)
+                toc_module.fill_page_numbers(out_path, log_)
+        except Exception as error:
+            log_("18항 첨부 문서 줄 맞춤 실패: %s" % error)
     except Exception as error:
         import traceback
         data.issues.append(("첨부", "", "첨부 엑셀 생성 실패: %s" % error))

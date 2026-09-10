@@ -289,6 +289,10 @@ def fill(table, lots, value, cpk=None, miss=None):
                 text = value(lab, lot, i)
             자리.add(k)
             if text is None:
+                # 값을 못 얻은 칸은 **비운다** — 제품용 EDMS 양식이 전년도 결재본을 복사한 것이면 옛 값이 남는다
+                # (퀴노비드 2026-09-10: EHYD01 비중 칸에 전년도 '1.009'). 뒤처리가 사선·각주·문의를 단다.
+                if E.cell_text(cell).strip():
+                    E.set_cell(cell, "")
                 continue
             got.setdefault(k, []).append(str(text))
             where.setdefault(k, []).append(cell)
@@ -314,7 +318,10 @@ def fill(table, lots, value, cpk=None, miss=None):
             continue
         # 모두 같은 값(금속성이물 0·0·0)이어도 최댓값·최솟값·평균을 적는다 — 전년도 결재본(퀴노비드 2025:
         # 1/0/1, 0/0/0)이 그렇고 담당자 지시(2026-09-06: "최댓값, 최솟값 기재가 안 됐네")
-        stats[k] = _stats(lab, texts)
+        # '확인 필요' 처럼 숫자가 아닌 칸이 섞여 있으면 숫자만으로 센다 — 전에는 통째로 None 이 되어 공양식에
+        # 남아 있던 전년도 요약값(퀴노비드 바이오버든 최댓값 4·평균 1)이 그대로 보였다 (2026-09-10)
+        numeric = [t for t in texts if re.match(r"^\s*-?\d+(?:\.\d+)?\s*$", t)]
+        stats[k] = _stats(lab, numeric if numeric and len(numeric) < len(texts) else texts)
     for ri in summary:
         cells = _grid_cells(table.rows[ri], len(labs))
         head = squeeze(E.cell_text(cells[0])) if cells.get(0) is not None else ""
@@ -327,6 +334,8 @@ def fill(table, lots, value, cpk=None, miss=None):
                 if three[which] is not None:
                     E.clear_diag(cell)                       # 공양식이 그어 둔 사선을 지우고 값을 적는다
                     E.set_cell(cell, three[which])
+                elif E.cell_text(cell).strip():
+                    E.set_cell(cell, "")                     # 셀 수 없으면 옛 값을 남기지 않는다 — 뒤에서 사선
             elif cpk is not None:
                 if E.has_diag(cell):
                     continue                   # 공양식이 Cpk 칸에 사선을 그어 둔 열(입자도 등)은 Cpk 를 적지 않는다
