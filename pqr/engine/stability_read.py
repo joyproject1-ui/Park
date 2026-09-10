@@ -21,6 +21,19 @@ from . import collect as collect_mod
 from .pdftext import is_scanned
 
 
+
+def unread_paths(paths, logs):
+    """판독 결과(source)에 한 번도 나오지 않은 시험일지 — 읽지 못한 장."""
+    seen = set()
+    for one in logs or []:
+        for src in str(one.get("source") or "").split(","):
+            src = src.strip()
+            if src:
+                seen.add(os.path.basename(src))
+    if not seen:                                   # 어느 판독도 source 를 적지 않는 판독기 — 알 수 없으면 다 읽은 것으로
+        return []
+    return [p for p in paths or [] if os.path.basename(p) not in seen]
+
 def scans(folder):
     """13 폴더의 손글씨 시험일지(스캔 PDF) — 내용이 같은 파일은 하나만."""
     got = collect_mod.discover(folder).get("13", [])
@@ -181,7 +194,14 @@ def make_reading(folder, product="", log=None, allow_pc=False):
     merged = list(old or [])
     handwriting.merge_logs(merged, logs, say)
     merged.sort(key=lambda r: (r.get("year") or "", r.get("lot") or ""))
-    path = handwriting.save_cache(folder, merged, say, covers_all=True)
+    # 읽지 못한 시험일지가 있으면 covers_all 을 적지 않는다 — 적어 두면 '보고서 작성' 이 그 일지를 다시 읽지 않아
+    # 그 Lot 이 13항에서 빠진다 (올로원스 2026-09-10: GVX501 initial 을 못 읽었는데 covers_all=true 로 저장돼
+    # 13항이 2 Lot 으로 나갔다)
+    missed = unread_paths(paths, merged)
+    if missed:
+        say("  읽지 못한 시험일지 %d장 (%s) — covers_all 을 적지 않아 다음 작성 때 다시 읽습니다"
+            % (len(missed), ", ".join(os.path.basename(p) for p in missed[:5])))
+    path = handwriting.save_cache(folder, merged, say, covers_all=not missed)
     unsure = sum(len(p.get("unsure") or []) for one in merged for p in (one.get("points") or []))
     say("13항 안정성 판독 끝: %d Lot · 애매한 칸 %d개 → %s" % (len(merged), unsure, os.path.basename(str(path or ""))))
     return {"ok": True, "how": label, "lots": len(merged), "unsure": unsure,

@@ -987,16 +987,23 @@ def _impurity_legend(document):
     return out
 
 
-def _impurity_value(rec924, name):
+def _impurity_value(rec924, name, group=None):
     """성적서의 유연물질 칸에서 그 성분의 결과만 뽑는다 — '… : 불검출, … : 불검출(LOQ미만)'.
 
     이름은 9.2.4 표 아래 범례(동그라미 번호)나 9.1 줄의 허용기준에서 온다. 대소문자·빈칸은
     무시한다 — 범례는 'related compound B', 성적서는 'related Compound B' 로 적는다.
+    group: 표의 '유연물질 1)'·'유연물질 2)' 묶음 번호 — 성적서도 유연물질 줄이 둘('유연물질 1)'·'유연물질 2)')
+    이고 '기타 유연물질' 이 두 줄에 다 있으면 같은 묶음 줄을 먼저 본다 (올로원스 2026-09-10: GVYD01
+    유연물질 2 의 기타 유연물질 '0.0%이하' 자리에 유연물질 1 의 '불검출' 이 들어갔다).
     """
     want = re.sub(r"\s+", "", str(name or "")).lower()
     if not want:
         return None
-    for key, one in (rec924.get("items") or {}).items():
+    items = list((rec924.get("items") or {}).items())
+    if group:
+        같은묶음 = [(k, v) for k, v in items if re.search(r"유연물질\s*%s\)$" % group, k)]
+        items = 같은묶음 + [(k, v) for k, v in items if (k, v) not in 같은묶음]
+    for key, one in items:
         if "유연물질" not in key:
             continue
         for part in re.split(r"[,，]", str((one or {}).get("value") or "")):
@@ -1652,6 +1659,17 @@ def fill(document, data, product, period, today=None, log=None):
         specs = yield_specs(table, columns)
         첫줄 = _yield_first_row(table)
         f, l = E.fit_rows(table, 첫줄, len(table.rows) - 4, max(1, len(lots)))
+        # 표의 공정 열이 수율현황표에 아예 없으면(결재본 '포장(미얀마)', 현황표는 내수·캄보디아뿐) 모든 Lot 이
+        # 사선이 된다 — 조용히 넘기지 않고 문의로 알린다 (올로원스·퀴노비드 2026-09-10: 캄보디아/베트남 열 이름)
+        시트열 = sorted({k for l_ in lots for k in (data.yields.get(l_) or {}) if k})
+        for one in columns:
+            name = one[-1]
+            if 시트열 and all(_yield_value(data.yields.get(l_, {}), name) is None for l_ in lots):
+                sub_ = _sub_label(name)
+                같은공정 = [k for k in 시트열 if _plain_stage(k) == _plain_stage(name)]
+                issues.append(("7", name, "표의 이 공정 열이 수율현황표에 없어 모든 Lot 을 사선으로 두었습니다 — "
+                               "표 열 이름과 현황표 열(%s)을 맞춰 주세요%s"
+                               % (", ".join(시트열), (" (같은 공정 다른 시장: %s)" % ", ".join(같은공정)) if sub_ and 같은공정 else "")))
         vals = {}
         for i, lot in enumerate(lots):
             row = table.rows[f + i]
@@ -2484,8 +2502,9 @@ def fill(document, data, product, period, today=None, log=None):
                     if plain is not None and not re.search(r"\d+\s*(?:㎛|um|μm)", lab):
                         return plain
                 if any(c in lab for c in CIRCLED):
+                    묶음 = re.search(r"유연물질\s*(\d)\s*\)", lab)
                     return _impurity_value(r924, _impurity_legend(document).get(
-                        next(c for c in lab if c in CIRCLED)) or "")
+                        next(c for c in lab if c in CIRCLED)) or "", 묶음.group(1) if 묶음 else None)
                 if "유연물질" in lab:
                     # 성적서는 '유연물질 A : 불검출, 유연물질 B : 0.1%, …' 한 덩어리다. 열마다 제
                     # 성분만 뽑지 않으면 네 칸에 같은 글이 통째로 들어간다 (담당자 2026-09-09 아이퓨어).
@@ -2505,12 +2524,19 @@ def fill(document, data, product, period, today=None, log=None):
                     if not 두루뭉술:
                         이름들.append(plain)
                     got = None
+                    묶음 = re.search(r"유연물질\s*(\d)\s*\)", lab)
                     for 이름 in 이름들:
-                        got = _impurity_value(r924, 이름)
+                        got = _impurity_value(r924, 이름, 묶음.group(1) if 묶음 else None)
                         if got is not None:
                             break
                     if got is not None:
                         return got
+                    # 성적서의 유연물질 칸이 '성분 : 값, 성분 : 값' 덩어리인데 이 줄의 성분이 그 안에 없으면
+                    # 빈 칸(사선·문의)으로 둔다 — 아래 _item_value 로 내려가면 덩어리 글이 통째로 들어간다
+                    # (올로원스 2026-09-10 9.1 related compound C·총 유연물질 칸에 유연물질 1 네 성분 글이 실렸다).
+                    if any("유연물질" in k_ and re.search(r"[:：]", str((v_ or {}).get("value") or ""))
+                           for k_, v_ in (r924.get("items") or {}).items()):
+                        return None
                 if "금속성이물" in lab:
                     # 9.1 표는 '합계' 라는 글 없이 줄만 갈라져 있다 — '개개' 가 아니면 합계 줄이다
                     return _plain(r924.get("metal_each") if "개개" in lab else r924.get("metal_total"))
@@ -2759,8 +2785,10 @@ def fill(document, data, product, period, today=None, log=None):
 
     NUMERIC = re.compile(r"[\s\d.,~]+(?:\s*(?:이상|이하|미만|초과))?$")
     AV_RANGE = re.compile(r"Av\.?\s*([\d.]+)\s*([^\s(]*)[^()]*\(\s*([\d.]+)\s*~\s*([\d.]+)")
-    UNIT_TAIL = re.compile(r"\s*(?:%|㎛|um|μm|mg|kg|mL|g|개|매)\s*(?=$|이상|이하|미만|초과)")
-    UNIT = re.compile(r"\d[\d.,]*\s*(㎛|um|μm|%|kg|mg|mL|g|개|매)")
+    # 생균수 '1CFU/100mL' 도 단위를 떼면 숫자다 — 안 떼면 글로 보아 어느 한 Lot 의 값이 9.1 에 그대로 실렸다
+    # (올로원스 2026-09-10: 1·0 인데 '1CFU/100mL')
+    UNIT_TAIL = re.compile(r"\s*(?:CFU\s*/\s*\d*\s*(?:mL|ml|g)|%|㎛|um|μm|mg|kg|mL|g|개|매)\s*(?=$|이상|이하|미만|초과)")
+    UNIT = re.compile(r"\d[\d.,]*\s*(CFU\s*/\s*\d*\s*(?:mL|ml|g)|㎛|um|μm|%|kg|mg|mL|g|개|매)")
 
     def unit_of(crit, item, sub):
         if "금속성" in item:
@@ -2804,11 +2832,23 @@ def fill(document, data, product, period, today=None, log=None):
                 and not all(NUMERIC.match(t) for t in texts)):
             texts = bare
         if not all(NUMERIC.match(t) for t in texts):
-            common = max(set(texts), key=texts.count)          # 글로 적는 항목 — 가장 많이 나온 글
+            distinct = list(dict.fromkeys(t.strip() for t in texts))
+            # '불검출(LOQ 미만)' 과 '불검출' 은 같은 결과다 — 꼬리 괄호를 떼면 하나면 그것으로
+            맨몸 = list(dict.fromkeys(re.sub(r"\s*[(（]\s*LOQ\s*미만\s*[)）]", "", t).strip() for t in distinct))
+            if len(맨몸) == 1 and len(distinct) > 1:
+                distinct = 맨몸
+            if "유연물질" in str(item or "") and len(distinct) > 1:
+                # 유연물질은 Lot 마다 글이 다르면(불검출(LOQ 미만) / 0.0%이하) 둘 다 적는다 — 하나만 고르면
+                # 다른 Lot 의 결과가 사라진다 (올로원스 2026-09-10 GVYD01 '보고농도수준(0.1%)미만')
+                return ", ".join(distinct)
+            # 글로 적는 항목 — 가장 많이 나온 글. 같은 수면 Lot 차례에서 앞선 글 (set 차례로 뽑으면
+            # 실행할 때마다 달라진다)
+            common = max(distinct, key=texts.count)
             # '0CFU/100mL' → '0 CFU/100mL' (2025 결재본 9.1 표기; 담당자 2026-09-10 생균수 지적)
             return re.sub(r"(\d)\s*(CFU)", r"\1 \2", common)
         tail = (" " + unit) if unit else ""
-        if any("~" in t for t in texts):
+        if any("~" in t for t in texts) or ("생균수" in str(item or "") and len(set(texts)) > 1):
+            # 생균수(센 값)는 평균 대신 범위 '0 ~ 1 CFU/100mL' 로 적는다
             top, bottom, _ = D._stats("", texts)
             return "%s ~ %s%s" % (bottom, top, tail)
         if len(set(texts)) == 1:
@@ -3271,14 +3311,20 @@ def fill(document, data, product, period, today=None, log=None):
     log("9항: Cpk %s" % {k: round(v, 2) for k, v in cpk_dom.items() if v is not None})
 
     # 각주 — 번호는 위에서 센 것을 쓴다
+    # 각주 글(번호 없이) — 9.1 아래에는 9.1 번호로, 9.2 표 아래에는 9.2 번호로 붙인다.
+    # 둘 다 없는 제품(점안액: 생균수 정상, 질량·용량을 개개 값으로 적음)이면 각주를 하나도 달지 않는다
+    # (올로원스 2026-09-10: notes 가 비었는데 notes[-1] 을 읽어 보고서 작성이 멈췄다).
     notes = []
+    bio_text = mass_text = None
     if odd_bio:
-        notes.append("%d) %s 조제(바이오버든) 공정 시험 성적서의 생균수 기재값은 “%s” 임. 원 기록의 단위 표기 확인 필요."
-                     % (note_bio, ", ".join(l for l, _ in odd_bio), odd_bio[0][1]))
+        bio_text = ("%s 조제(바이오버든) 공정 시험 성적서의 생균수 기재값은 “%s” 임. 원 기록의 단위 표기 확인 필요."
+                    % (", ".join(l for l, _ in odd_bio), odd_bio[0][1]))
+        notes.append("%d) %s" % (note_bio, bio_text))
         issues.append(("9.2.2", ", ".join(l for l, _ in odd_bio), "생균수 기재값이 다른 Lot 과 다름 — 원본 확인"))
     if note_mass:
-        notes.append("%d) %d년 완제 시험 성적서는 질량·용량 개개를 최솟값(···g 이상)으로만 기재하므로, 각 Lot 의 개개 최솟값으로 기재하였음."
-                     % (note_mass, year_from))
+        mass_text = ("%d년 완제 시험 성적서는 질량·용량 개개를 최솟값(···g 이상)으로만 기재하므로, 각 Lot 의 개개 최솟값으로 기재하였음."
+                     % year_from)
+        notes.append("%d) %s" % (note_mass, mass_text))
     for t in reversed(t91):
         for nt in reversed(notes):
             E.note_after(document, t, nt)
@@ -3291,13 +3337,13 @@ def fill(document, data, product, period, today=None, log=None):
     tabs92 = [t for t, _ in _d92.tables_92(document)]
     next_no = max(_note_numbers_under(document, "9.2") or [0]) + 1
     tb = _by_header(tabs92, "생균수")
-    if tb is not None and odd_bio:
-        E.note_after(document, tb, "%d) %s" % (next_no, notes[0].split(") ", 1)[1]))
+    if tb is not None and bio_text:
+        E.note_after(document, tb, "%d) %s" % (next_no, bio_text))
         _mark_header(tb, "생균수", next_no)
         next_no += 1
     tm = _by_header(tabs92, "질량", "기밀도") or _by_header(tabs92, "질량", "개개")
-    if tm is not None:
-        E.note_after(document, tm, "%d) %s" % (next_no, notes[-1].split(") ", 1)[1]))
+    if tm is not None and mass_text:
+        E.note_after(document, tm, "%d) %s" % (next_no, mass_text))
         _mark_header(tm, "개개", next_no)
 
     # ---------- 10항 ----------

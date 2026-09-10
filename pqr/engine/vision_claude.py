@@ -48,12 +48,12 @@ SCHEMA = {
                     "date_confidence": {"type": "number", "description": "0~1, 일자 판독 확신도"},
                     "assays": {
                         "type": "array",
-                        "description": "숫자로 적힌 시험항목 모두 — pH, 함량(성분이 둘이면 성분마다), 보존제, 삼투압, 비중 등. pH 는 반드시 담는다",
+                        "description": "시험항목 모두 — 숫자(pH, 함량(성분이 둘이면 성분마다), 보존제, 삼투압, 비중 등)와 글로 적힌 결과(유연물질 성분마다 '불검출'·'불검출(LOQ미만)', 무균 '음성'). pH 는 반드시 담는다. 같은 이름이 두 표(유연물질1·유연물질2)에 있으면 '유연물질1 기타 유연물질' 처럼 가른다",
                         "items": {
                             "type": "object",
                             "properties": {
                                 "name": {"type": "string", "description": "시험항목 이름 그대로 — 'pH'·'보존제'·성분 이름. 함량인데 성분 이름이 없으면 '함량'"},
-                                "value": {"type": "string", "description": "숫자 그대로 (예: 99.8). 없으면 빈 문자열"},
+                                "value": {"type": "string", "description": "숫자 그대로 (예: 99.8) 또는 글 그대로 ('불검출(LOQ미만)'). 없으면 빈 문자열"},
                                 "confidence": {"type": "number", "description": "0~1, 손글씨 판독 확신도"},
                             },
                             "required": ["name", "value", "confidence"],
@@ -76,9 +76,20 @@ SCHEMA = {
 PROMPT = (
     "이 이미지는 제약회사 안정성 시험 결과 기록지(손글씨 포함)입니다. 표의 머리(제품명·제조번호·시험구분·제조일자·"
     "사용기한·포장형태·보관조건)와, 시점(초기·3M·6M·9M·12M·18M·24M·36M)마다 시험일자 행·숫자로 적힌 시험항목 행(pH·함량·"
-    "보존제·삼투압 등 — pH 는 반드시)·결재 서명일 행을 읽어 JSON 으로 주세요. 고쳐 쓴 값(두 줄)은 나중 값을 씁니다. 사선으로 지워졌거나 비어 있는 시점은 tested=false 로 담습니다. "
+    "보존제·삼투압 등 — pH 는 반드시)·글로 적힌 시험항목 행(유연물질 성분마다 '불검출', 무균 '음성')·결재 서명일 행을 읽어 JSON 으로 주세요. 고쳐 쓴 값(두 줄)은 나중 값을 씁니다. 사선으로 지워졌거나 비어 있는 시점은 tested=false 로 담습니다. "
     "숫자는 보이는 그대로 적고, 지어내지 마세요. 확신이 낮으면 confidence 를 낮게 주고 uncertain 에 이유를 적으세요."
 )
+
+
+TEXT_RESULT = re.compile(r"^\s*(불검출|검출\s*안\s*됨|음성|적합|양성|N/?D|<\s*LOQ)", re.I)
+
+
+def text_result(value):
+    """글로 적힌 시험 결과('불검출(LOQ미만)', '음성')면 다듬은 글, 아니면 None."""
+    text = re.sub(r"\s+", " ", str(value or "")).strip()
+    if not text or not TEXT_RESULT.match(text):
+        return None
+    return re.sub(r"\s*([()（）])\s*", r"\1", text)
 
 
 def _client():
@@ -163,6 +174,11 @@ def to_log(rec, source, specs=None):
         for a in p.get("assays") or []:
             value = re.sub(r"[^\d.]", "", str(a.get("value") or ""))
             if not value:
+                word = text_result(a.get("value"))
+                if word:                                   # '불검출(LOQ미만)'·'음성' 은 글 그대로
+                    assays[_part(a.get("name"), specs)] = word
+                    if float(a.get("confidence") or 0) < LOW:
+                        unsure.append(_part(a.get("name"), specs))
                 continue
             part = _part(a.get("name"), specs)
             try:

@@ -58,11 +58,14 @@ class Claude가_읽은_시험항목(unittest.TestCase):
         from pqr.engine.claude_cli import _coa_items
         got = _coa_items({"items": [{"name": "제제균일성", "spec": "85.0 ~ 115.0%", "value": "102.4"},
                                     {"name": "확인시험", "spec": "", "value": "적합"},
-                                    {"name": "제제균일성", "spec": "", "value": "99.9"},   # 같은 이름은 하나만
+                                    {"name": "제제균일성", "spec": "", "value": "99.9"},   # 같은 이름은 '1)·2)' 로 따로
                                     {"name": "", "spec": "", "value": "x"}]})
         self.assertEqual(got["제제균일성"], {"spec": "85.0 ~ 115.0%", "value": "102.4"})
         self.assertEqual(got["확인시험"]["value"], "적합")
-        self.assertEqual(len(got), 2)
+        # 같은 이름의 둘째 줄은 버리지 않는다 (올로원스 2026-09-10: 유연물질 1·2 표)
+        self.assertEqual(got["제제균일성 1)"]["value"], "102.4")
+        self.assertEqual(got["제제균일성 2)"]["value"], "99.9")
+        self.assertEqual(len(got), 4)
 
     def test_items가_없어도_빈_사전(self):
         from pqr.engine.claude_cli import _coa_items

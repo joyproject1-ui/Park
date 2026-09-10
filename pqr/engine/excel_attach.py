@@ -473,7 +473,9 @@ def _is_blank_form(path):
         return False
 
 
-def _find_stability_form(folder, input_dir, product_dir=None):
+def _stability_form_candidates(folder, input_dir, product_dir=None):
+    """빈 경향 분석 서식(HLF-QC-126-06) 후보 — 제품 폴더 → 작성 폴더 → 입력 폴더 '서식' → 입력 폴더 → 프로그램 서식."""
+    out = []
     for base in (product_dir, folder, os.path.join(input_dir or "", "서식"), input_dir or "",
                  os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data")):
         if not base or not os.path.isdir(base):
@@ -481,10 +483,51 @@ def _find_stability_form(folder, input_dir, product_dir=None):
         found = [os.path.join(base, n) for n in sorted(os.listdir(base))
                  if n.lower().endswith(".xlsx") and not n.startswith("~$")
                  and ("12606" in n.replace("-", "") or "126-06" in n)]
-        blank = [p for p in found if _is_blank_form(p)]
-        if blank:
-            return blank[0]
-    return None
+        out += [p for p in found if _is_blank_form(p) and p not in out]
+    return out
+
+
+def _find_stability_form(folder, input_dir, product_dir=None):
+    found = _stability_form_candidates(folder, input_dir, product_dir)
+    return found[0] if found else None
+
+
+def _form_for_parts(form, parts, folder, data):
+    """서식에 시험항목 수만큼 시트가 없으면(제품 폴더 서식이 pH·함량·보존제 세 장인데 삼투압까지 네 항목)
+    시트가 더 많은 다른 서식을 고른다 — 모자라면 뒤 항목(보존제)이 통째로 빠지고 삼투압이 함량 시트에 실렸다
+    (올로원스 2026-09-10). 후보는 _stability_form_candidates 차례, 같은 점수면 앞엣것."""
+    need = [(p, it) for p, it, _lo, _hi, _ol in parts]
+
+    def score(path):
+        try:
+            names = stability_xlsx.sheet_names(path)
+            picks = pick_form_sheets(need, names)
+        except Exception:
+            return -1
+        # 항목마다 시트를 받았는가 + pH·삼투압·보존제가 제 이름 시트를 받았는가
+        got = len(picks)
+        same = sum(1 for (sheet, label) in picks if label in ("pH", "삼투압", "보존제") and sheet == label)
+        return got * 10 + same
+
+    best = form
+    try:
+        cur = score(form)
+        if cur < 0 or cur >= len(need) * 10 + sum(1 for p, it in need if p in ("pH", "삼투압", "보존제")):
+            return form                              # 못 여는 서식(시험의 가짜 경로)이거나 이미 넉넉하다
+        for cand in _stability_form_candidates(folder, getattr(data, "input_dir", None) or "",
+                                               getattr(data, "folder", None) or ""):
+            if cand != best and score(cand) > score(best):
+                best = cand
+    except Exception:
+        return form
+    if best != form:
+        try:
+            note = ("첨부 경향표: 서식 '%s' 는 시트가 모자라(%s) '%s' 서식으로 만들었습니다"
+                    % (os.path.basename(form), ", ".join(stability_xlsx.sheet_names(form)), os.path.basename(best)))
+            data.issues.append(("첨부", "", note))
+        except Exception:
+            pass
+    return best
 
 
 COL = {"Initial": "C", "초기": "C", "3M": "D", "6M": "E", "9M": "F", "12M": "G", "18M": "H", "24M": "I",
@@ -775,6 +818,7 @@ def _trend_file(form, folder, data, product, today, report_path, seed, logs, suf
         return []
 
     sheets, added = [], 0
+    form = _form_for_parts(form, parts, folder, data)
     try:
         picks = pick_form_sheets([(p, it) for p, it, _lo, _hi, _ol in parts], stability_xlsx.sheet_names(form))
     except Exception:
