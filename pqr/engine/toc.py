@@ -192,6 +192,42 @@ def fill_page_numbers(docx_path, log=None):
     if n:
         document.save(docx_path)
         log("목차 쪽 번호 %d개를 PDF 에서 세어 적었습니다" % n)
+    # 머리글 'Page n / 전체' 의 전체 쪽수도 **같은 PDF** 의 쪽수로 — 목차와 머리글이 서로 다른 계산에서
+    # 나오면 어긋난다 (담당자 2026-09-10: 목차는 22쪽까지인데 머리글은 '1 / 21').
+    if set_total_pages(docx_path, len(pages)):
+        log("머리글 전체 쪽수를 %d 로 맞췄습니다" % len(pages))
+    return n
+
+
+NUMPAGES_CACHE = re.compile(r'(<w:instrText[^>]*>\s*NUMPAGES\s*</w:instrText>.*?fldCharType="separate"/>'
+                            r'</w:r>.*?<w:t[^>]*>)([^<]*)(</w:t>)', re.S)
+
+
+def set_total_pages(docx_path, total):
+    """머리글·바닥글의 NUMPAGES 필드 캐시 값을 total 로 적는다 → 바꾼 필드 수.
+
+    Word 는 보통 열면서 이 값을 다시 세지만, 제한된 보기에서는 캐시가 그대로 보인다. 목차 쪽 번호와
+    같은 PDF 쪽수를 적어 두어 둘이 어긋나지 않게 한다.
+    """
+    import shutil
+    import tempfile
+    import zipfile
+    n = 0
+    tmp = tempfile.mktemp(suffix=".docx", prefix="pqr-np-")
+    with zipfile.ZipFile(docx_path) as src, zipfile.ZipFile(tmp, "w", zipfile.ZIP_DEFLATED) as dst:
+        for item in src.infolist():
+            data = src.read(item.filename)
+            if re.match(r"word/(header|footer)\d*\.xml$", item.filename):
+                xml = data.decode("utf-8")
+                xml, k = NUMPAGES_CACHE.subn(lambda m: m.group(1) + str(total) + m.group(3), xml)
+                if k:
+                    n += k
+                    data = xml.encode("utf-8")
+            dst.writestr(item, data)
+    if n:
+        shutil.move(tmp, docx_path)
+    else:
+        os.remove(tmp)
     return n
 
 

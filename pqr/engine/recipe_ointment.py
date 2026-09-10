@@ -835,6 +835,8 @@ def _drop_unit(value, lab):
     got = str(value or "").strip()
     if UNIT_PAREN.search(str(lab or "")) and re.match(r"^[\d.,~\s]+", got):
         got = UNIT_TAIL.sub("", got) or got
+        # '5.1mL이상' 처럼 단위 뒤에 이상·이하가 붙은 꼴 — 단위만 떼고 '5.1 이상' (퀴노비드 9.2.4 개개)
+        got = re.sub(r"(\d)\s*(?:mL|ml|㎖|g|mg|㎛|um|%)\s*(이상|이하|미만|초과)$", r"\1 \2", got)
     return got
 
 
@@ -2041,9 +2043,12 @@ def fill(document, data, product, period, today=None, log=None):
             group_fill(tbl, recs)
     t822 = _tables(document, "8.2.2")
     if t822 and data.pkg_tests:
-        tbl = t822[0]
-        base_rows = {E.cell_text(E.raw_cells(r)[1]).strip(): E.cell_text(E.raw_cells(r)[2]).strip()
-                     for r in tbl.rows[1:] if len(E.raw_cells(r)) > 2}
+        base_rows = {}
+        for tbl in t822:
+            for r in tbl.rows[1:]:
+                cs = E.raw_cells(r)
+                if len(cs) > 2 and E.cell_text(cs[1]).strip():
+                    base_rows.setdefault(E.cell_text(cs[1]).strip(), E.cell_text(cs[2]).strip())
         recs = []
         for code, test, ls in data.pkg_tests:
             ls = [x for x in ls if x in dom + exp]
@@ -2054,7 +2059,13 @@ def fill(document, data, product, period, today=None, log=None):
                 item = (base_rows.get(code) or _material_names_in_document(document).get(code)
                         or (getattr(data, "material_names", None) or {}).get(code) or "")
                 recs.append((code, item, test, ls))
-        group_fill(tbl, recs)                  # 1차 포장 자재도 같은 차림새다 (담당자 지적)
+        if len(t822) == 1:
+            group_fill(t822[0], recs)              # 1차 포장 자재도 같은 차림새다 (담당자 지적)
+        else:
+            # 자재마다 표가 따로인 서식(퀴노비드 2026: 8.2.2.1 PE병 / 8.2.2.2 점안액캡 / 8.2.2.3 노즐) — 예전에는
+            # 첫 표에만 모두 넣고 나머지 표는 전년도 Lot(EHX…)이 그대로 남았다(담당자 2026-09-10: "로트가
+            # 업데이트 안 됐어"). 표의 자재 코드(없으면 소제목의 자재명)로 그 표의 자재를 가려 채운다.
+            _fill_822_per_table(document, t822, recs, data, log, issues, group_fill)
 
     # ---------- 9항 ----------
     def spec_of(t91, words):
@@ -2504,13 +2515,16 @@ def fill(document, data, product, period, today=None, log=None):
                     # 9.1 표는 '합계' 라는 글 없이 줄만 갈라져 있다 — '개개' 가 아니면 합계 줄이다
                     return _plain(r924.get("metal_each") if "개개" in lab else r924.get("metal_total"))
                 if "질량" in lab or "용량" in lab:
-                    if "평균" in lab:
+                    # 전용 값(mass_avg·mass_each)이 있을 때만 — 없으면 아래 시험항목 표('질량·용량: 평균: 5.3mL,
+                    # 개개: 5.2mL 이상')로 내려간다 (퀴노비드 2026-09-10 검토: 포장 질량·용량 평균이 비거나 충전 값)
+                    if "평균" in lab and mine.get("mass_avg"):
                         return _plain(mine.get("mass_avg"))
-                    if "개개" in lab:
+                    if "개개" in lab and (mine.get("mass_each") or mine.get("mass_each_min")):
                         if "충전" in str(process or ""):
                             got = re.findall(r"\d+(?:\.\d+)?", str(mine.get("mass_each") or ""))
                             return (" ~ ".join(got[:2])) if len(got) >= 2 else _plain(mine.get("mass_each"))
-                        return ("%s 이상" % _plain(mine.get("mass_each_min"))) if mine.get("mass_each_min") else None
+                        if mine.get("mass_each_min"):
+                            return "%s 이상" % _plain(mine.get("mass_each_min"))
                 if "무균" in lab:
                     # 성적서 값만 쓴다. 예전에는 성적서에 없으면 **허용기준 글('음성(불검출)')을 결과처럼**
                     # 적었다 — 시험을 생략한 Lot 에 결과가 있는 것처럼 보였다(담당자 2026-09-09
@@ -2559,9 +2573,9 @@ def fill(document, data, product, period, today=None, log=None):
             # '==' 로 견주던 때는 충전·포장 pH 줄에 조제 성적서 값이 들어갔다(담당자 2026-09-10 나조린 9.1:
             # "충전 성적서 실측 범위는 6.38~6.48", "포장 성적서 pH 는 6.4~6.5").
             stage = next((s_ for s_ in D.STAGES if s_ in str(process or "")), "")
-            keys = ("921", "922", "923") if stage != "포장" else ("924",)
-            if stage == "충전":
-                keys = ("923", "921", "922")
+            # **그 공정의 성적서만** 본다 — 예전에는 포장 열이 924 에 없으면 충전(923)·조제 성적서까지 뒤져
+            # 포장 질량·용량 평균에 충전 값(5.21→5.2)이 들어갔다(퀴노비드 2026-09-10 검토 16~18·21).
+            keys = {"포장": ("924",), "충전": ("923",), "조제": ("921", "922")}.get(stage, ("921", "922", "923", "924"))
             # 열 이름에 성분이 붙어 있으면('확인(HPLC) 말레인산페니라민', '제제균일성 나파졸린염산염')
             # 성분을 떼고 항목 이름으로 찾고, 값이 '말레인산페니라민 : 3.0%, 나파졸린염산염 : 5.4%'
             # 처럼 성분별로 붙어 오면 그 성분 것만 뽑는다 (담당자 2026-09-09 나조린: 두 성분 칸에
@@ -2576,7 +2590,17 @@ def fill(document, data, product, period, today=None, log=None):
             # '확인(HPLC)' 처럼 괄호 안이 단위가 아닌 것은 _norm_item 이 남긴다 — 괄호를 다 뗀 꼴도 본다
             want2 = _norm_item(re.sub(r"[(（][^)）]*[)）]", "", re.sub(r"\d+\)", "", bare)))
 
+            납작lab = re.sub(r"\s+", "", lab)
+
             def _of_part(value):
+                # '평균: 5.3mL, 개개: 5.2mL 이상' 처럼 갈래가 붙어 온 값은 열 이름의 갈래(평균·개개)만 뽑는다
+                # (퀴노비드 2026-09-10: 9.2.4 질량·용량 평균에 개개 값이 들어갔다)
+                for sub in ("평균", "개개", "합계", "최소", "최대"):
+                    if sub in 납작lab:
+                        m_ = re.search(sub + r"\s*[:：]\s*([^,，;；]+)", re.sub(r"\s+", "", value))
+                        if m_:
+                            value = m_.group(1).strip()
+                            break
                 if not part:
                     return value
                 m = re.search(re.escape(re.sub(r"\s+", "", part)) + r"\s*[:：]\s*([^,，;；]+)",
@@ -2592,7 +2616,7 @@ def fill(document, data, product, period, today=None, log=None):
             if crit:
                 crit_flat = _norm_item(D.PREFIX.sub("", crit))
                 best = None
-                for key in keys + ("924", "923", "922", "921"):
+                for key in keys:
                     for name, one in (rec(lot, key).get("items") or {}).items():
                         m = re.match(r"^(.+?)\s+\d+\)$", name)
                         if not m or _norm_item(m.group(1)) not in (want, want2):
@@ -2609,15 +2633,49 @@ def fill(document, data, product, period, today=None, log=None):
                         break
                 if best is not None and best[0] >= 4 and best[1]:
                     return _drop_unit(_of_part(best[1]), lab)
-            for key in keys + ("924", "923", "922", "921"):
+            확인열 = "확인" in 납작lab
+            if 확인열:
+                # 확인 시험 열은 갈래(TLC·HPLC·보존제)마다 성적서의 확인시험 줄이 다르다 (퀴노비드 2026-09-10:
+                # '확인 보존제' 칸에 보존제 함량이 들어갔다). 줄의 기준·결과 글로 갈래를 고른다.
+                cands = []
+                for key in keys:
+                    for name, one in (rec(lot, key).get("items") or {}).items():
+                        if "확인" in _norm_item(name) and (one.get("value") or "").strip():
+                            cands.append((name, one.get("spec") or "", (one.get("value") or "").strip()))
+                if cands:
+                    보존 = lambda t: any(w in t for w in ("벤잘코늄", "염화벤잘코늄", "보존제", "클로르헥시딘"))
+                    if "tlc" in 납작lab.lower() or "박층" in 납작lab:
+                        pick = [c for c in cands if re.search(r"Rf|반점", c[1] + c[2])]
+                    elif "보존제" in 납작lab or any(보존(re.sub(r"\s+", "", p)) for p in parts if p and re.sub(r"\s+", "", p) in 납작lab):
+                        pick = [c for c in cands if 보존(c[1]) or 보존(c[0])]
+                    elif "hplc" in 납작lab.lower() or "유지시간" in 납작lab:
+                        pick = [c for c in cands if re.search(r"유지\s*시간|피크", c[1] + c[2]) and not 보존(c[1])]
+                    else:
+                        pick = cands
+                    if pick:
+                        return pick[0][2]
+                    return None
+            # 같은 시험의 다른 이름 — 서식은 '불용성 이물', 충전 성적서는 '이물검사' (퀴노비드 2026-09-10)
+            ALIAS = {"불용성이물": ("이물검사",), "이물검사": ("불용성이물",), "무균": ("무균시험",),
+                     "생균수": ("바이오버든",), "바이오버든": ("생균수",)}
+            wants = [w for w in (want, want2) if w]
+            for w in list(wants):
+                for a, bs in ALIAS.items():
+                    if w == a:
+                        wants += list(bs)
+            for key in keys:
                 for name, one in (rec(lot, key).get("items") or {}).items():
                     flat = _norm_item(name)
                     value = (one.get("value") or "").strip()
                     if not flat or not value or value == "N/A":
                         continue
-                    if flat == want or (want2 and flat == want2):
+                    if 확인열 and "확인" not in flat:
+                        # 확인 시험 열('확인 보존제')에는 확인 시험 줄만 — 보존제 함량(86.9%)이 들어갔다
+                        # (퀴노비드 2026-09-10 검토 20)
+                        continue
+                    if flat in wants:
                         return _drop_unit(_of_part(value), lab)
-                    if ((flat in want or want in flat or (want2 and (flat in want2 or want2 in flat)))
+                    if (any(flat in w or w in flat for w in wants)
                             and (찾은것 is None or len(flat) > len(찾은것[0]))):
                         찾은것 = (flat, value)
             return _drop_unit(_of_part(찾은것[1]), lab) if 찾은것 else None
@@ -3944,6 +4002,10 @@ def _fill_133_table(table, groups, spec, _trim, marks=None, issues=None):
     if not parts:
         return 0
     width = len(labels)
+    # 판독에 없는 열(빈열)은 **비우고 사선** — 공양식이 전년도 결재본을 그대로 복사한 것이면 옛 값이 남아
+    # 다른 해의 값이 그 줄에 붙는다 (퀴노비드 2026-09-10 검토: '시판 후 (2022)' pH 6.34~6.43 은 EHU701 값)
+    빈열_idx = [k for k, name in enumerate(labels)
+              if k >= first_value_col and name and "시험항목" not in name and k not in dict(parts)]
     heads = [i for i, tr in enumerate(table._tbl.findall(qn("w:tr")))
              if D.squeeze(_text(tr.findall(qn("w:tc"))[0])).startswith(("관리규격", "최소", "최대", "경향"))]
     first = next((i for i, r in enumerate(table.rows)
@@ -4001,6 +4063,10 @@ def _fill_133_table(table, groups, spec, _trim, marks=None, issues=None):
                 E.set_cell(cells[1], year_mark)
                 E.set_vmerge(cells[1], False)
         notes.append((label, year_mark, one["lot"]))
+        for k in 빈열_idx:
+            if cells.get(k) is not None:
+                E.set_cell(cells[k], "")
+                E.add_diag(cells[k])
         for k, part in parts:
             if cells.get(k) is None:
                 continue
@@ -4041,7 +4107,10 @@ def _fill_133_table(table, groups, spec, _trim, marks=None, issues=None):
             if got:
                 values[k] += got
                 guessed[k].update(float(p["assays"][part]) for p in shaky if p["assays"].get(part) is not None)
-                tk = trims[k]
+                # 줄마다 그 줄 값의 자릿수로 — 한 Lot 이 6.35 라고 다른 해까지 6.40 으로 늘리지 않는다
+                # (2025 결재본 13.3: '6.34 ~ 6.43' 과 '6.4 ~ 6.5' 가 나란히; 담당자: "소수점은 성적서대로")
+                _d = max([len(str(x).split(".")[1].rstrip("0")) for x in raw if "." in str(x)] or [0])
+                tk = (lambda v, d=_d: ("%%.%df" % d) % float(v))
                 # '불검출' 이 섞여 있으면 그것이 아래쪽 끝이다 — '불검출 ~ 0.16'
                 아래 = (max(set(words), key=words.count) if words else tk(min(got)))
                 E.set_cell(cells[k], "%s ~ %s" % (아래, tk(max(got)))
@@ -4054,6 +4123,10 @@ def _fill_133_table(table, groups, spec, _trim, marks=None, issues=None):
     for ri in heads:
         cells = _grid_cells_of(table.rows[ri], width)
         head = D.squeeze(E.cell_text(cells[0])) if cells.get(0) is not None else ""
+        for k in 빈열_idx:
+            if cells.get(k) is not None and "관리규격" not in head:
+                E.set_cell(cells[k], "")
+                E.add_diag(cells[k])
         for k, part in parts:
             if cells.get(k) is None:
                 continue
@@ -4080,8 +4153,8 @@ def _fill_133_table(table, groups, spec, _trim, marks=None, issues=None):
                 lo_hi = re.findall(r"\d+(?:\.\d+)?", spec.get(part, ""))
                 ok = len(lo_hi) < 2 or (float(lo_hi[0]) <= min(values[k]) and max(values[k]) <= float(lo_hi[1]))
                 E.set_cell(cells[k], "적합" if ok else "부적합")
-    for ri in bold_rows:                          # 관리 규격은 보통 글씨 (담당자 2026-09: "굵게 처리 하지 않음")
-        E.unbold_row(table, ri)
+    for ri in bold_rows:                          # 관리 규격은 굵은 글씨 (담당자 2026-09-10: "관리 규격은 굵은 글씨로")
+        E.bold_row(table, ri, first_col=0)
     _note_133_lots(table, notes)
     return len(groups)
 
@@ -4106,6 +4179,54 @@ def _note_133_lots(table, notes):
     kept = [l for l in E.cell_text(cell).split("\n")[1:]
             if l.strip() and l.strip() != "N/A" and not l.strip().startswith(LOT_NOTE)]
     E.set_cell_plain(cell, "특이사항 (Comment)", *(kept + [line]))
+
+
+def _fill_822_per_table(document, tables, recs, data, log, issues, group_fill):
+    """8.2.2 표가 자재마다 따로일 때 — 표마다 그 자재의 기록만 채운다."""
+    from .locate import headings_of_tables
+    names_doc = _material_names_in_document(document)
+    names_erp = getattr(data, "material_names", None) or {}
+    heads = headings_of_tables(document)
+    index_of = {t._tbl: i for i, t in enumerate(document.tables)}
+    used = set()
+    for tbl in tables:
+        codes = set()
+        for r in tbl.rows[1:]:
+            cs = E.raw_cells(r)
+            if len(cs) > 2:
+                code = E.cell_text(cs[1]).strip()
+                if re.match(r"^[A-Z]{1,3}\d{3,6}$", code):
+                    codes.add(code)
+        if not codes:
+            # 코드 칸이 비어 있으면 소제목('8.2.2.2 점안액캡')의 이름으로 자재 코드를 찾는다
+            title = ""
+            for head in heads.get(index_of.get(tbl._tbl, -1), []):
+                m = re.match(r"^\s*8\.2\.2\.\d+\.?\s*(.+)$", head)
+                if m:
+                    title = re.sub(r"\s+", "", m.group(1))
+            if title:
+                for code, name in list(names_doc.items()) + list(names_erp.items()):
+                    if name and (title in re.sub(r"\s+", "", name) or re.sub(r"\s+", "", name) in title):
+                        codes.add(code)
+        mine = [r for r in recs if r[0] in codes and r[0] not in used]
+        if mine:
+            group_fill(tbl, mine)
+            used.update(r[0] for r in mine)
+            log("  8.2.2 표(%s): %d줄" % ("·".join(sorted(codes)), sum(len(r[3]) for r in mine)))
+        else:
+            # 올해 기록이 없는 자재 — 전년도 Lot 이 남지 않게 줄을 비우고 사선, 문의
+            f, l = E.fit_rows(tbl, 1, len(tbl.rows) - 1, 1)
+            cs = E.raw_cells(tbl.rows[f])
+            for c in cs:
+                E.set_cell(c, "")
+                E.set_vmerge(c, False)
+                E.add_diag(c)
+            issues.append(("8.2.2", "·".join(sorted(codes)) or "(코드 없음)",
+                           "이 자재의 올해 시험 기록(8.2.2 ERP)이 없어 표를 비웠습니다 — ERP 표를 올리거나 자재 코드를 확인하세요"))
+    left = [r for r in recs if r[0] not in used]
+    if left:
+        issues.append(("8.2.2", ", ".join(sorted({r[0] for r in left})),
+                       "ERP 에 기록이 있는데 이 자재의 표가 8.2.2 에 없어 적지 못했습니다 — 표를 더 만들어 주세요"))
 
 
 def _heading_material_name(document, table):
@@ -4151,7 +4272,7 @@ def _declared_lots(table):
 OUTLIER_GAP = 3.0        # 같은 시험 구분·같은 시점의 어느 다른 Lot 과도 이만큼(%) 넘게 다르면 판독 의심
 
 
-def _flag_outliers(logs, issues, log):
+def _flag_outliers(logs, issues, log, spec=None):
     """손글씨 판독값이 같은 시점의 다른 Lot 과 크게 다르면 '애매함' 으로 올린다 → 표시한 수.
 
     나조린 LKY401 6M 말레인산페니라민이 107.0 으로 읽혔는데 스캔은 103.0 이었다(LKY402 103.4·LKY403 102.9) —
@@ -4159,19 +4280,36 @@ def _flag_outliers(logs, issues, log):
     """
     n = 0
     groups = {}
+    # 같은 시험 구분·**같은 제조 연도**(형제 Lot)·같은 시점끼리만 견준다 — 해가 다른 시판 후 Lot 끼리는 원래 다르다
     for one in logs or []:
         for p in one.get("points") or []:
             for name, v in (p.get("assays") or {}).items():
                 if isinstance(v, (int, float)) and "pH" not in str(name):
-                    groups.setdefault((one.get("kind"), one.get("market"), p.get("period"), name), []).append((one, p, float(v)))
-    for (kind, market, period, name), items in groups.items():
+                    groups.setdefault((one.get("kind"), one.get("market"), one.get("year"), p.get("period"), name),
+                                      []).append((one, p, float(v)))
+
+    def gap_of(name):
+        # 허용 폭이 넓은 항목(보존제 80~120)은 그만큼 느슨하게 — 규격 폭의 15%, 최소 3%
+        sp = spec or {}
+        text = sp.get(name) or ""
+        if not text and name == "함량" and len(sp) == 1:
+            text = next(iter(sp.values()))
+        if not text:
+            text = next((v for k, v in sp.items() if k and (k in name or name in k)), "")
+        nums = [float(x) for x in re.findall(r"\d+(?:\.\d+)?", str(text))]
+        if len(nums) >= 2:
+            return max(OUTLIER_GAP, 0.15 * (nums[1] - nums[0]))
+        return 6.0 if "보존제" in str(name) else OUTLIER_GAP          # 보존제 규격은 대개 80~120
+
+    for (kind, market, year, period, name), items in groups.items():
         if len(items) < 2:
             continue
+        gap = gap_of(name)
         for one, p, v in items:
             others = sorted(x for o_, p_, x in items if p_ is not p)
             if not others:
                 continue
-            if min(abs(v - x) for x in others) > OUTLIER_GAP:      # 어느 Lot 과도 3% 넘게 다르다
+            if min(abs(v - x) for x in others) > gap:              # 어느 형제 Lot 과도 크게 다르다
                 un = p.setdefault("unsure", [])
                 if name not in un:
                     un.append(name)
@@ -4224,7 +4362,7 @@ def _fill_stability26(document, logs, period, spec, log, issues, why_of=None, pr
         years = years_of(point)
         return (not year_to) or (year_to in years)
 
-    _flag_outliers(logs, issues, log)
+    _flag_outliers(logs, issues, log, spec)
 
     def split(some):
         rows, trend = [], []
@@ -4665,7 +4803,7 @@ def _carry_133(document, grid, source):
         if 옛 is None:
             continue
         if 머리 == "관리규격":
-            E.unbold_row(table, ri)               # 담당자 2026-09: 관리 규격은 굵게 하지 않는다
+            E.bold_row(table, ri, first_col=0)    # 담당자 2026-09-10: 관리 규격은 굵은 글씨
         cells = E.grid_cells(row, width)
         for name, i in 새성분.items():
             j = 옛성분.get(name)

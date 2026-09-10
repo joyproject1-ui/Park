@@ -420,7 +420,19 @@ def item_matcher(items):
         if token in ranged:
             return ranged[token]
         deeper = [item_id for item_id in exact if item_id.startswith(token + ".")]
-        return deeper[0] if len(deeper) == 1 else None
+        if len(deeper) == 1:
+            return deeper[0]
+        # 항보다 한 단계 더 깊은 번호('8.2.2.1 P12060 …' — 보고서의 8.2.2.1 PE병 소항)는 그 위 항(8.2.2)으로
+        # (퀴노비드 2026-09-10: 자재마다 8.2.2.1·8.2.2.2·8.2.2.3 으로 이름 붙인 ERP 표가 어느 항에도 들지 않아
+        # 8.2.2 표가 전년도 Lot 그대로 남았다 — "로트가 업데이트 안 됐어")
+        up = token
+        while "." in up:
+            up = up.rsplit(".", 1)[0]
+            if up in exact:
+                return up
+            if up in ranged:
+                return ranged[up]
+        return None
 
     return match
 

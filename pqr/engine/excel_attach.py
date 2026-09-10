@@ -632,7 +632,7 @@ def pick_form_sheets(parts, names):
         if pick is None:
             break
         used.add(pick)
-        label = kind if kind else "함량(%s)" % part
+        label = kind if kind else ("함량" if part == "함량" else "함량(%s)" % part)
         if kind == "보존제" and part and part != "보존제":
             label = "보존제(%s)" % part
         out.append((pick, label))
@@ -739,18 +739,27 @@ def _trend_file(form, folder, data, product, today, report_path, seed, logs, suf
             for k, v in (pt.get("assays") or {}).items():
                 if _num(v) is not None and k not in keys:
                     keys.append(k)
+    main_parts = [k for k in limits if k not in ("pH", "삼투압", "보존제")
+                  and not any(w in k for w in ("벤잘코늄", "염화벤잘코늄", "보존제"))]
     for key in keys:
         kind = key if key in ("pH", "삼투압", "보존제") else None
         # 함량 성분은 이름이 **같아야** 한다 — '제제균일성 말레인산페니라민' 을 함량으로 잘못 잡지 않게
         flat = re.sub(r"[\s()（）·∙]", "", key)
         lim = limits.get(next((k for k in limits if re.sub(r"[\s()（）·∙]", "", k) == flat), ""))
+        title = None
+        if key == "함량" and lim is None:
+            # 주성분이 하나인 제품의 판독 열쇠 '함량'(collect.normalize_stability_keys) — 그 성분의 규격,
+            # 시트 이름은 지난 경향표대로 '함량' (퀴노비드 2026-09-10: 함량 시트가 통째로 빠졌다)
+            if len(main_parts) == 1:
+                lim = limits.get(main_parts[0])
+            title = "함량"
         if kind is None and lim is None:
             continue
         lo, hi = lim or (None, None)
-        if kind and lim is None:
+        if (kind or title) and lim is None:
             sh = next((x for x in seed if trend_reader.component_of(x.get("item")) == key), None)
             lo, hi = (sh.get("lcl"), sh.get("ucl")) if sh else (None, None)
-        parts.append((key, key if kind else "함량 - %s(%%)" % key, lo, hi, []))
+        parts.append((key, title or (key if kind else "함량 - %s(%%)" % key), lo, hi, []))
     if not parts:                                 # 지난 경향표가 없는 첫해 — 성적서·시험일지에서
         names = list(limits)
         if not names:

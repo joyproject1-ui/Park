@@ -48,11 +48,11 @@ SCHEMA = {
                     "date_confidence": {"type": "number", "description": "0~1, 일자 판독 확신도"},
                     "assays": {
                         "type": "array",
-                        "description": "함량 등 숫자 결과. 성분이 둘이면 둘 다 담는다",
+                        "description": "숫자로 적힌 시험항목 모두 — pH, 함량(성분이 둘이면 성분마다), 보존제, 삼투압, 비중 등. pH 는 반드시 담는다",
                         "items": {
                             "type": "object",
                             "properties": {
-                                "name": {"type": "string", "description": "성분 이름. 표에 없으면 '함량'"},
+                                "name": {"type": "string", "description": "시험항목 이름 그대로 — 'pH'·'보존제'·성분 이름. 함량인데 성분 이름이 없으면 '함량'"},
                                 "value": {"type": "string", "description": "숫자 그대로 (예: 99.8). 없으면 빈 문자열"},
                                 "confidence": {"type": "number", "description": "0~1, 손글씨 판독 확신도"},
                             },
@@ -75,8 +75,8 @@ SCHEMA = {
 
 PROMPT = (
     "이 이미지는 제약회사 안정성 시험 결과 기록지(손글씨 포함)입니다. 표의 머리(제품명·제조번호·시험구분·제조일자·"
-    "사용기한·포장형태·보관조건)와, 시점(초기·3M·6M·9M·12M·18M·24M·36M)마다 시험일자 행·함량(%) 행·결재 서명일 행을 "
-    "읽어 JSON 으로 주세요. 사선으로 지워졌거나 비어 있는 시점은 tested=false 로 담습니다. "
+    "사용기한·포장형태·보관조건)와, 시점(초기·3M·6M·9M·12M·18M·24M·36M)마다 시험일자 행·숫자로 적힌 시험항목 행(pH·함량·"
+    "보존제·삼투압 등 — pH 는 반드시)·결재 서명일 행을 읽어 JSON 으로 주세요. 고쳐 쓴 값(두 줄)은 나중 값을 씁니다. 사선으로 지워졌거나 비어 있는 시점은 tested=false 로 담습니다. "
     "숫자는 보이는 그대로 적고, 지어내지 마세요. 확신이 낮으면 confidence 를 낮게 주고 uncertain 에 이유를 적으세요."
 )
 
@@ -322,6 +322,9 @@ COA_PROMPT = """이 시험성적서(스캔 이미지)를 읽고 JSON 만 출력�
   불용성미립자·불용성이물·질량·용량·기밀도·pH·삼투압·비중처럼 표에 있는 항목을 하나도
   빠뜨리지 말고 적습니다. "name" 은 표에 적힌 항목 이름 그대로, "spec" 은 기준 칸,
   "value" 는 결과 칸입니다.
+· 확인시험처럼 한 항목에 줄이 여럿(TLC·HPLC·보존제)이면 "확인시험 1)", "확인시험 2)", "확인시험 3)" 으로 줄마다
+  따로 적고, 기준 칸의 머리말(보존제 : …)을 그대로 둡니다. 질량·용량처럼 '평균: 5.3mL, 개개: 5.2mL 이상' 으로
+  갈래가 있는 값은 그 글 그대로 적습니다.
 · "sterility" 는 무균 시험(무균 | 음성) 결과, "bioburden" 은 생균수·바이오버든(CFU 숫자) 결과입니다 —
   둘을 바꿔 적지 않습니다. 무균 줄도 "items" 에 반드시 넣습니다.
 · 숫자는 단위를 빼고 숫자만 적습니다."""
@@ -400,6 +403,15 @@ def read_coa(path, log=None, pages=3):
         # 여기에 있다. 함량만 받아 오면 9.2 표의 그 열이 통째로 빈다(담당자 2026-09-08).
         for one in got.get("items") or []:
             name = str((one or {}).get("name") or "").strip()
+            if name and name in out["items"] and not re.search(r"\d+\)$", name):
+                # 같은 이름의 줄이 여럿(확인시험 TLC·HPLC·보존제) — '확인시험 2)' 로 따로 둔다. 예전에는 뒤 줄이
+                # 버려져 9.2.4 확인 HPLC·보존제 칸이 비었다 (퀴노비드 2026-09-10)
+                k = 2
+                while "%s %d)" % (name, k) in out["items"]:
+                    k += 1
+                if "%s 1)" % name not in out["items"]:
+                    out["items"]["%s 1)" % name] = dict(out["items"][name])
+                name = "%s %d)" % (name, k)
             if name and name not in out["items"]:
                 out["items"][name] = {"spec": str(one.get("spec") or "").strip(),
                                       "value": str(one.get("value") or "").strip()}

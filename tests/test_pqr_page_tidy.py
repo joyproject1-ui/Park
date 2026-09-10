@@ -128,3 +128,18 @@ class 제목_뒤_쪽_나눔(unittest.TestCase):
         self.assertEqual(E.drop_break_after_headings(d), 1)
         self.assertIsNone(body._p.pPr.find(qn("w:pageBreakBefore")))
         self.assertIsNotNone(late._p.pPr.find(qn("w:pageBreakBefore")))   # 제목 뒤가 아닌 것은 그대로
+
+
+class 머리글전체쪽수(unittest.TestCase):
+    """목차 쪽 번호와 머리글 'Page n / 전체' 는 같은 PDF 쪽수에서 (담당자 2026-09-10: 목차 22쪽, 머리글 '1 / 21')."""
+
+    def test_NUMPAGES_캐시를_적는다(self):
+        import re as _re
+        from pqr.engine import toc as T
+        xml = ('<w:r><w:instrText xml:space="preserve"> NUMPAGES </w:instrText></w:r>'
+               '<w:r><w:fldChar w:fldCharType="separate"/></w:r><w:r><w:t>#</w:t></w:r>'
+               '<w:r><w:fldChar w:fldCharType="end"/></w:r>')
+        out, k = T.NUMPAGES_CACHE.subn(lambda m: m.group(1) + "22" + m.group(3), xml)
+        self.assertEqual(k, 1)
+        self.assertIn("<w:t>22</w:t>", out)
+        self.assertNotIn("#", _re.sub(r"<[^>]+>", "", out))

@@ -2751,3 +2751,72 @@ def copy_diag_line(src_table, dst_table):
     for cell in cells:                       # 칸마다 그은 사선은 지운다 — 선 하나만 보이게
         clear_diag(cell)
     return True
+
+
+# ---------- 18 첨부 문서 ----------
+ATTACH_WORDS = (("HLF-QC-126-06", ("HLF-QC-126-06", "경향 분석 결과", "경향분석결과")),
+                ("HLF-QC-126-08", ("HLF-QC-126-08",)),
+                ("HLF-QC-126-09", ("HLF-QC-126-09",)))
+
+
+def sync_attachment_list(document, attachment_names, log=None):
+    """'18. 첨부 문서' 의 줄을 **실제로 PQR 작성본 폴더에 함께 저장된 파일**에 맞춘다 → (지운 줄, 더한 줄).
+
+    담당자 2026-09-10 퀴노비드: "첨부문서의 안정성 시험 결과표는 … 경향 분석 결과(HLF-QC-126-06)만 첨부되었어 —
+    PQR 생성 폴더에 본문과 함께 저장된 파일을 기재하면 돼". 안정성 시험 결과표(HLF-QC-104-01·-22)처럼 만들지 않은
+    파일 줄은 지우고, 만든 파일(경향 분석 결과·Cpk 경향분석 Sheet)의 줄이 없으면 더한다.
+    """
+    import copy as _copy
+    log = log or (lambda *a: None)
+    head = None
+    for p in document.paragraphs:
+        if re.match(r"^\s*18\.\s*첨부", p.text):
+            head = p._p
+            break
+    if head is None:
+        return 0, 0
+    names = [str(n) for n in attachment_names or []]
+    have = {code: any(code in n for n in names) for code, _ in ATTACH_WORDS}
+    lines, node = [], head.getnext()
+    while node is not None and node.tag == qn("w:p"):
+        text = "".join(t.text or "" for t in node.iter(qn("w:t"))).strip()
+        if re.match(r"^\s*\d{1,2}\.", text):
+            break
+        if text.startswith("-"):
+            lines.append((node, text))
+        node = node.getnext()
+    removed = added = 0
+    template = lines[0][0] if lines else None
+    for node, text in lines:
+        code = next((c for c, words in ATTACH_WORDS if any(w in text for w in words)), None)
+        if code is None:
+            # 안정성 시험 결과표(HLF-QC-104-…)처럼 프로그램이 만들지 않는 첨부 — 폴더에 없으면 지운다
+            if "HLF-QC-104" in text or "결과표" in text:
+                node.getparent().remove(node)
+                removed += 1
+            continue
+        if not have.get(code):
+            node.getparent().remove(node)
+            removed += 1
+    wanted = [("HLF-QC-126-06", "- 안정성 시험 경향 분석 결과(HLF-QC-126-06)"),
+              ("HLF-QC-126-08", "- 제품품질평가 경향분석 Sheet(한쪽 규격 용)(HLF-QC-126-08)"),
+              ("HLF-QC-126-09", "- 제품품질평가 경향분석 Sheet(양쪽 규격 용)(HLF-QC-126-09)")]
+    present = [t for n, t in lines if n.getparent() is not None]
+    last = head
+    for n, _t in lines:
+        if n.getparent() is not None:
+            last = n
+    for code, text in wanted:
+        if have.get(code) and not any(code in t for t in present) and template is not None:
+            new = _copy.deepcopy(template)
+            for r in new.findall(qn("w:r"))[1:]:
+                new.remove(r)
+            for t in new.iter(qn("w:t")):
+                t.text = text
+                t.set(qn("xml:space"), "preserve")
+            last.addnext(new)
+            last = new
+            added += 1
+    if removed or added:
+        log("18항 첨부 문서: 폴더에 없는 줄 %d개 지우고 %d개 더함 — %s" % (removed, added, ", ".join(names) or "첨부 없음"))
+    return removed, added
