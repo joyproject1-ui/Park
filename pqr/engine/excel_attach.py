@@ -263,6 +263,7 @@ def cpk_jobs_from_sheets(input_dir, data, lots, product_name=""):
             cells.update(_spec_cells(distinct[-1], info["sided"]))
         jobs.append({"src": src, "name": out_name, "label": label, "values": values, "cells": cells,
                      "sided": info["sided"], "prefix": info["prefix"],
+                     "stage": stage, "item": item, "part": part,
                      "spec_note": (" → ".join(distinct)) if len(distinct) > 1 else ""})
     return jobs
 

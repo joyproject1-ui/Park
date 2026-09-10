@@ -96,6 +96,10 @@ def low_cpk_items(cpk):
                 if "/" in full:
                     name = "%s(%s)" % (name, full.split("/", 1)[1])
                 out.append((name, v))
+    # 16번 경향분석 Sheet 항목('item/조제 pH')은 이름 그대로 — 함량·입자도·금속성이물 뒤에
+    for full, v in cpk.items():
+        if full.startswith("item/") and v is not None and v < 1:
+            out.append((full[len("item/"):], v))
     return out
 
 

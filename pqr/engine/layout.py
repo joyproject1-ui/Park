@@ -196,6 +196,9 @@ def apply(document, log=None, product_title=None, edms=None):
     log("빈 줄 정리(한 줄만 남김): %d" % gone)
     log("빈 블록 가로지르는 선: %d" % sum(E.draw_block_line(T[ti], a, b) for ti, (a, b) in empty_blocks.items()))
     no_diag = set(empty_blocks)
+    # 서식에 남은 '이어짐' 흔적(위 칸은 병합이 아닌데 아래 빈 칸만 이어짐)을 먼저 낱칸으로 되돌려야
+    # 아래 요약 사선·빈 칸 사선이 그 칸을 건너뛰지 않는다 (나조린 9.2.2 pH 'Cpk 판정 결과' 칸).
+    log("떠 있는 세로 병합 해제: %d" % E.unmerge_stray_vmerge(document, skip=set(fixed_tables) | {toc}))
     log("비고 사선: %d" % sum(E.diag_empty_remarks(t) for ti, t in enumerate(T) if ti not in no_diag))
     slash = 0
     for ti in _tables_under(document, ("9.2",)):

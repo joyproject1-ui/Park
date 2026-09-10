@@ -79,6 +79,54 @@ def cpk_bi(vals, lsl, usl):
     return min((usl - m) / (3 * s), (m - lsl) / (3 * s)) if s else None
 
 
+def cpk_lo(vals, lsl):
+    """아래 한쪽 규격('90% 이상')의 Cpk."""
+    if lsl is None or not vals:
+        return None
+    m = sum(vals) / len(vals)
+    s = statistics.stdev(vals) if len(vals) > 1 else 0
+    return (m - lsl) / (3 * s) if s else None
+
+
+def cpk_from_sheet(vals, job):
+    """16번 경향분석 Sheet 한 장(job)의 규격으로 Cpk — 양쪽 규격(‑09)은 N6·P6, 한쪽 규격(‑08)은 P6(이하)
+    또는 N6(이상). 규격을 못 읽었거나 값이 모두 같아 표준편차가 0 이면 None."""
+    cells = job.get("cells") or {}
+    lo, hi = cells.get("N6"), cells.get("P6")
+    if job.get("sided") == "Bilateral" and lo is not None and hi is not None:
+        return cpk_bi(vals, lo, hi)
+    if hi is not None:
+        return cpk_uni(vals, hi)
+    if lo is not None:
+        return cpk_lo(vals, lo)
+    return None
+
+
+def sheet_job_for(jobs, process, lab):
+    """9.2 표의 열(공정·머리글)에 맞는 16번 경향분석 Sheet 일감 — 없으면 None.
+
+    나조린 2025 결재본은 조제 pH·비중, 충전 pH, 포장 pH·함량×2·제제균일성×2 에 Cpk 를 적었고,
+    그 항목마다 16번 Sheet 가 있다. 2026-09-10 작성본은 pH·비중·제제균일성 Cpk 칸을 모두 사선으로
+    남겼다(코드가 함량·입자도·금속성이물만 셈) — 회사가 Sheet 를 내는 항목은 본문에도 Cpk 를 적는다.
+    성분이 붙은 열('함량(%) 말레인산페니라민')은 같은 성분의 Sheet 만 맞춘다.
+    """
+    from .excel_attach import _norm
+    flat = _norm(re.sub(r"\d+\)", "", lab or ""))          # 각주 번호('비중1)')는 뗀다
+    best = None
+    for job in jobs or []:
+        if job.get("stage") != process:
+            continue
+        item, part = _norm(job.get("item")), _norm(job.get("part"))
+        if not item or item not in flat:
+            continue
+        if part and part not in flat:
+            continue
+        score = len(item) + (len(part) if part else 0)
+        if best is None or score > best[0]:
+            best = (score, job)
+    return best[1] if best else None
+
+
 def _tables(document, prefix):
     return [document.tables[i] for i in find_tables(document, prefix)]
 
@@ -2189,6 +2237,13 @@ def fill(document, data, product, period, today=None, log=None):
                             for a in (rec(lot, "924").get("assays") or []) if a.get("part")})
         found = {}
         prior = prior or {}
+        sheet_jobs = []
+        if qc.cpk_applies(len(lots)):
+            try:
+                from .excel_attach import cpk_jobs_from_sheets
+                sheet_jobs = cpk_jobs_from_sheets(getattr(data, "folder", "") or "", data, lots)
+            except Exception as error:                    # Sheet 를 못 읽어도 본문 작성은 계속한다
+                log("  9.2 Cpk: 16번 경향분석 Sheet 를 읽지 못함 — %s" % error)
 
         def maker(process):
             def value(lab, lot, i, crit=None):
@@ -2375,12 +2430,23 @@ def fill(document, data, product, period, today=None, log=None):
                         찾은것 = (flat, value)
             return _drop_unit(_of_part(찾은것[1]), lab) if 찾은것 else None
 
-        def cpk_of(lab, texts):
+        def cpk_of(lab, texts, process=""):
             if not qc.cpk_applies(len(lots)):
                 return None
             vals = [float(x) for x in (_num(t) for t in texts) if x is not None]
             if len(vals) != len(texts):
                 return None
+            job = sheet_job_for(sheet_jobs, process, lab) if process else None
+            if job is not None and "함량" not in lab and (job.get("cells") or {}):
+                # (규격을 못 읽은 Sheet 면 아래 입자도·금속성이물 갈래로 흘려보낸다)
+                # 16번 경향분석 Sheet 가 있는 항목(pH·비중·제제균일성·바이오버든 …)은 그 Sheet 의 규격으로
+                # 센다 — 첨부 엑셀과 본문 9.2 의 Cpk 가 같은 값이 된다.
+                got = cpk_from_sheet(vals, job)
+                if got is None:
+                    return None
+                # 'item/조제 pH' — 16항 결론(1 미만인 항목)과 기록에서 공정까지 보이게
+                found["item/%s %s" % (process, re.sub(r"\d+\)", "", lab).strip())] = got
+                return ("%.2f" % got, "충분" if got >= 1 else "부족")
             if "함량" in lab:
                 # 주성분이 둘이면 성분마다 규격이 다르다(디겐타: 플루오로메톨론 90~110, 겐타마이신
                 # 90~120). 열 이름에 든 성분의 규격을 쓴다 — 2026-09 점검에서 둘 다 90~110 으로 계산됐다.
@@ -2420,7 +2486,8 @@ def fill(document, data, product, period, today=None, log=None):
             return report
 
         for table, process in pairs:
-            D.fill(table, lots, maker(process), cpk=cpk_of, miss=miss_of(process))
+            D.fill(table, lots, maker(process), cpk=(lambda lab, texts, _p=process: cpk_of(lab, texts, _p)),
+                   miss=miss_of(process))
         miss = found.pop("assay_miss", None)
         if miss:
             issues.append(("9.2", ", ".join(sorted(miss)),
@@ -2428,6 +2495,9 @@ def fill(document, data, product, period, today=None, log=None):
         out = {}
         parts = [n for n in (limits.get("assay_parts") or {}) if n]
         for lab, v in found.items():
+            if lab.startswith("item/"):                  # 16번 Sheet 항목 — 이름 그대로
+                out[lab] = v
+                continue
             key = "assay" if "함량" in lab else "particle" if "입자도" in lab else "metal"
             if key == "assay" and len(parts) > 1:
                 squeezed = re.sub(r"\s+", "", lab)

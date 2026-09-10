@@ -1667,6 +1667,48 @@ def _has_diag(tc):
     return False
 
 
+def _vmerge_state(tc):
+    """'restart' · 'continue' · None — 칸의 세로 병합 상태."""
+    pr = tc.find(qn("w:tcPr"))
+    vm = pr.find(qn("w:vMerge")) if pr is not None else None
+    if vm is None:
+        return None
+    return "restart" if vm.get(qn("w:val")) == "restart" else "continue"
+
+
+def unmerge_stray_vmerge(document, skip=()):
+    """위 칸이 병합에 들어 있지 않은데 '이어짐'(<w:vMerge/>) 표시만 남은 빈 칸을 낱칸으로 되돌린다
+    → 되돌린 칸 수.
+
+    나조린 2026 공양식 9.2.2 '충전 완료 후' 표는 pH 열의 'Cpk 판정 결과' 칸에 '이어짐' 표시가
+    남아 있으나 위 'Cpk' 칸은 병합을 시작하지 않는다(서식을 고치다 남은 흔적). Word 는 이런 칸을
+    낱칸으로 보여 주는데 빈 칸 사선(diag_all_empty)은 '병합으로 이어진 칸' 으로 알고 건너뛰어
+    사선 없는 공란이 남았다 (담당자 2026-09-10: "pH cpk 가장 아래칸이 공란인데 사선처리되지 않음").
+    글이 든 칸은 그대로 둔다.
+    """
+    n = 0
+    for ti, tbl in enumerate(document.tables):
+        if ti in skip:
+            continue
+        above = {}                                    # 그리드 열 → 바로 위 줄 칸의 병합 상태
+        for tr in tbl._tbl.findall(qn("w:tr")):
+            here, col = {}, 0
+            for tc in tr.findall(qn("w:tc")):
+                span = _span(tc)
+                state = _vmerge_state(tc)
+                if state == "continue" and above.get(col) is None \
+                        and not "".join(t.text or "" for t in tc.iter(qn("w:t"))).strip():
+                    pr = tc.find(qn("w:tcPr"))
+                    pr.remove(pr.find(qn("w:vMerge")))
+                    state = None
+                    n += 1
+                for c in range(col, col + span):
+                    here[c] = state
+                col += span
+            above = here
+    return n
+
+
 def diag_all_empty(document, skip=()):
     """GMP 문서는 공란을 남기지 않는다 — 표의 빈 칸마다 사선(↗)을 하나 긋는다.
 
