@@ -373,6 +373,7 @@
 | **경향 분석 서식(HLF-QC-126-06)에 시험항목 수만큼 시트가 없으면 시트가 더 많은 서식(입력 폴더 '서식' → 프로그램 서식)으로 만든다** (올로원스: 제품 폴더 서식이 pH·함량·보존제 세 장이라 삼투압이 함량 시트에, 보존제가 통째로 빠짐) | 후보마다 항목·이름이 맞는 시트 수로 점수 | `excel_attach._form_for_parts`, `_stability_form_candidates` |
 | **안정성 판독에서 읽지 못한 시험일지가 있으면 covers_all 을 적지 않는다** (올로원스: GVX501 initial 을 못 읽었는데 covers_all=true 로 저장돼 13항이 2 Lot) | 읽지 못한 장은 기록에 남기고 다음 작성 때 다시 읽는다 | `stability_read.unread_paths` |
 | **판독 틀·프롬프트: 시험일지의 pH·삼투압·보존제·유연물질(불검출 글 포함)·무균까지 모두 assays 로** (올로원스: 함량만 읽혀 13.3 pH·삼투압·보존제·유연물질 7열이 빔) | | `claude_cli.PROMPT`, `vision_claude` |
+| **한 함수 안에서 `def` 로 만든 이름을 뒤에서 대입으로 덮지 않는다** (올로원스 뒤처리 2026-09-10: 9항 각주의 `bio_text = mass_text = None` 이 같은 `fill` 안 `def bio_text(lot)` 를 덮었다 — 그때는 부르는 자리가 모두 앞이라 터지지 않았지만, 각주 뒤에서 9.2 표를 하나라도 더 채우면 `'str' object is not callable`) | 파이썬이 알려 주지 않으므로 시험으로 막는다 — `pqr` 꾸러미 전체를 AST 로 훑는다 | `recipe_ointment.fill` bio_note/mass_note, `tests/test_pqr_scope_shadow.py` |
 
 
 ---

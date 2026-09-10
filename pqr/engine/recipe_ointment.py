@@ -3314,17 +3314,19 @@ def fill(document, data, product, period, today=None, log=None):
     # 각주 글(번호 없이) — 9.1 아래에는 9.1 번호로, 9.2 표 아래에는 9.2 번호로 붙인다.
     # 둘 다 없는 제품(점안액: 생균수 정상, 질량·용량을 개개 값으로 적음)이면 각주를 하나도 달지 않는다
     # (올로원스 2026-09-10: notes 가 비었는데 notes[-1] 을 읽어 보고서 작성이 멈췄다).
+    # 이름은 bio_note·mass_note — 위(2170)의 bio_text(lot) 함수를 덮지 않게 (덮으면 각주 뒤에서
+    # 9.2 표를 하나라도 더 채울 때 'str' object is not callable 로 같은 자리에서 또 멈춘다).
     notes = []
-    bio_text = mass_text = None
+    bio_note = mass_note = None
     if odd_bio:
-        bio_text = ("%s 조제(바이오버든) 공정 시험 성적서의 생균수 기재값은 “%s” 임. 원 기록의 단위 표기 확인 필요."
+        bio_note = ("%s 조제(바이오버든) 공정 시험 성적서의 생균수 기재값은 “%s” 임. 원 기록의 단위 표기 확인 필요."
                     % (", ".join(l for l, _ in odd_bio), odd_bio[0][1]))
-        notes.append("%d) %s" % (note_bio, bio_text))
+        notes.append("%d) %s" % (note_bio, bio_note))
         issues.append(("9.2.2", ", ".join(l for l, _ in odd_bio), "생균수 기재값이 다른 Lot 과 다름 — 원본 확인"))
     if note_mass:
-        mass_text = ("%d년 완제 시험 성적서는 질량·용량 개개를 최솟값(···g 이상)으로만 기재하므로, 각 Lot 의 개개 최솟값으로 기재하였음."
+        mass_note = ("%d년 완제 시험 성적서는 질량·용량 개개를 최솟값(···g 이상)으로만 기재하므로, 각 Lot 의 개개 최솟값으로 기재하였음."
                      % year_from)
-        notes.append("%d) %s" % (note_mass, mass_text))
+        notes.append("%d) %s" % (note_mass, mass_note))
     for t in reversed(t91):
         for nt in reversed(notes):
             E.note_after(document, t, nt)
@@ -3337,13 +3339,13 @@ def fill(document, data, product, period, today=None, log=None):
     tabs92 = [t for t, _ in _d92.tables_92(document)]
     next_no = max(_note_numbers_under(document, "9.2") or [0]) + 1
     tb = _by_header(tabs92, "생균수")
-    if tb is not None and bio_text:
-        E.note_after(document, tb, "%d) %s" % (next_no, bio_text))
+    if tb is not None and bio_note:
+        E.note_after(document, tb, "%d) %s" % (next_no, bio_note))
         _mark_header(tb, "생균수", next_no)
         next_no += 1
     tm = _by_header(tabs92, "질량", "기밀도") or _by_header(tabs92, "질량", "개개")
-    if tm is not None and mass_text:
-        E.note_after(document, tm, "%d) %s" % (next_no, mass_text))
+    if tm is not None and mass_note:
+        E.note_after(document, tm, "%d) %s" % (next_no, mass_note))
         _mark_header(tm, "개개", next_no)
 
     # ---------- 10항 ----------
