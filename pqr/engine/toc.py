@@ -225,8 +225,54 @@ def blank_pages(docx_path, log=None):
         heading_only = re.fullmatch(r"\d+(?:\.\d+)*[가-힣A-Za-z·()]+", body)
         if len(body) < 40 or footnote_only or heading_only:
             빈쪽.append("%d쪽(%s)" % (i, body[:24] or "빈 쪽"))
+            LAST_BODIES[i] = body
     if 빈쪽:
         log("★ 빈 쪽 검사: %s — 앞 표의 줄 수나 쪽 나눔을 손봐야 합니다" % ", ".join(빈쪽))
     else:
         log("빈 쪽 검사: %d쪽 모두 내용이 있습니다" % len(pages))
     return 빈쪽
+
+
+LAST_BODIES = {}          # 마지막 blank_pages 검사에서 빈 쪽으로 잡힌 {쪽: 머리글을 뺀 글}
+
+
+def header_only_tables(document, bodies=None):
+    """빈 쪽의 글이 어느 표의 **머리행(+요약 라벨)** 뿐인지 — 그 표들의 번호.
+
+    담당자 2026-09-10 나조린 16쪽(9.2.2 기밀도·이물검사 표의 반복 머리행 + 요약 5줄만 남음):
+    "머리글 말고 내용이 없을 때는 16페이지 머리글을 삭제해줘". 쪽의 글이 어느 표의 머리행 글로
+    시작하면 그 표다.
+    """
+    from docx.oxml.ns import qn
+    bodies = bodies if bodies is not None else LAST_BODIES
+    out = []
+    for ti, tbl in enumerate(document.tables):
+        trs = tbl._tbl.findall(qn("w:tr"))
+        heads = [tr for tr in trs[:3] if tr.find(qn("w:trPr")) is not None
+                 and tr.find(qn("w:trPr")).find(qn("w:tblHeader")) is not None]
+        if not heads:
+            continue
+        head = _squeeze("".join(t.text or "" for tr in heads for t in tr.iter(qn("w:t"))))
+        head = re.sub(r"[()（）]", "", head)
+        if len(head) < 4:
+            continue
+        for body in bodies.values():
+            if body.startswith(head):
+                out.append(ti)
+                break
+    return out
+
+
+def stop_header_repeat(document, indexes):
+    """그 표들의 '머리행 반복'(tblHeader)을 끈다 → 끈 표 수."""
+    from docx.oxml.ns import qn
+    n = 0
+    for ti in indexes:
+        tbl = document.tables[ti]
+        for tr in tbl._tbl.findall(qn("w:tr"))[:3]:
+            pr = tr.find(qn("w:trPr"))
+            el = pr.find(qn("w:tblHeader")) if pr is not None else None
+            if el is not None:
+                pr.remove(el)
+                n += 1
+    return n

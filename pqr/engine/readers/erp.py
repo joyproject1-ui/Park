@@ -114,10 +114,41 @@ def group_by_test(records):
 LOT_LINE = re.compile(r"^\s*([A-Z]{2}[A-Z0-9]{4})\s+(\S.*?)\s+(\d{4}\.\d{2}\.\d{2})\s+(\d{4}\.\d{2}\.\d{2})\s*$", re.M)
 
 
+# ERP 제조번호 줄 — 'NJS2-2025-L0K2Y-2000101 2025.02.13 2027.02.12' (나조린 2026-09-10: 제품 코드·연도·
+# Lot 글자와 달이 갈라져 적힌 꼴이라 LOT_LINE 에 걸리지 않아 '제조내역 0줄' 로 남았다).
+# 셋째 마디 'L0K2Y' 는 Lot 글자(L·K·Y) 사이에 제조 달(02)이 끼어 있고, 넷째 마디 '2000101' 은
+# 달 글자(2·N·D …) 뒤에 번호가 오며 마지막 자리가 그 달의 몇째 Lot 인지다 → LKY201.
+ERP_LINE = re.compile(r"^\s*[A-Z0-9]+-(\d{4})-([A-Z])(\d)([A-Z])(\d)([A-Z])-([A-Z0-9])(\d+)\s+"
+                      r"(\d{4}\.\d{2}\.\d{2})\s+(\d{4}\.\d{2}\.\d{2})\s*$", re.M)
+MONTH_LETTER = {10: "O", 11: "N", 12: "D"}
+
+
+def lot_from_erp(m):
+    """ERP_LINE 의 match → Lot No.(LKY201) — 달이 맞지 않으면 None."""
+    a, m1, b, m2, c, tail_month, tail = m.group(2), m.group(3), m.group(4), m.group(5), m.group(6), m.group(7), m.group(8)
+    month = int(m1 + m2)
+    if not 1 <= month <= 12:
+        return None
+    letter = MONTH_LETTER.get(month, str(month))
+    if tail_month != letter:
+        return None
+    seq = int(tail[-1]) if tail else 0
+    if not seq:
+        return None
+    return "%s%s%s%s%02d" % (a, b, c, letter, seq)
+
+
 def read_manufacturing(path):
     """제조내역 PDF — [(Lot, 품명, 제조일자, 사용기한), ...]"""
     text = squash(read_text(path))
-    return [(m.group(1), m.group(2).strip(), m.group(3), m.group(4)) for m in LOT_LINE.finditer(text)]
+    out = [(m.group(1), m.group(2).strip(), m.group(3), m.group(4)) for m in LOT_LINE.finditer(text)]
+    if out:
+        return out
+    for m in ERP_LINE.finditer(text):
+        lot = lot_from_erp(m)
+        if lot:
+            out.append((lot, "", m.group(9), m.group(10)))
+    return out
 
 
 def read_material_names(path):

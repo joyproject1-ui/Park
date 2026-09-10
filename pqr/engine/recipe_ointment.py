@@ -63,6 +63,20 @@ def parse_limits(spec_texts):
     return out
 
 
+NEGATIVE = re.compile(r"^\s*(음성|불검출|음성\s*\(불검출\))\s*$")
+
+
+def _sterility_from_bioburden(rec):
+    """포장 성적서 판독에서 '무균' 줄이 bioburden 으로 들어온 것을 되찾는다.
+
+    스캔 성적서 판독기의 JSON 틀에 sterility 칸이 없어 Claude 가 '무균 | 음성 | 음성' 줄을
+    bioburden 에 적었다(나조린 LKYD02 — 2026-09-10 담당자: "성적서 확인 결과 음성이야"). 생균수는
+    숫자(CFU)로 오므로, 값이 '음성/불검출' 이면 무균 줄이다.
+    """
+    got = str((rec or {}).get("bioburden") or "").strip()
+    return got if NEGATIVE.match(got) else None
+
+
 def cpk_uni(vals, usl):
     if usl is None or not vals:          # 허용기준을 못 읽었으면 Cpk 를 내지 않는다 (담당자 2026-09-08)
         return None
@@ -366,6 +380,136 @@ def _mark_header_can(table, word):
                for row in table.rows[:3] for cell in row.cells)
 
 
+RANGE_SPEC = re.compile(r"^\s*-?\d+(?:\.\d+)?\s*~\s*-?\d+(?:\.\d+)?\s*[^\d\s]*\s*$")
+
+
+def _spec_change_notes_91(document, table, data, lots, rec, issues, log):
+    """9.1 표에서 연중에 자가기준이 바뀐 항목 — 허용기준 칸을 **가장 최근 기준**으로 적고 각주를 단다.
+
+    담당자 2026-09-10 나조린 9.1: 조제 pH 기준이 LKYD01 부터 6.2~6.7 → 6.2~7.0 으로 바뀌었는데(CC-250822-03)
+    공양식 칸은 옛 기준 그대로였고 각주도 없었다. 충전 pH 는 공양식에 '2) 변경관리(CC-250822-03)에 따라
+    pH 기준 변경 (6.2 ~ 7.5 → 6.2 ~ 7.0), LKYD01부터 적용' 이 손으로 적혀 있었다 — 같은 뜻의 각주가
+    있으면 그 번호를 붙이고, 없으면 다음 번호로 새 각주를 표 뒤 각주들 맨 끝에 넣는다.
+    Lot 마다 성적서의 기준을 견주어(범위 꼴 '6.2 ~ 6.7' 만) 바뀐 Lot 과 전후 기준을 찾는다.
+    """
+    keys_of = {"조제": ("921", "922"), "충전": ("923",), "포장": ("924",)}
+    rows = table.rows
+    process = ""
+    made = 0
+    for row in rows[1:]:
+        cells = E.raw_cells(row)
+        texts = [E.cell_text(c) for c in cells]
+        if _is_head_row(texts) or len(cells) < 3:
+            continue
+        head = D.squeeze(texts[0])
+        if head:
+            process = next((s for s in D.STAGES if s in head), process)
+        if not process:
+            continue
+        ci = next((i for i, t in enumerate(texts) if D.PREFIX.search(t or "")), None)
+        if ci is None or ci < 1:
+            continue
+        item_cell, crit_cell = cells[ci - 1] if ci >= 1 else None, cells[ci]
+        item = re.sub(r"\d+\)\s*$", "", D.squeeze(E.cell_text(item_cell))).strip() if item_cell is not None else ""
+        if not item or item_cell is None:
+            continue
+        # 허용기준 칸의 '자가) …' 문단
+        paras = [p_ for p_ in crit_cell.paragraphs if p_.text.strip()]
+        own = next((p_ for p_ in paras if p_.text.strip().startswith("자가")), None)
+        if own is None:
+            continue
+        own_text = re.sub(r"^\s*자가\s*\)\s*", "", own.text).strip()
+        if not RANGE_SPEC.match(own_text):
+            continue
+        # Lot 차례대로 성적서의 기준
+        specs = []
+        for lot in lots:
+            spec = ""
+            for k in keys_of[process]:
+                items = (rec(lot, k) or {}).get("items") or {}
+                one = next((v for n_, v in items.items() if _norm_item(n_) == _norm_item(item)), None)
+                if one and str(one.get("spec") or "").strip():
+                    spec = re.sub(r"\s+", "", str(one.get("spec")))
+                    break
+            specs.append((lot, spec))
+        seen = [sp for _, sp in specs if sp and RANGE_SPEC.match(sp)]
+        if not seen:
+            continue
+        distinct = []
+        for sp in seen:
+            if sp not in distinct:
+                distinct.append(sp)
+        if len(distinct) < 2:
+            continue
+        old, new = distinct[0], distinct[-1]
+        first_lot = next(lot for lot, sp in specs if sp == new)
+        pretty = lambda sp: re.sub(r"\s*~\s*", " ~ ", sp)
+        if re.sub(r"\s+", "", own_text) != new and own.runs:
+            # 가장 최근 기준으로 바꿔 적는다 — '자가) ' 머리는 그대로
+            for r_ in own.runs[1:]:
+                r_.text = ""
+            own.runs[0].text = "자가) " + pretty(new)
+            log("9.1항: %s %s 허용기준을 %s → %s 로 (가장 최근 기준, %s 부터)" % (process, item, pretty(old), pretty(new), first_lot))
+        # 같은 뜻의 각주가 이미 있으면 그 번호, 없으면 새 각주
+        notes = _notes_after(table)
+        number = None
+        for n_, para in notes:
+            flat = re.sub(r"\s+", "", para.text)
+            if item in flat and "기준" in flat and new in flat and old in flat:
+                number = n_
+                break
+        marked = re.search(r"(\d+)\)\s*$", E.cell_text(item_cell).strip())
+        if number is None:
+            number = max([n_ for n_, _ in notes] or [0]) + 1
+            ccs = _changes_for_item(data, item)
+            cc = next((one.get("doc_no") for one, _ in ccs if one.get("doc_no")), "")
+            글 = "%d) %s에 따라 %s 기준 변경 (%s → %s), %s부터 적용" % (
+                number, ("변경관리(%s)" % cc) if cc else "변경관리(문서번호 확인 필요)", item, pretty(old), pretty(new), first_lot)
+            _note_after_notes(document, table, notes, 글)
+            issues.append(("9.1", first_lot, "%s %s 자가기준이 %s 부터 %s → %s 로 바뀌어 허용기준을 최근 기준으로 적고 각주 %d)을 달았습니다%s"
+                           % (process, item, first_lot, pretty(old), pretty(new), number,
+                              (" — 근거 변경관리 %s 확인" % cc) if cc else " — 12항 변경관리 문서번호를 각주에 적으세요")))
+        if not marked:
+            ps = [p_ for p_ in item_cell.paragraphs if p_.text.strip()]
+            if ps and ps[-1].runs:
+                ps[-1].runs[-1].text += "%d)" % number
+        made += 1
+    return made
+
+
+def _notes_after(table):
+    """표 바로 뒤에 이어지는 각주 문단들 — [(번호, 문단)]. '1) …' 꼴이 끊길 때까지."""
+    from docx.text.paragraph import Paragraph
+    out, node = [], table._tbl.getnext()
+    while node is not None and node.tag == qn("w:p"):
+        para = Paragraph(node, table._parent)
+        m = re.match(r"^\s*(?:주)?\s*(\d+)\)", para.text)
+        if m:
+            out.append((int(m.group(1)), para))
+        elif para.text.strip():
+            break
+        node = node.getnext()
+    return out
+
+
+def _note_after_notes(document, table, notes, text):
+    """각주 문단을 표 뒤 기존 각주들의 맨 끝에 넣는다 (없으면 표 바로 뒤)."""
+    import copy as _copy
+    if notes:
+        last = notes[-1][1]._p
+        new = _copy.deepcopy(last)
+        for r_ in new.findall(qn("w:r"))[1:]:
+            new.remove(r_)
+        runs = new.findall(qn("w:r"))
+        if runs:
+            for t_ in runs[0].findall(qn("w:t")):
+                t_.text = text
+                t_.set(qn("xml:space"), "preserve")
+            last.addnext(new)
+            return new
+    return E.note_after(document, table, text)
+
+
 def _mark_header(table, word, number):
     """머리행 칸(예: '개개')의 글 끝에 각주 번호 'n)' 를 붙인다 — 뒤에서 윗첨자로 바뀐다."""
     for row in table.rows[:3]:
@@ -513,7 +657,9 @@ def _small(para_el):
             get_or_add(rpr, tag).set(qn("w:val"), "18")
 
 
-GROUP_WIDE = re.compile(r"전\s*제품|전\s*품목|일괄|전\s*라인")
+# '브리딘티 점안액 0.15% 등 29품목' 처럼 목록을 첨부로 미룬 것도 무리다 — 이름이 본문에 없어도 12항 폴더에
+# 넣은 담당자가 해당함을 안다 (담당자 2026-09-10 나조린 CC-250822-03·CC-251110-09: "해당됨")
+GROUP_WIDE = re.compile(r"전\s*제품|전\s*품목|일괄|전\s*라인|등\s*\d+\s*(?:개\s*)?품목|등\s*\d+\s*(?:개\s*)?제품|외\s*\d+\s*(?:개\s*)?품목")
 
 
 def change_covers(cc, name, parts=()):
@@ -1749,12 +1895,20 @@ def fill(document, data, product, period, today=None, log=None):
                 옛문서 = take("doc")
                 새문서 = (got.get("문서번호") or "").strip()
                 if 옛문서 and 새문서 and _key(옛문서) != _key(새문서):
-                    # 공양식·전년도 결재본의 평가문서번호가 목록과 다르면 조용히 고치지 않고 알린다
-                    # (담당자 2026-09-09 아이퓨어: 'VAR-R-Woojin' 이라 적혀 있어 완료일을 못 찾았다)
-                    issues.append((prefix, take("name") or take("code"),
-                                   "평가문서번호가 공급업체 목록과 달라 목록 쪽으로 고쳤습니다 — "
-                                   "'%s' → '%s' (%s). 어느 쪽이 맞는지 확인하세요"
-                                   % (옛문서, 새문서, _company(got.get("공급업체명")))))
+                    # 공양식·전년도 결재본의 평가문서번호가 목록과 다르면 목록 쪽으로 고치고 **기록**에만
+                    # 남긴다 — 목록이 맞다(담당자 2026-09-09 아이퓨어 VAR-R-Woojin, 2026-09-10 나조린
+                    # 'VAR-R-LGChem → VAR-P-LGChem', 'VAR-P-YUNGLIM → VAR-P-YOUNGLIM': "맞아 목록이 정확해").
+                    # 글자 하나(R·P)나 철자만 다른 것은 문의로 올리지 않고, 업체가 아예 다른 꼴이면 올린다.
+                    import difflib as _difflib
+                    _vk = lambda v: re.sub(r"^var[a-z](?=[a-z])", "var", _key(v))
+                    가벼움 = (_vk(옛문서) == _vk(새문서)
+                              or _difflib.SequenceMatcher(None, _vk(옛문서), _vk(새문서)).ratio() >= 0.8)
+                    log("  %s %s: 평가문서번호 '%s' → '%s' (공급업체 목록)" % (prefix, take("name") or take("code"), 옛문서, 새문서))
+                    if not 가벼움:
+                        issues.append((prefix, take("name") or take("code"),
+                                       "평가문서번호가 공급업체 목록과 달라 목록 쪽으로 고쳤습니다 — "
+                                       "'%s' → '%s' (%s). 어느 쪽이 맞는지 확인하세요"
+                                       % (옛문서, 새문서, _company(got.get("공급업체명")))))
                 upd81 += _put(cells, col["doc"], 새문서)
                 upd81 += _put(cells, col["day"], _norm_date(got.get("평가승인일")))
                 if grade in ("A", "B"):
@@ -1971,10 +2125,18 @@ def fill(document, data, product, period, today=None, log=None):
 
     # 각주 번호는 실제로 다는 것만 세어 매긴다 — 생균수 각주가 없는 제품에서 1) 없이 2) 로
     # 시작하면 안 된다(디겐타안연고 2026).
+    # 안연고 성적서의 생균수는 '10 CFU/g 미만' 꼴이라 다른 꼴이면 원 기록을 확인시킨다. 점안액(나조린)은
+    # '0CFU/100mL' 처럼 **센 값**이므로 다른 것이 아니다 — 각주·문의를 달지 않는다
+    # (담당자 2026-09-10: "CFU/100mL 제외하고 숫자만 기재해줘").
+    def _ointment_bio(l):
+        return bool(re.match(r"\d+\s*(CFU|FU)?\s*/\s*g", str(rec(l, "922").get("bioburden") or "")))
     odd_bio = [(l, rec(l, "922").get("bioburden")) for l in dom + exp
-               if bio_text(l) != "10 미만" and rec(l, "922")]
+               if rec(l, "922") and _ointment_bio(l) and bio_text(l) != "10 미만"]
+    # 질량·용량 개개를 '···g 이상' 최솟값으로만 적는 성적서(안연고)에만 그 각주를 단다 — 점안액 성적서는
+    # 개개를 범위('0.50 ~ 0.54')로 적으므로 각주가 틀린 말이 된다(나조린 2026-09-10 점검).
+    mass_min_only = any(re.search(r"이상", str(rec(l, "923").get("mass_each") or "")) for l in dom + exp)
     note_bio = 1 if odd_bio else None
-    note_mass = 2 if odd_bio else 1
+    note_mass = (2 if odd_bio else 1) if mass_min_only else None
 
     def fill_91(t91, lots, is_dom):
         n = numbers(lots)
@@ -2065,7 +2227,7 @@ def fill(document, data, product, period, today=None, log=None):
             elif "평균" in label and n["pa"] and "질량" in item:
                 val = _avg_text(n["pa"], "%.2f")
             elif "개개" in label and n["pi"] and "질량" in item:
-                val = "%.2f ~ %.2fg 이상%d)" % (min(n["pi"]), max(n["pi"]), note_mass)
+                val = "%.2f ~ %.2fg 이상%s" % (min(n["pi"]), max(n["pi"]), ("%d)" % note_mass) if note_mass else "")
             elif "무균" in item:
                 st = {rec(l, "924").get("sterility") for l in lots} - {None}
                 val = sorted(st)[0] if st else "음성"
@@ -2263,7 +2425,13 @@ def fill(document, data, product, period, today=None, log=None):
                         return app(lots) or D.criterion_for(rules, process, "성상")
                     return D.criterion_for(rules, process, "성상")
                 if "바이오버든" in lab or "생균수" in lab:
-                    return bio_full(lot)
+                    got = bio_full(lot)
+                    # 열 머리에 단위가 있으면('생균수 (CFU/100mL)') 칸에는 숫자만 — 센 값 '0CFU/100mL' 은 '0'
+                    # (담당자 2026-09-10: "CFU/100mL 제외하고 숫자만 기재해줘"; 2025 결재본 9.2 도 '0').
+                    m = re.match(r"^\s*(<?\s*\d+(?:\.\d+)?)\s*CFU\s*/\s*\d*\s*(?:mL|ml|g)\s*$", str(got or ""))
+                    if m and re.search(r"CFU", lab, re.I):
+                        return m.group(1).replace(" ", "")
+                    return got
                 if "함량" in lab:
                     got = [a for a in (r924.get("assays") or [])
                            if not part or D.squeeze(a.get("part") or "") in part or part in D.squeeze(a.get("part") or "")]
@@ -2319,7 +2487,7 @@ def fill(document, data, product, period, today=None, log=None):
                     if "평균" in lab:
                         return _plain(mine.get("mass_avg"))
                     if "개개" in lab:
-                        if process == "충전":
+                        if "충전" in str(process or ""):
                             got = re.findall(r"\d+(?:\.\d+)?", str(mine.get("mass_each") or ""))
                             return (" ~ ".join(got[:2])) if len(got) >= 2 else _plain(mine.get("mass_each"))
                         return ("%s 이상" % _plain(mine.get("mass_each_min"))) if mine.get("mass_each_min") else None
@@ -2328,7 +2496,7 @@ def fill(document, data, product, period, today=None, log=None):
                     # 적었다 — 시험을 생략한 Lot 에 결과가 있는 것처럼 보였다(담당자 2026-09-09
                     # 나조린: "무균 시험 생략됐으면 그 다음 생산 배치도 생략이야"). 없으면 아래
                     # _item_value 까지 내려가고, 거기서도 없으면 빈 칸(사선)으로 둔다.
-                    got = r924.get("sterility")
+                    got = r924.get("sterility") or _sterility_from_bioburden(r924)
                     if got:
                         return got
                 if "기밀도" in lab:
@@ -2367,8 +2535,12 @@ def fill(document, data, product, period, today=None, log=None):
             10·25·50㎛ 세 열에 모두 걸려 합친 글이 세 칸에 똑같이 들어갔다
             (담당자 2026-09-08 아이퓨어 9.2.4).
             """
-            keys = ("921", "922", "923") if process != "포장" else ("924",)
-            if process == "충전":
+            # 9.1 줄의 공정은 '충전완료 후'·'포장완료 후' 처럼 붙어 온다 — 낱말이 **들어 있는지**로 가른다.
+            # '==' 로 견주던 때는 충전·포장 pH 줄에 조제 성적서 값이 들어갔다(담당자 2026-09-10 나조린 9.1:
+            # "충전 성적서 실측 범위는 6.38~6.48", "포장 성적서 pH 는 6.4~6.5").
+            stage = next((s_ for s_ in D.STAGES if s_ in str(process or "")), "")
+            keys = ("921", "922", "923") if stage != "포장" else ("924",)
+            if stage == "충전":
                 keys = ("923", "921", "922")
             # 열 이름에 성분이 붙어 있으면('확인(HPLC) 말레인산페니라민', '제제균일성 나파졸린염산염')
             # 성분을 떼고 항목 이름으로 찾고, 값이 '말레인산페니라민 : 3.0%, 나파졸린염산염 : 5.4%'
@@ -2554,7 +2726,9 @@ def fill(document, data, product, period, today=None, log=None):
                 and not all(NUMERIC.match(t) for t in texts)):
             texts = bare
         if not all(NUMERIC.match(t) for t in texts):
-            return max(set(texts), key=texts.count)          # 글로 적는 항목 — 가장 많이 나온 글
+            common = max(set(texts), key=texts.count)          # 글로 적는 항목 — 가장 많이 나온 글
+            # '0CFU/100mL' → '0 CFU/100mL' (2025 결재본 9.1 표기; 담당자 2026-09-10 생균수 지적)
+            return re.sub(r"(\d)\s*(CFU)", r"\1 \2", common)
         tail = (" " + unit) if unit else ""
         if any("~" in t for t in texts):
             top, bottom, _ = D._stats("", texts)
@@ -2704,6 +2878,24 @@ def fill(document, data, product, period, today=None, log=None):
             for table in _tables(document, key):
                 width = E.grid_width(table)
                 for gi, 이름, 빈Lot in _omitted_columns(table, dom + exp):
+                    if "무균" in re.sub(r"\s+", "", 이름):
+                        # 무균 제제의 무균 시험은 변경관리로 생략되지 않는다 — 일부 Lot 이 비면
+                        # 성적서 판독 누락이다 (담당자 2026-09-10 나조린 LKYD02: "무균제제라서 무균시험을
+                        # 생략할 수 없어, 성적서에도 무균시험 결과가 기재되어 있어 — 음성이라고 기재해").
+                        # 사선·각주 대신 노랑 '확인 필요' 를 적고 문의로 올린다.
+                        for row in table.rows:
+                            cells = E.grid_cells(row, width)
+                            if (E.cell_text(cells.get(1)).strip() if cells.get(1) is not None else "") in 빈Lot:
+                                cell = cells.get(gi)
+                                if cell is not None and not E.cell_text(cell).strip():
+                                    E.set_cell(cell, "확인 필요")
+                                    E.highlight_cell(cell)
+                        issues.append((key, ", ".join(빈Lot),
+                                       "★ 무균 시험 결과를 성적서 판독에서 얻지 못했습니다 — 무균 제제는 무균 시험을 "
+                                       "생략하지 않으므로 판독 누락입니다. 첨부 9.2.4 성적서(스캔)를 열어 결과(음성)를 "
+                                       "적고, 이 알림을 제작자에게 보내 주세요"))
+                        log("%s: 무균 열이 %s 에서 비어 있음 — 생략이 아니라 판독 누락으로 문의" % (key, ", ".join(빈Lot)))
+                        continue
                     for row in table.rows:
                         cells = E.grid_cells(row, width)
                         if (E.cell_text(cells.get(1)).strip() if cells.get(1) is not None else "") in 빈Lot:
@@ -2834,38 +3026,50 @@ def fill(document, data, product, period, today=None, log=None):
         HINT_STOP = ("허가", "자가", "이하", "이상", "각각", "판정값", "및", "또는")
 
         def _columns_92(lots):
-            """9.2 표에서 읽은 {열 이름: [Lot 차례대로의 값]} — 그 Lot 이 있는 표만 본다."""
+            """9.2 표에서 읽은 {(공정, 열 이름): [Lot 차례대로의 값]} — 그 Lot 이 있는 표만 본다.
+
+            공정(조제·충전·포장)을 키에 넣는다 — 예전에는 열 이름만 키라서 충전·포장 pH 줄에
+            조제 표의 pH 값이 옮겨졌다(담당자 2026-09-10 나조린 9.1: "충전 성적서 실측 범위는
+            6.38~6.48 로 기재해줘", "포장 성적서 pH 는 6.4~6.5").
+            """
             got = {}
-            for key in ("9.2.1", "9.2.2", "9.2.3", "9.2.4"):
-                for table in _tables(document, key):
-                    width = E.grid_width(table)
-                    rows = [_row_texts(table.rows[i], width) for i in range(len(table.rows))]
-                    head = _head_names(rows)
-                    # 값은 빈칸을 뭉개지 않은 글 그대로 — _row_texts 는 머리글 견주기용이라 빈칸을 지운다
-                    # ('1)육안으로관찰할때…' 가 9.1 에 그대로 적혔다, 담당자 2026-09-09 나조린)
-                    by_lot = {}
-                    for i, r in enumerate(rows):
-                        lot = (r.get(1) or "").strip()
-                        if re.match(r"^\d+$", (r.get(0) or "").strip()) and lot in set(lots):
-                            cells_ = E.grid_cells(table.rows[i], width)
-                            by_lot[lot] = {gi: (E.cell_text(c).strip() if c is not None else "")
-                                           for gi, c in cells_.items()}
-                    if not by_lot:
+            for table, process in D.tables_92(document):
+                width = E.grid_width(table)
+                rows = [_row_texts(table.rows[i], width) for i in range(len(table.rows))]
+                head = _head_names(rows)
+                # 값은 빈칸을 뭉개지 않은 글 그대로 — _row_texts 는 머리글 견주기용이라 빈칸을 지운다
+                # ('1)육안으로관찰할때…' 가 9.1 에 그대로 적혔다, 담당자 2026-09-09 나조린)
+                by_lot = {}
+                for i, r in enumerate(rows):
+                    lot = (r.get(1) or "").strip()
+                    if re.match(r"^\d+$", (r.get(0) or "").strip()) and lot in set(lots):
+                        cells_ = E.grid_cells(table.rows[i], width)
+                        by_lot[lot] = {gi: (E.cell_text(c).strip() if c is not None else "")
+                                       for gi, c in cells_.items()}
+                if not by_lot:
+                    continue
+                for gi, name in head.items():
+                    if gi <= 1 or not (name or "").strip():
                         continue
-                    for gi, name in head.items():
-                        if gi <= 1 or not (name or "").strip():
-                            continue
-                        값 = [(by_lot.get(lot, {}).get(gi) or "").strip() for lot in lots]
-                        if any(값):
-                            got.setdefault(name, 값)
+                    값 = [(by_lot.get(lot, {}).get(gi) or "").strip() for lot in lots]
+                    if any(값):
+                        got.setdefault((process, name), 값)
             return got
 
-        def _pick_92(cols, item, sub, crit):
-            """그 9.1 줄에 해당하는 9.2 열의 값들 — 못 고르면 None."""
+        def _pick_92(cols, item, sub, crit, process=""):
+            """그 9.1 줄에 해당하는 9.2 열의 값들 — 못 고르면 None. 같은 공정의 표를 먼저 본다."""
             want = _flat(item)
             if len(want) < 2:
                 return None
-            cands = [(name, 값) for name, 값 in cols.items() if want in _flat(name)]
+            공정 = next((s_ for s_ in D.STAGES if s_ in str(process or "")), "")
+            cands = [(name, 값) for (stage, name), 값 in cols.items()
+                     if want in _flat(name) and (not 공정 or stage == 공정)]
+            _pick_92.fallback = False
+            if not cands and 공정:
+                # 그 공정의 표에 그 열이 없으면(9.1 이 포장 줄인데 상세표는 충전에만 있는 항목 등) 다른 공정 것 —
+                # 확실하지 않으므로 부르는 쪽이 노랑으로 표시한다(담당자 2026-09-10: "오류로 의심되면 노랑 마크")
+                cands = [(name, 값) for (stage, name), 값 in cols.items() if want in _flat(name)]
+                _pick_92.fallback = bool(cands)
             if not cands:
                 return None
             if len(cands) == 1:
@@ -2914,7 +3118,7 @@ def fill(document, data, product, period, today=None, log=None):
                     if hit is None:
                         continue
                     follow.append((hit, crit_text))
-                값 = _pick_92(cols, hit["item"], hit["sub"], crit_text)
+                값 = _pick_92(cols, hit["item"], hit["sub"], crit_text, hit.get("process"))
                 if not 값 or not any(값):
                     continue
                 cur = E.cell_text(cells[-1]).strip()
@@ -2938,12 +3142,18 @@ def fill(document, data, product, period, today=None, log=None):
                     target = cells[-2]
                 E.clear_diag(target)
                 E.set_cell(target, *out.split("\n"))
+                if getattr(_pick_92, "fallback", False):
+                    E.highlight_cell(target)
+                    issues.append(("9.1", hit["item"], "%s 줄의 %s 결과를 같은 공정 상세표에서 찾지 못해 다른 공정 표의 값으로 "
+                                   "적고 노랑으로 표시했습니다 — 확인하세요" % (hit.get("process") or "", hit["item"])))
                 done += 1
             return done
 
         옮김 = sum(fill_91_from_92(t, D.criteria(t), dom) for t in t91_dom)
         if 옮김:
             log("9.1항: 남아 있던 사선 %d줄을 9.2 상세표에서 옮겨 채움" % 옮김)
+        for t in t91_dom:
+            _spec_change_notes_91(document, t, data, dom, rec, issues, log)
         if exp:
             옮김 = sum(fill_91_from_92(t, D.criteria(t), exp) for t in t91_exp)
             if 옮김:
@@ -2988,8 +3198,9 @@ def fill(document, data, product, period, today=None, log=None):
         notes.append("%d) %s 조제(바이오버든) 공정 시험 성적서의 생균수 기재값은 “%s” 임. 원 기록의 단위 표기 확인 필요."
                      % (note_bio, ", ".join(l for l, _ in odd_bio), odd_bio[0][1]))
         issues.append(("9.2.2", ", ".join(l for l, _ in odd_bio), "생균수 기재값이 다른 Lot 과 다름 — 원본 확인"))
-    notes.append("%d) %d년 완제 시험 성적서는 질량·용량 개개를 최솟값(···g 이상)으로만 기재하므로, 각 Lot 의 개개 최솟값으로 기재하였음."
-                 % (note_mass, year_from))
+    if note_mass:
+        notes.append("%d) %d년 완제 시험 성적서는 질량·용량 개개를 최솟값(···g 이상)으로만 기재하므로, 각 Lot 의 개개 최솟값으로 기재하였음."
+                     % (note_mass, year_from))
     for t in reversed(t91):
         for nt in reversed(notes):
             E.note_after(document, t, nt)

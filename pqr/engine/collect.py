@@ -683,6 +683,18 @@ def collect(folder, product_name=None, log=None):
                 % (item, os.path.basename(p), lot, len(names),
                    (" (" + ", ".join(names[:10]) + ")") if names else " — 하나도 못 읽음"))
             saw(p, "%s 성적서 · 시험항목 %d건" % (lot, len(names)) if names else None)
+    # 스캔 성적서 판독에서 '무균 | 음성' 줄이 bioburden 으로 들어온 것을 sterility 로 되돌린다
+    # (나조린 LKYD02, 2026-09-10). 생균수는 숫자로 오므로 '음성/불검출' 은 무균 줄이다.
+    for recs in data.coa.values():
+        for rec_ in recs.values():
+            neg = str((rec_ or {}).get("bioburden") or "").strip()
+            if re.match(r"^(음성|불검출|음성\s*\(불검출\))$", neg):
+                rec_.setdefault("sterility", neg)
+                items_ = rec_.setdefault("items", {})
+                if not any("무균" in k for k in items_):
+                    items_["무균"] = {"spec": str(rec_.get("bioburden_spec") or "음성"), "value": neg}
+                rec_.pop("bioburden", None)
+                rec_.pop("bioburden_spec", None)
     # 9.2.1 에서 읽은 조제 값은 9.2.2 에 없는 것만 보탠다 — 같은 조제 단계라 한 곳에서 보면 된다.
     for recs in data.coa.values():
         if recs.get("921"):
@@ -1162,6 +1174,11 @@ def build_ledger(folder, got, read):
             continue
         if base.lower().endswith(".txt"):
             rows.append((item, shown, "우리 파일", "'해당없음 확인' 마감 글"))
+            continue
+        if re.search(r"경향\s*분석\s*Sheet", base, re.I) and base.lower().endswith((".xls", ".xlsx")):
+            # 16번 Cpk 경향분석 Sheet — 값을 읽는 자료가 아니라 첨부 Cpk 파일의 서식이자 항목 목록이다
+            # (2026-09-10: 대장에 '못 읽음' 으로 적혀 오해를 샀다)
+            rows.append((item, shown, "읽음", "Cpk 경향분석 Sheet — 첨부 Cpk 파일의 서식·항목 목록으로 씀"))
             continue
         rule = READABLE.get(item)
         exts, want = rule if rule else ((), "")

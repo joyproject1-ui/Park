@@ -224,6 +224,15 @@ def _compare_with_previous(document, shape, log):
             continue
         if now:
             continue
+        if section.startswith("9.2."):
+            # 9.2 의 소항 번호는 해마다 다르다 — 나조린 2025 결재본은 9.2.1~9.2.4(조제·바이오버든·충전·포장),
+            # 2026 공양식은 9.2.1~9.2.3(조제에 바이오버든을 합침). 올해 그 번호의 표가 아예 없으면
+            # 번호가 달라진 것이지 자료가 빈 것이 아니다 (담당자 2026-09-10: "아니야 너가 올바르게
+            # 작성했어"). 9.2 전체(모든 소항)가 비었을 때만 알린다.
+            from .locate import find_tables
+            if not find_tables(document, section):
+                if any(_rows_of(document, k) for k in ("9.2.1", "9.2.2", "9.2.3", "9.2.4")):
+                    continue
         rows.append((section, "★ 전년도 결재본에는 %s항에 %d줄이 있었는데 올해는 비었습니다 — "
                               "그 항 자료를 올리셨는지, 서식이 평소와 같은지 보시고 "
                               "그대로면 이 알림을 제작자에게 보내 주세요" % (section, before)))
@@ -523,7 +532,20 @@ def write_report(folder, product, period, out_path, today=None, recipe=None, log
     except Exception as error:
         log_("목차 쪽 번호 계산 실패: %s — Ctrl+A, F9 로 갱신하세요" % error)
     try:
+        toc_module.LAST_BODIES.clear()
         빈쪽 = toc_module.blank_pages(out_path, log_)
+        if 빈쪽:
+            # 어느 표의 반복 머리행(+요약 라벨)만 남은 쪽이면 그 표의 머리행 반복을 끄고 한 번 더 본다
+            # (담당자 2026-09-10 나조린 16쪽: "머리글 말고 내용이 없을 때는 16페이지 머리글을 삭제해줘").
+            import docx as _docx
+            doc_ = _docx.Document(out_path)
+            hit = toc_module.header_only_tables(doc_)
+            if hit and toc_module.stop_header_repeat(doc_, hit):
+                doc_.save(out_path)
+                log_("머리행만 남은 쪽: 표 %s 의 머리행 반복을 껐습니다" % ", ".join(str(i + 1) for i in hit))
+                convert.refresh_fields(out_path)
+                toc_module.LAST_BODIES.clear()
+                빈쪽 = toc_module.blank_pages(out_path, log_)
         if 빈쪽:
             data.issues.append(("서식", ", ".join(빈쪽),
                            "★ 머리글 말고는 내용이 없는 쪽이 있습니다 — 앞 표의 줄 수·쪽 나눔을 손봐 주세요. "

@@ -279,7 +279,11 @@ def apply(document, log=None, product_title=None, edms=None):
         whole += E.keep_table_together(tbl)
     log("표 통째로 유지 행: %d" % whole)
     for ti, tbl in enumerate(T):
-        if ti == toc or len(tbl.rows) <= 21:
+        # 위에서 건너뛴 큰 표(줄이 21 넘거나 글자가 1200 넘는 표) — 글자가 많아 건너뛴 표에는 꼬리
+        # 묶기도 걸리지 않아 요약 5줄이 머리행만 데리고 다음 쪽에 홀로 남았다(담당자 2026-09-10 나조린
+        # 16쪽: 9.2.2 기밀도·이물검사 표, 21줄이지만 이물검사 글이 길다 — "머리글 말고 내용이 없을 때는
+        # 16페이지 머리글을 삭제해줘").
+        if ti == toc or not (len(tbl.rows) > 21 or E.table_chars(tbl) > 1200):
             continue
         for r in tbl.rows[:7]:
             E._keep_next(r)

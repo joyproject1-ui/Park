@@ -57,7 +57,7 @@ def _legend_layout(values, levels):
 
 
 # ---------------------------------------------------------------- Excel (COM)
-def _with_excel(src, dst, cells, values, levels=()):
+def _with_excel(src, dst, cells, values, levels=(), formats=None):
     try:
         from . import convert
         convert._com_ready()                 # 갈래마다 COM 을 열어 준다 (담당자 PC 2026-09-08)
@@ -74,6 +74,15 @@ def _with_excel(src, dst, cells, values, levels=()):
             ws.Range(ref).Value = value
         for i in range(ROWS):
             ws.Cells(FIRST_DATA_ROW + i, 2).Value = values[i] if i < len(values) else ""
+        # 소수 자릿수를 성적서대로 보이게 (담당자 2026-09-10: "소숫점 자리수는 시험성적서와 맞춰서")
+        for ref, code in (formats or {}).items():
+            try:
+                if ref == "B":
+                    ws.Range("B%d:B%d" % (FIRST_DATA_ROW, FIRST_DATA_ROW + max(len(values), 1) - 1)).NumberFormat = code
+                else:
+                    ws.Range(ref).NumberFormat = code
+            except Exception:
+                pass
         last = _last_row(len(values))
         for i in range(1, ws.ChartObjects().Count + 1):
             chart = ws.ChartObjects(i).Chart
@@ -140,12 +149,13 @@ def _soffice_listener(port):
         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 
-def _with_uno(src, dst, cells, values, levels=(), port=2103):
+def _with_uno(src, dst, cells, values, levels=(), port=2103, formats=None):
     try:
         import uno
         from com.sun.star.beans import PropertyValue
         from com.sun.star.table import BorderLine2, CellRangeAddress
         from com.sun.star.awt import Point
+        from com.sun.star.lang import Locale
         from com.sun.star.chart.ChartLegendExpansion import HIGH as LEGEND_HIGH
     except ImportError:
         return False
@@ -185,6 +195,18 @@ def _with_uno(src, dst, cells, values, levels=(), port=2103):
                 cell.setValue(float(values[i]))
             else:
                 cell.setString("")
+        for ref, code in (formats or {}).items():             # 소수 자릿수는 성적서대로
+            try:
+                key = doc.NumberFormats.queryKey(code, Locale(), False)
+                if key == -1:
+                    key = doc.NumberFormats.addNew(code, Locale())
+                if ref == "B":
+                    for i in range(max(len(values), 1)):
+                        sheet.getCellByPosition(1, FIRST_DATA_ROW - 1 + i).NumberFormat = key
+                else:
+                    sheet.getCellRangeByName(ref).NumberFormat = key
+            except Exception:
+                pass
         wide = "Nominal" in sheet.getCellRangeByName("O5").getString()
         last = _last_row(len(values)) - 1                     # 0 부터 세는 행 번호
         for name in sheet.Charts.ElementNames:
@@ -238,14 +260,15 @@ def _with_uno(src, dst, cells, values, levels=(), port=2103):
     return os.path.isfile(dst)
 
 
-def fill(src, dst, cells, values):
+def fill(src, dst, cells, values, formats=None):
     """src(.xls) 서식에 cells 와 결과값을 채워 dst(.xls) 로 저장한다. 쓴 방법을 돌려준다.
 
     빈 결과 칸에는 사선을, 범례는 자료를 가리지 않는 자리에 놓는다.
+    formats: {칸 또는 'B'(결과값 열): '0.00'} — 소수 자릿수 표시 형식.
     """
     levels = tuple(cells.get(ref) for ref in ("N6", "O6", "P6"))
-    if sys.platform == "win32" and _with_excel(src, dst, cells, values, levels):
+    if sys.platform == "win32" and _with_excel(src, dst, cells, values, levels, formats):
         return "excel"
-    if _with_uno(src, dst, cells, values, levels):
+    if _with_uno(src, dst, cells, values, levels, formats=formats):
         return "soffice"
     raise FillError("Cpk 계산 파일을 채우려면 Excel 또는 LibreOffice 가 필요합니다.")

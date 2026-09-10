@@ -322,6 +322,8 @@ COA_PROMPT = """이 시험성적서(스캔 이미지)를 읽고 JSON 만 출력�
   불용성미립자·불용성이물·질량·용량·기밀도·pH·삼투압·비중처럼 표에 있는 항목을 하나도
   빠뜨리지 말고 적습니다. "name" 은 표에 적힌 항목 이름 그대로, "spec" 은 기준 칸,
   "value" 는 결과 칸입니다.
+· "sterility" 는 무균 시험(무균 | 음성) 결과, "bioburden" 은 생균수·바이오버든(CFU 숫자) 결과입니다 —
+  둘을 바꿔 적지 않습니다. 무균 줄도 "items" 에 반드시 넣습니다.
 · 숫자는 단위를 빼고 숫자만 적습니다."""
 
 COA_SCHEMA = {
@@ -332,6 +334,7 @@ COA_SCHEMA = {
         "particle": {"type": "string"}, "particle_spec": {"type": "string"},
         "metal_total": {"type": "string"}, "metal_each": {"type": "string"},
         "bioburden": {"type": "string"}, "bioburden_spec": {"type": "string"},
+        "sterility": {"type": "string"}, "sterility_spec": {"type": "string"},
         "assays": {"type": "array", "items": {
             "type": "object",
             "properties": {"part": {"type": "string"}, "lo": {"type": "string"},
@@ -344,7 +347,8 @@ COA_SCHEMA = {
             "required": ["name", "spec", "value"], "additionalProperties": False}},
     },
     "required": ["lot", "mfg_date", "expiry", "appearance", "verdict", "particle", "particle_spec",
-                 "metal_total", "metal_each", "bioburden", "bioburden_spec", "assays", "items"],
+                 "metal_total", "metal_each", "bioburden", "bioburden_spec", "sterility", "sterility_spec",
+                 "assays", "items"],
     "additionalProperties": False,
 }
 
@@ -381,7 +385,7 @@ def read_coa(path, log=None, pages=3):
             say("    [9.2] %d쪽을 읽지 못했습니다 — %s" % (page_no, error))
             continue
         for key in ("lot", "mfg_date", "expiry", "appearance", "verdict", "particle", "particle_spec",
-                    "metal_total", "metal_each", "bioburden", "bioburden_spec"):
+                    "metal_total", "metal_each", "bioburden", "bioburden_spec", "sterility", "sterility_spec"):
             value = str(got.get(key) or "").strip()
             if value and not out.get(key):
                 out[key] = value

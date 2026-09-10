@@ -68,6 +68,11 @@ def read_change(path):
     import pdfplumber
     with pdfplumber.open(path) as pdf:
         rows = form_rows(pdf.pages[0])
+    # '관련 제품' 칸이 여러 줄이면(CC-251110-09: 점안액 50여 품목) 첫 줄만 보고 '나조린점안액' 을 놓쳐
+    # "해당하는 변경인지 확인하지 못했습니다" 로 올렸다(담당자 2026-09-10: "해당됨"). 칸 전체를 잇는다.
+    whole = "".join(x.strip() for x in pick(rows, ("관련제품",)))
+    if whole and len(whole) > len(out["products"] or ""):
+        out["products"] = whole
     out["reason"] = "\n".join(pick(rows, ("변경사유",)))
     out["description"] = "\n".join(pick(rows, ("변경내용",)))
     out["attachments"] = "\n".join(pick(rows, ("첨부문서",)))

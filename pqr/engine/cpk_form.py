@@ -77,6 +77,69 @@ def cell_number(xml, ref):
         return None
 
 
+def _decimals(text):
+    """'6.40' → 2, '7.0' → 1, '7' → 0, 못 읽으면 None."""
+    m = re.search(r"-?\d+(?:\.(\d+))?", str(text if text is not None else ""))
+    if not m:
+        return None
+    return len(m.group(1)) if m.group(1) else 0
+
+
+def style_with_decimals(blobs, base, decimals):
+    """styles.xml 에 base 서식(cellXfs 번호)을 복제하고 소수 자릿수 표시 형식('0.00')만 바꾼 서식을
+    더한다 → 새 서식 번호. base 가 없으면 None.
+
+    담당자 2026-09-10: "소숫점 자리수는 시험성적서와 맞춰서 작성해줘 — 다른 시험항목도" (성적서의
+    '6.2 ~ 7.0' 이 규격 칸에 7 로, 결과값 '6.40' 이 6.4 로 보였다). 값은 숫자 그대로 두고 표시 형식만
+    맞춘다 — 수식·그래프가 그대로 쓴다.
+    """
+    if base is None or decimals is None:
+        return None
+    xml = blobs.get("xl/styles.xml", b"").decode("utf-8")
+    if not xml:
+        return None
+    code = "0" if decimals == 0 else "0." + "0" * decimals
+    cache = blobs.setdefault("__fmt_cache__", {}) if isinstance(blobs, dict) else {}
+    key = (str(base), code)
+    if key in cache:
+        return cache[key]
+    # numFmt — 이미 같은 형식이 있으면 그 번호
+    fm = re.search(r'<numFmt\b[^>]*numFmtId="(\d+)"[^>]*formatCode="%s"' % re.escape(code), xml)
+    if fm:
+        fmt_id = int(fm.group(1))
+    else:
+        ids = [int(x) for x in re.findall(r'<numFmt\b[^>]*numFmtId="(\d+)"', xml)]
+        fmt_id = max(ids + [163]) + 1
+        tag = '<numFmt numFmtId="%d" formatCode="%s"/>' % (fmt_id, code)
+        nm = re.search(r'<numFmts\b[^>]*count="(\d+)"[^>]*>', xml)
+        if nm:
+            xml = xml.replace(nm.group(0), re.sub(r'count="\d+"', 'count="%d"' % (int(nm.group(1)) + 1), nm.group(0)) + tag, 1)
+        else:
+            xml = re.sub(r'(<styleSheet\b[^>]*>)', r'\1<numFmts count="1">%s</numFmts>' % tag, xml, count=1)
+    xm = re.search(r'<cellXfs\b[^>]*count="(\d+)"[^>]*>(.*?)</cellXfs>', xml, re.S)
+    if not xm:
+        return None
+    xfs = re.findall(r'<xf\b[^>]*?(?:/>|>.*?</xf>)', xm.group(2), re.S)
+    try:
+        src = xfs[int(base)]
+    except (ValueError, IndexError):
+        return None
+    new_xf = re.sub(r'numFmtId="\d+"', 'numFmtId="%d"' % fmt_id, src, count=1)
+    if 'numFmtId=' not in new_xf:
+        new_xf = new_xf.replace("<xf ", '<xf numFmtId="%d" ' % fmt_id, 1)
+    if 'applyNumberFormat=' in new_xf:
+        new_xf = re.sub(r'applyNumberFormat="\d"', 'applyNumberFormat="1"', new_xf, count=1)
+    else:
+        new_xf = new_xf.replace("<xf ", '<xf applyNumberFormat="1" ', 1)
+    count = int(xm.group(1))
+    new_block = xm.group(0).replace('count="%d"' % count, 'count="%d"' % (count + 1), 1)
+    new_block = new_block[:-len("</cellXfs>")] + new_xf + "</cellXfs>"
+    xml = xml.replace(xm.group(0), new_block, 1)
+    blobs["xl/styles.xml"] = xml.encode("utf-8")
+    cache[key] = str(count)
+    return str(count)
+
+
 def cell_styles(xml):
     """{칸 이름: 서식 번호} — 결과값 칸의 서식(노랑·사선)을 그대로 물려받으려고 미리 읽는다."""
     return {m.group("ref"): _cell_style(m.group(0)) for m in _CELL.finditer(xml)}
@@ -264,7 +327,7 @@ def _chart_names(names):
     return [n for n in names if re.match(r"xl/charts/chart\d+\.xml$", n)]
 
 
-def fill(form, dst, cells, values, today=None):
+def fill(form, dst, cells, values, today=None, decimals=None, spec_decimals=None):
     """서식 form(.xlsx) 을 dst 로 복사하며 칸 값을 갈아 끼운다. 돌려주는 값은 'Bilateral'|'Unilateral'."""
     cells = dict(cells or {})
     if today:
@@ -294,6 +357,8 @@ def fill(form, dst, cells, values, today=None):
     for ref in ("C4", "C5", "K4", "K5"):
         if ref in cells:
             wanted[ref] = ("str", cells[ref])
+    seen = cell_styles(xml)
+    styles = {}
     for ref in ("N6", "O6", "P6"):
         if ref not in cells:
             continue
@@ -304,11 +369,17 @@ def fill(form, dst, cells, values, today=None):
             wanted[ref] = ("str", v)                       # 'N/A'
         else:
             wanted[ref] = ("n", cpk_xlsx._num(v))
+            # 규격 칸의 소수 자릿수는 성적서 글('6.2 ~ 7.0')대로 — 지정이 없으면 글의 자릿수
+            d = spec_decimals if spec_decimals is not None else (_decimals(v) if isinstance(v, str) else None)
+            if d:
+                got = style_with_decimals(blobs, seen.get(ref), d)
+                if got is not None:
+                    styles[ref] = got
     # 2) 결과값 — 값이 있는 줄은 값 칸 서식, 없는 줄은 사선 칸 서식으로
-    seen = cell_styles(xml)
     style_filled = seen.get("%s%d" % (DATA_COL, FIRST_DATA_ROW))
     style_blank = seen.get("%s%d" % (DATA_COL, FIRST_DATA_ROW + ROWS - 1))
-    styles = {}
+    if decimals:
+        style_filled = style_with_decimals(blobs, style_filled, decimals) or style_filled
     for i in range(ROWS):
         ref = "%s%d" % (DATA_COL, FIRST_DATA_ROW + i)
         if i < len(values):
@@ -354,6 +425,7 @@ def fill(form, dst, cells, values, today=None):
     else:
         book = book.replace("</workbook>", '<calcPr calcId="191029" fullCalcOnLoad="1"/></workbook>')
     blobs["xl/workbook.xml"] = book.encode("utf-8")
+    blobs.pop("__fmt_cache__", None)
     tmp = dst + ".tmp"
     with zipfile.ZipFile(tmp, "w", zipfile.ZIP_DEFLATED) as z:
         for name in names:

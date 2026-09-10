@@ -130,6 +130,30 @@ def cpk_jobs(data, lots, product_name=""):
     return jobs
 
 
+def _decimals(text):
+    """'6.40' → 2, '7.0' → 1, '7' → 0, 숫자가 없으면 None."""
+    m = re.search(r"-?\d+(?:\.(\d+))?", str(text if text is not None else ""))
+    if not m:
+        return None
+    return len(m.group(1)) if m.group(1) else 0
+
+
+def _fmt_code(decimals):
+    return "0" if not decimals else "0." + "0" * int(decimals)
+
+
+def _formats(cells, decimals, spec_decimals):
+    """xls_fill 에 넘길 표시 형식 {칸: '0.00'} — 규격 칸(N6/O6/P6)과 결과값 열('B')."""
+    out = {}
+    if spec_decimals:
+        for ref in ("N6", "O6", "P6"):
+            if cells.get(ref) not in (None, "") and _num(cells.get(ref)) is not None:
+                out[ref] = _fmt_code(spec_decimals)
+    if decimals:
+        out["B"] = _fmt_code(decimals)
+    return out
+
+
 SHEET_NAME = re.compile(r"경향\s*분석\s*Sheet", re.I)
 STAGE_KEYS = {"조제": ("921", "922"), "충전": ("923",), "포장": ("924",)}
 STAGE_WORD = {"조제": "조제 완료 후", "충전": "충전 완료 후", "포장": "포장 완료 후"}
@@ -178,14 +202,17 @@ def _spec_cells(spec, sided):
 
 
 def _value_of(rec, item, part):
-    """성적서 판독 한 건에서 (값, 허용기준) — 못 찾으면 (None, '')."""
+    """성적서 판독 한 건에서 (값, 허용기준, 원문 글) — 못 찾으면 (None, '', '').
+
+    원문 글('6.40')은 소수 자릿수를 성적서대로 보이려고 함께 돌려준다(담당자 2026-09-10).
+    """
     want = _norm(item)
     if "함량" in item:
         for a in rec.get("assays") or []:
             if not part or _norm(a.get("part")) == _norm(part) or _norm(part) in _norm(a.get("part")):
                 lo, hi = a.get("lo"), a.get("hi")
-                return _num(a.get("value")), ("%s ~ %s" % (lo, hi) if lo and hi else "")
-        return _num(rec.get("assay")), str(rec.get("assay_spec") or "")
+                return _num(a.get("value")), ("%s ~ %s" % (lo, hi) if lo and hi else ""), str(a.get("value") or "")
+        return _num(rec.get("assay")), str(rec.get("assay_spec") or ""), str(rec.get("assay") or "")
     if "바이오버든" in item or "생균수" in item:
         got = rec.get("bioburden")
         spec = rec.get("bioburden_spec") or ""
@@ -193,7 +220,7 @@ def _value_of(rec, item, part):
             for name, one in (rec.get("items") or {}).items():
                 if "생균" in name or "바이오버든" in name:
                     got, spec = one.get("value"), one.get("spec") or ""
-        return _num(got), str(spec)
+        return _num(got), str(spec), str(got or "")
     best = None
     for name, one in (rec.get("items") or {}).items():
         flat = _norm(re.sub(r"[(（][^)）]*[)）]", "", name))
@@ -201,13 +228,13 @@ def _value_of(rec, item, part):
             if best is None or len(flat) < len(best[0]):
                 best = (flat, one)
     if best is None:
-        return None, ""
+        return None, "", ""
     value = str(best[1].get("value") or "")
     if part:
         m = re.search(re.escape(re.sub(r"\s+", "", part)) + r"\s*[:：]\s*([^,，;；]+)", re.sub(r"\s+", "", value))
         if m:
             value = m.group(1)
-    return _num(value), str(best[1].get("spec") or "")
+    return _num(value), str(best[1].get("spec") or ""), value
 
 
 def cpk_jobs_from_sheets(input_dir, data, lots, product_name=""):
@@ -235,19 +262,24 @@ def cpk_jobs_from_sheets(input_dir, data, lots, product_name=""):
         info = slot.get("0") or slot.get("16")
         src = info["path"]
         stage, item, part = info["stage"], info["item"], info["part"]
-        values, specs = [], []
+        values, specs, raws, missing = [], [], [], []
         for lot in lots:
             # 조제는 IPC(921)와 바이오버든(922) 성적서가 따로다 — 항목이 있는 쪽을 쓴다
+            found_one = False
             for k in STAGE_KEYS[stage]:
                 rec = (data.coa.get(lot) or {}).get(k) or {}
                 if not rec:
                     continue
-                v, sp = _value_of(rec, item, part)
+                v, sp, raw = _value_of(rec, item, part)
                 if v is not None:
                     values.append(v)
+                    raws.append(raw)
                     if sp:
                         specs.append(re.sub(r"\s+", "", sp))
+                    found_one = True
                     break
+            if not found_one:
+                missing.append(lot)
         label = "%s %s%s" % (stage, item, ("(%s)" % part) if part else "")
         out_name = re.sub(r"^\s*(?:0|16)\.\s*", "", os.path.basename(src))
         out_name = re.sub(r"\s*-\s*복사본\s*", "", out_name)
@@ -261,7 +293,14 @@ def cpk_jobs_from_sheets(input_dir, data, lots, product_name=""):
                 distinct.append(sp)
         if distinct:
             cells.update(_spec_cells(distinct[-1], info["sided"]))
+        # 소수 자릿수는 성적서대로 — 결과값은 가장 자세한 값('6.40' → 2), 규격은 기준 글('6.2~7.0' → 1)
+        # (담당자 2026-09-10: "소숫점 자리수는 시험성적서와 맞춰서 작성해줘 — 다른 시험항목도").
+        decimals = max([_decimals(r) for r in raws if _decimals(r) is not None] or [0])
+        spec_decimals = max([_decimals(x) for x in re.findall(r"-?\d+(?:\.\d+)?", distinct[-1])] or [0]) if distinct else 0
         jobs.append({"src": src, "name": out_name, "label": label, "values": values, "cells": cells,
+                     "decimals": decimals, "spec_decimals": spec_decimals, "missing": missing,
+                     # 뒤쪽 Lot 만 줄줄이 비면 도중에 생략된 시험이다(변경관리) — 성적서 확인을 묻지 않는다
+                     "trailing_gap": bool(missing) and lots[len(lots) - len(missing):] == missing,
                      "sided": info["sided"], "prefix": info["prefix"],
                      "stage": stage, "item": item, "part": part,
                      "spec_note": (" → ".join(distinct)) if len(distinct) > 1 else ""})
@@ -309,16 +348,25 @@ def write_cpk_files(folder, data, previous_path, today, lots=None, product_name=
                 data.issues.append(("첨부", job["name"], "'%s' 성적서 값이 없어 Cpk 계산 파일을 만들지 않음" % job["label"]))
                 continue
             if len(job["values"]) < len(lots):
-                data.issues.append(("첨부", job["name"], "'%s' 값이 %d/%d Lot 에만 있습니다 — 성적서를 확인하세요"
-                                    % (job["label"], len(job["values"]), len(lots))))
+                if job.get("trailing_gap"):
+                    # 나조린 조제 비중: LKYD01 부터 변경관리(CC-250822-03)로 생략 — 본문 9.2 가 각주·문의를
+                    # 이미 냈다 (담당자 2026-09-10: "문제 없어. 변경관리에 따라 비중 시험 삭제")
+                    log("  %s: '%s' 는 %s 부터 시험이 없어 %d Lot 으로 만듭니다 (도중 생략 — 9.2 각주 참고)"
+                        % (job["name"], job["label"], job["missing"][0], len(job["values"])))
+                else:
+                    data.issues.append(("첨부", job["name"], "'%s' 값이 %d/%d Lot 에만 있습니다(없는 Lot: %s) — 성적서를 확인하세요"
+                                        % (job["label"], len(job["values"]), len(lots), ", ".join(job["missing"]))))
             if job.get("spec_note"):
-                data.issues.append(("첨부", job["name"], "'%s' 허용기준이 Lot 에 따라 다릅니다(%s) — 가장 최근 기준으로 "
-                                    "규격 칸을 적었습니다. 확인하세요" % (job["label"], job["spec_note"])))
+                # 연중에 기준이 바뀌면 가장 최근 기준 — 담당자 확인 완료(2026-09-10: "가장 최근 기준으로 작성하면 돼").
+                # 본문 9.1 이 기준 변경 각주와 문의를 따로 내므로 여기서는 기록만 남긴다.
+                log("  %s: '%s' 허용기준이 Lot 에 따라 다름(%s) — 가장 최근 기준으로 규격 칸을 적음"
+                    % (job["name"], job["label"], job["spec_note"]))
             cells = dict(job["cells"], K4=today)
             dst = free_path(os.path.join(folder, job["name"]), data, log)
             name = os.path.basename(dst)
             try:
-                xls_fill.fill(job["src"], dst, cells, job["values"])
+                xls_fill.fill(job["src"], dst, cells, job["values"],
+                              formats=_formats(cells, job.get("decimals"), job.get("spec_decimals")))
                 out.append((name, dst))
                 log("  %s: %s번 서식을 그대로 채움 (%d Lot)" % (name, job["prefix"], len(job["values"])))
                 continue
@@ -329,7 +377,8 @@ def write_cpk_files(folder, data, previous_path, today, lots=None, product_name=
             try:
                 converted = os.path.join(work, "form-%d.xlsx" % len(out))
                 convert.to_xlsx(job["src"], converted)
-                cpk_form.fill(converted, dst2, cells, job["values"], today)
+                cpk_form.fill(converted, dst2, cells, job["values"], today,
+                              decimals=job.get("decimals"), spec_decimals=job.get("spec_decimals"))
                 out.append((os.path.basename(dst2), dst2))
                 log("  %s: 서식을 .xlsx 로 바꿔 채움 — %s" % (os.path.basename(dst2), why))
             except Exception as error:
