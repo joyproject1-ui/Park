@@ -56,9 +56,6 @@ class 병합된_머리행(unittest.TestCase):
         self.assertEqual(specs["포장(베트남)"], "98.0 ± 2.0%")
 
 
-if __name__ == "__main__":
-    unittest.main()
-
 
 class 머리가_두_줄인_표(unittest.TestCase):
     """아이퓨어 수율현황표 — '포장' 아래에 '내수'·'온누리에이치엔씨' 가 따로 있다
@@ -286,3 +283,19 @@ class 머리_칸이_두_열에_걸친_공양식(unittest.TestCase):
         raw = E.raw_cells(t.rows[5])
         self.assertSame(값칸[0], raw[1])                 # '최댓값' 이 0~1열을 덮어 한 칸씩 밀린다
         self.assertSame(값칸[3], raw[4])
+
+
+class 수율_NA(unittest.TestCase):
+    """수율현황표의 'N/A' 는 값이 아니라 '그 공정(시장)을 거치지 않음' — 사선 (퀴노비드점안액 2026-09-10:
+    float('N/A') 로 작성 전체가 멈췄다)."""
+
+    def test_NA_글_판별(self):
+        from pqr.engine import recipe_ointment as R
+        for t in ("N/A", "n/a", " NA ", "-", "해당없음", "해당 없음"):
+            self.assertTrue(R.NA_TEXT.match(t), t)
+        for t in ("99.92", "0", "확인 중"):
+            self.assertFalse(R.NA_TEXT.match(t), t)
+
+
+if __name__ == "__main__":
+    unittest.main()

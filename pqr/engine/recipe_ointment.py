@@ -1076,6 +1076,9 @@ def _sub_label(text):
     return re.sub(r"\s+", "", m.group(1)) if m else ""
 
 
+NA_TEXT = re.compile(r"^\s*(N\s*/\s*A|NA|-|—|해당\s*없음|없음)\s*$", re.I)
+
+
 def _yield_value(vals, name):
     """표 열 이름으로 수율현황표 값 찾기.
 
@@ -1654,6 +1657,11 @@ def fill(document, data, product, period, today=None, log=None):
             값칸, 비고칸 = _cells_for(row, columns)
             y = data.yields.get(lot, {})
             v = [_yield_value(y, one[-1]) for one in columns]
+            # 수율현황표에 'N/A'·'-' 로 적힌 칸은 그 Lot 이 그 공정(시장)을 거치지 않은 것이다 — 값이 아니라
+            # '해당 없음' 이므로 사선. 예전에는 float('N/A') 에서 작성 전체가 멈췄다
+            # (퀴노비드점안액 2026-09-10: 포장(베트남)·포장(이라크) 열).
+            na = [isinstance(x, str) and bool(NA_TEXT.match(x)) for x in v]
+            v = [None if na[k] else x for k, x in enumerate(v)]
             vals[lot] = v
             E.set_cell(r[0], str(i + 1)); E.set_cell(r[1], lot)
             for k, one in enumerate(columns):
@@ -1664,7 +1672,7 @@ def fill(document, data, product, period, today=None, log=None):
                 if v[k] is not None:
                     E.clear_diag(cell)
                     E.set_cell(cell, v[k])
-                elif _other_market(columns, v, k):
+                elif na[k] or _other_market(columns, v, k):
                     # 그 Lot 을 그 시장으로 포장하지 않았다 — 빈 칸에 사선 (담당자 수기본과 같게)
                     E.set_cell(cell, "")
                     E.add_diag(cell)
@@ -1677,7 +1685,10 @@ def fill(document, data, product, period, today=None, log=None):
                 sp = specs[k] if k < len(specs) else None
                 if sp and v[k] is not None:
                     lo, hi = sp
-                    fv = float(v[k])
+                    fv = _num(v[k])
+                    if fv is None:                       # 숫자가 아닌 글('확인 중' 등)은 기준 판정을 건너뛴다
+                        log("  7항 %s %s: 수율 값 '%s' 이 숫자가 아니라 기준 판정을 건너뜀" % (lot, columns[k][-1], v[k]))
+                        continue
                     if (lo is not None and fv < lo) or (hi is not None and fv > hi):
                         out = True
             if 비고칸 is not None:              # 비고: 행마다 따로 (병합을 풀고) 주석을 단다
@@ -1718,8 +1729,8 @@ def fill(document, data, product, period, today=None, log=None):
                 cell = 값칸[k]
                 if cell is None:
                     continue
-                xs = [float(vals[lt][k]) for lt in lots
-                      if lt not in yield_out and vals[lt][k] is not None]
+                xs = [x for x in (_num(vals[lt][k]) for lt in lots
+                                  if lt not in yield_out and vals[lt][k] is not None) if x is not None]
                 if xs:
                     E.set_cell(cell, fn(xs))
                 else:
