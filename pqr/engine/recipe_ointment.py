@@ -684,10 +684,19 @@ def change_covers(cc, name, parts=()):
     return bool(GROUP_WIDE.search(cc.get("products") or ""))
 
 
-def _latest_pair(entry, a="IQ", b="OQ"):
+def _within(got, cutoff):
+    """평가 기간 끝(cutoff 'YYYYMMDD')까지 완료된 것만 — 하나도 없으면 그대로 (올로원스 2026-09-10 검토:
+    10.2 PQ 를 2026.04.27 것으로 적었는데 2025년 PQR 이니 2025.04.28 것이어야 한다)."""
+    if not cutoff:
+        return got
+    inside = [x for x in got if re.sub(r"\D", "", x[1])[:8] <= cutoff]
+    return inside or got
+
+
+def _latest_pair(entry, a="IQ", b="OQ", cutoff=None):
     """IQ 와 OQ 의 가장 최근 문서가 같은 한 문서(IOQ…)면 (문서, 일자), 아니면 None."""
     def latest(kind):
-        got = [(d, dt) for d, dt in entry.get(kind, []) if d and dt]
+        got = _within([(d, dt) for d, dt in entry.get(kind, []) if d and dt], cutoff)
         return max(got, key=lambda x: re.sub(r"\D", "", x[1])[:8]) if got else None
     la, lb = latest(a), latest(b)
     if la and lb and la[0].split("(")[0].strip() == lb[0].split("(")[0].strip():
@@ -1309,11 +1318,12 @@ def _spans(cell):
     return int(el.get(qn("w:val"))) if el is not None else 1
 
 
-def update_qualification(table, lookup):
+def update_qualification(table, lookup, cutoff=None):
     """관리번호 행마다 IQ·OQ·PQ 열의 (문서번호 행 · 완료일 행) 을 마스터 값으로 채운다.
 
     빈 서식(공양식)의 IQ·OQ 칸은 사선만 그어져 있고 비어 있다 — 마스터파일에서 읽어
     채우고 사선을 지운다(담당자 2026-09). 이미 값이 있으면 마스터가 더 최근일 때만 바꾼다.
+    cutoff('YYYYMMDD'): 평가 기간 끝 — 그 뒤에 완료된 문서(다음 해 재적격성평가)는 이번 PQR 에 적지 않는다.
     """
     rows = table.rows
     width = E.grid_width(table)
@@ -1341,7 +1351,7 @@ def update_qualification(table, lookup):
         # IQ·OQ 를 하나로 합친 문서(IOQ20-UT-HEA5029-R)는 두 칸을 합쳐 한 번만 적는다 — 결재본 관행.
         # 공양식의 IQ·OQ 칸이 비어 있으면(담당자 PC 2026-09-06: 10.4·10.5 IOQ 칸이 사선만) 여기서
         # 칸을 합쳐 채우고, 반대로 합쳐진 칸에 IQ·OQ 문서가 따로 있으면 칸을 나눠 각각 적는다.
-        ioq = _latest_pair(lookup[mid], "IQ", "OQ")
+        ioq = _latest_pair(lookup[mid], "IQ", "OQ", cutoff)
         if ioq is not None and "IQ" in kind_col and "OQ" in kind_col:
             ci, co = kind_col["IQ"], kind_col["OQ"]
             for grid, row_ in ((doc_grid, rows[ri]), (date_grid, rows[ri + 1])):
@@ -1356,7 +1366,7 @@ def update_qualification(table, lookup):
                         E.split_span(grid[ci])          # 비어 있는 합친 칸만 나눈다 — 적힌 값은 건드리지 않는다
                 doc_grid, date_grid = E.grid_cells(rows[ri], width), E.grid_cells(rows[ri + 1], width)
         for kind, col in kind_col.items():
-            got = [(d, dt) for d, dt in lookup[mid].get(kind, []) if dt and d]
+            got = _within([(d, dt) for d, dt in lookup[mid].get(kind, []) if dt and d], cutoff)
             if not got:
                 continue
             latest = max(got, key=lambda x: re.sub(r"\D", "", x[1])[:8])
@@ -2502,9 +2512,20 @@ def fill(document, data, product, period, today=None, log=None):
                     if plain is not None and not re.search(r"\d+\s*(?:㎛|um|μm)", lab):
                         return plain
                 if any(c in lab for c in CIRCLED):
+                    circ = next(c for c in lab if c in CIRCLED)
+                    if "이물" in lab and "유연" not in lab:
+                        # 충전 표의 '이물검사 ①·②' 는 유연물질 범례가 아니라 성적서의 '이물검사 1)·2)' 줄이다
+                        # (올로원스 2026-09-10 검토: ①② 칸에 '불검출 / 불검출(LOQ미만)' — 유연물질 값이 들어갔다)
+                        n_ = CIRCLED.index(circ) + 1
+                        for key in ({"충전": ("923",), "포장": ("924",), "조제": ("921", "922")}
+                                    .get(next((s_ for s_ in D.STAGES if s_ in str(process or "")), ""), ("923", "924"))):
+                            one = (rec(lot, key).get("items") or {}).get("이물검사 %d)" % n_) or {}
+                            if (one.get("value") or "").strip():
+                                return one["value"].strip()
+                        return None
                     묶음 = re.search(r"유연물질\s*(\d)\s*\)", lab)
-                    return _impurity_value(r924, _impurity_legend(document).get(
-                        next(c for c in lab if c in CIRCLED)) or "", 묶음.group(1) if 묶음 else None)
+                    return _impurity_value(r924, _impurity_legend(document).get(circ) or "",
+                                           묶음.group(1) if 묶음 else None)
                 if "유연물질" in lab:
                     # 성적서는 '유연물질 A : 불검출, 유연물질 B : 0.1%, …' 한 덩어리다. 열마다 제
                     # 성분만 뽑지 않으면 네 칸에 같은 글이 통째로 들어간다 (담당자 2026-09-09 아이퓨어).
@@ -3487,6 +3508,8 @@ def fill(document, data, product, period, today=None, log=None):
     # 마스터파일로 문서·완료일을 갱신한다(담당자 2026-09-06: "작성할 줄 모르겠으면 16항의 전년도 PQR 결재본을
     # 참고해서 작성하고 … 업로드한 파일로 최신 내용으로 업데이트하면 돼").
     seeds = getattr(data, "prev_equipment", None) or {}
+    # 평가 기간 끝까지 완료된 IQ·OQ·PQ 만 — 다음 해(2026) 재적격성평가는 이번(2025년) PQR 것이 아니다
+    qual_cutoff = re.sub(r"\D", "", str((period or {}).get("to") or ""))[:8] or None
     for prefix in ("10.2", "10.3", "10.4", "10.5"):
         for t in _tables(document, prefix):
             if seeds.get(prefix) and not _has_equipment(t):
@@ -3497,7 +3520,7 @@ def fill(document, data, product, period, today=None, log=None):
             gone = drop_equipment(t, DRY_HEAT, keep=("디겐타",), name=name)
             if gone:
                 log("10.2: 이 제품에 쓰지 않는 설비 %d대를 뺌" % gone)
-            upd += update_qualification(t, eq_lookup)
+            upd += update_qualification(t, eq_lookup, qual_cutoff)
     for t in _tables(document, "10.4"):        # 제조용수는 층마다 따로다 — 우리 층(1층) 설비로
         for old_mid, new_mid in use_our_floor(t, data.support):
             log("10.4: %s(%s층 설비)를 연고 라인 %s층 설비 %s 로 바꿈"
@@ -3507,7 +3530,7 @@ def fill(document, data, product, period, today=None, log=None):
                            % (FLOOR, new_mid, data.support[new_mid].get("name") or "")))
     for prefix in ("10.3", "10.4", "10.5"):
         for t in _tables(document, prefix):
-            upd += update_qualification(t, sp_lookup)
+            upd += update_qualification(t, sp_lookup, qual_cutoff)
     log("10항 IQ·OQ·PQ 갱신: %d" % upd)
     # 검토: 마스터파일에 문서가 있는데 빈 칸이 남았으면 문의 목록 맨 앞에 ★ 로 알린다 —
     # 담당자 PC 에서 10.4·10.5 IOQ 칸이 비어 나간 일(2026-09-06)이 되풀이되지 않게.
@@ -3998,7 +4021,7 @@ def _fill_131_table(table, rows, why_of, issues, post=False):
         E.set_cell_plain(cell, "특이사항 (Comment)", *kept)
 
 
-def _fill_133_table(table, groups, spec, _trim, marks=None, issues=None):
+def _fill_133_table(table, groups, spec, _trim, marks=None, issues=None, year_to=None):
     """13.3 경향 분석 — groups: [(줄 이름 '시판 후'|'장기', log, 평가 연도까지의 시점들)]. 성분마다 최솟값 ~ 최댓값."""
     labels = D.labels(table)
     # 줄 이름과 연도가 한 칸에 적힌 서식('시판 후(2023)' | pH | 함량 | 삼투압 — 아이퓨어 2026 공양식)은
@@ -4069,13 +4092,20 @@ def _fill_133_table(table, groups, spec, _trim, marks=None, issues=None):
     values = {k: [] for k, _ in parts}
     guessed = {k: set() for k, _ in parts}
     말들 = {k: [] for k, _ in parts}                        # '불검출'·'음성' 처럼 숫자가 아닌 결과                 # 애매하게 읽힌 예상값 — 최소·최대가 여기서 나오면 노랑
+
+    def _pct_off(x):
+        """'0.1%' → '0.1' — 유연물질 판독값에 % 가 붙어 오면 숫자로 보지 못해 글('불검출')로 떨어졌다
+        (올로원스 2026-09-10: 13.3 최소·최대가 '불검출(LOQ 미만)' 뿐). 열 머리에 (%) 가 있으니 숫자만 적는다."""
+        if x is None:
+            return None
+        return re.sub(r"\s*%\s*$", "", str(x).strip())
     # 열마다 자릿수를 따로 — 삼투압(302)은 정수, 함량(100.6)은 소수 한 자리. 함량 자릿수를 삼투압에
     # 씌우면 '302.0 ~ 319.0' 처럼 시험일지에 없는 자릿수가 생긴다.
     def _dec_of(part):
         d = 0
         for _lab, _one, seen in groups:
             for pt in seen:
-                v = (pt.get("assays") or {}).get(part)
+                v = _pct_off((pt.get("assays") or {}).get(part))
                 if v is not None and "." in str(v):
                     d = max(d, len(str(v).split(".")[1].rstrip("0")))
         return d
@@ -4119,7 +4149,7 @@ def _fill_133_table(table, groups, spec, _trim, marks=None, issues=None):
             if cells.get(k) is None:
                 continue
             shaky = [p for p in taken if part in (p.get("unsure") or [])]
-            raw = [p["assays"].get(part) for p in taken]
+            raw = [_pct_off(p["assays"].get(part)) for p in taken]
             raw = [x for x in raw if x is not None and str(x).strip() != ""]
             # 유연물질·무균처럼 '불검출'·'음성' 이 섞여 오는 항목이 있다 — 숫자만 골라 범위를 내고,
             # 글은 글대로 남긴다 (담당자 2026-09-09 아이퓨어 13.3 유연물질).
@@ -4190,8 +4220,9 @@ def _fill_133_table(table, groups, spec, _trim, marks=None, issues=None):
                     E.set_cell(cells[k], re.sub(r"\s*%$", "", spec.get(part, "")))
                 bold_rows.add(ri)
             elif "최소" in head:
-                E.set_cell(cells[k], trims[k](min(values[k])))
-                if min(values[k]) in guessed[k]:
+                # '불검출' 이 한 번이라도 있으면 그것이 최소다 (숫자보다 아래) — 유연물질 열
+                E.set_cell(cells[k], max(set(말들[k]), key=말들[k].count) if 말들[k] else trims[k](min(values[k])))
+                if not 말들[k] and min(values[k]) in guessed[k]:
                     E.highlight_cell(cells[k])              # 예상값이 최소가 됐다 — 대조 필요
             elif "최대" in head:
                 E.set_cell(cells[k], trims[k](max(values[k])))
@@ -4203,19 +4234,21 @@ def _fill_133_table(table, groups, spec, _trim, marks=None, issues=None):
                 E.set_cell(cells[k], "적합" if ok else "부적합")
     for ri in bold_rows:                          # 관리 규격은 굵은 글씨 (담당자 2026-09-10: "관리 규격은 굵은 글씨로")
         E.bold_row(table, ri, first_col=0)
-    _note_133_lots(table, notes)
+    _note_133_lots(table, notes, year_to)
     return len(groups)
 
 
 LOT_NOTE = "* 해당 연도의 제조번호 —"
 
 
-def _note_133_lots(table, notes):
+def _note_133_lots(table, notes, year_to=None):
     """13.3 특이사항에 '어느 해가 어느 Lot 인지' 를 적는다.
 
     담당자 2026-09-07: "이 정보가 13.3.1 특이사항 칸에 기재되어야지" — 경향표에는 연도만 적혀
     2024¹⁾·2024²⁾ 가 어느 제조번호인지 표에서 알 수 없다. 서식에 담당자가 적어 둔 다른 글
-    (갈음 문구 등)은 그대로 두고 이 줄만 새로 쓴다.
+    (갈음 문구 등)은 그대로 두고 이 줄만 새로 쓴다. 다만 그 글에 든 연도('2024 년도에 진행한 …
+    (2022~2024)')는 전년도 결재본 것이므로 올해 평가 연도와 표의 Lot 연도로 바꾼다
+    (올로원스 2026-09-10 검토: 전년도 PQR 문구 그대로).
     """
     if not notes:
         return
@@ -4226,6 +4259,15 @@ def _note_133_lots(table, notes):
     cell = E.comment_cell(table)
     kept = [l for l in E.cell_text(cell).split("\n")[1:]
             if l.strip() and l.strip() != "N/A" and not l.strip().startswith(LOT_NOTE)]
+    years = sorted({int(m.group(0)) for _l, y, _lot in notes for m in [re.match(r"\d{4}", str(y))] if m})
+    if years:
+        fixed = []
+        for l in kept:
+            if year_to:
+                l = re.sub(r"\d{4}(\s*년도에\s*진행한)", "%d\\1" % int(year_to), l)
+            l = re.sub(r"\(\s*\d{4}\s*[~∼–-]\s*\d{4}\s*\)", "(%d~%d)" % (years[0], years[-1]), l)
+            fixed.append(l)
+        kept = fixed
     E.set_cell_plain(cell, "특이사항 (Comment)", *(kept + [line]))
 
 
@@ -4593,7 +4635,7 @@ def _fill_stability26(document, logs, period, spec, log, issues, why_of=None, pr
         groups = [("시판 후", one, seen) for one, seen in trend_p] + [("장기", one, seen) for one, seen in trend_l]
         if trend_tables and groups:
             n = sum(_fill_133_table(t, groups, spec, _trim, marks.get(market) or marks.get(""),
-                                    issues=issues) for t in trend_tables)
+                                    issues=issues, year_to=year_to) for t in trend_tables)
             wrote.append("경향·%s %d줄(표 %d개)" % (market, n, len(trend_tables)))
     log("13항: %s" % (", ".join(wrote) if wrote else "평가 기간에 든 시점이 없음"))
 

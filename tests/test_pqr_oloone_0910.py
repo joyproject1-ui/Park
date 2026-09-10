@@ -9,6 +9,7 @@ from pqr.engine import recipe_ointment as R
 from pqr.engine import claude_cli
 from pqr.engine import excel_attach as XA
 from pqr.engine import stability_read
+from pqr.engine.readers import batch_record
 
 
 class 성적서_같은이름줄(unittest.TestCase):
@@ -71,6 +72,39 @@ class 판독_covers_all(unittest.TestCase):
         paths = [os.path.join("x", "GVV101.pdf"), os.path.join("x", "GVX501.pdf")]
         self.assertEqual(stability_read.unread_paths(paths, [{"source": "GVV101.pdf"}]), [paths[1]])
         self.assertEqual(stability_read.unread_paths(paths, [{"source": "GVV101.pdf"}, {"source": "GVX501.pdf"}]), [])
+
+
+class 필터는_자재가_아니다(unittest.TestCase):
+    """담당자 2026-09-10 올로원스 8.1.3: "필터정보는 추가하지 말아줘"."""
+
+    def test_필터_카트리지는_뺀다(self):
+        self.assertFalse(batch_record.is_material("ESF126", "Polyethersulfone 0.2㎛ (20inch) (SCS92SP72S)"))
+        self.assertFalse(batch_record.is_material("EPX001", "멸균 필터 0.22um"))
+        self.assertFalse(batch_record.is_material("EPX002", "PVDF membrane cartridge"))
+
+    def test_부원료_포장자재는_그대로(self):
+        self.assertTrue(batch_record.is_material("EPB111", "벤잘코늄염화물"))
+        self.assertTrue(batch_record.is_material("P12078", "PE병"))
+        self.assertTrue(batch_record.is_material("EPS118", "염화나트륨"))
+
+
+class 적격성_평가기간(unittest.TestCase):
+    """10항 IQ·OQ·PQ 는 평가 기간 끝까지 완료된 문서 — 다음 해 재적격성평가는 이번 PQR 것이 아니다."""
+
+    def test_기간_안의_것만(self):
+        got = [("PQ25-5-DAE5012-R", "2025.04.28"), ("PQ26-5-DAE5012-R", "2026.04.27")]
+        self.assertEqual(R._within(got, "20251231"), [("PQ25-5-DAE5012-R", "2025.04.28")])
+        self.assertEqual(R._within(got, None), got)
+
+    def test_기간_안에_하나도_없으면_그대로(self):
+        got = [("PQ26-5-DAE5012-R", "2026.04.27")]
+        self.assertEqual(R._within(got, "20251231"), got)
+
+    def test_IOQ_짝도_기간을_본다(self):
+        entry = {"IQ": [("IOQ23-TS-X-R", "2023.01.01"), ("IOQ26-TS-X-R", "2026.02.01")],
+                 "OQ": [("IOQ23-TS-X-R", "2023.01.01"), ("IOQ26-TS-X-R", "2026.02.01")]}
+        self.assertEqual(R._latest_pair(entry, cutoff="20251231"), ("IOQ23-TS-X-R", "2023.01.01"))
+        self.assertEqual(R._latest_pair(entry), ("IOQ26-TS-X-R", "2026.02.01"))
 
 
 if __name__ == "__main__":

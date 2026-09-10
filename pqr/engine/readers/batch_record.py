@@ -65,8 +65,12 @@ def _value_after(cells, i):
 
 # 8.1.3 에 실을 자재가 아닌 것 — 저울 같은 계측기·설비와 배송용 하조(荷造) 상자
 # (담당자 2026-09-07: "전자 저울과 하조용 종이상자는 지워 줘")
-NOT_MATERIAL = re.compile(r"저울|계측기|측정기|하조용")
-EQUIP_CODE = re.compile(r"^(?:FAB|FAC|EQ|MC)\d")
+# 필터(Polyethersulfone 0.2㎛ 카트리지 등)는 공정 소모품이지 원/자재가 아니다 — 8.1.3 에 보태지 않는다
+# (담당자 2026-09-10 올로원스: "필터정보는 추가하지 말아줘")
+NOT_MATERIAL = re.compile(r"저울|계측기|측정기|하조용|필터|filter|cartridge|카트리지|멤브레인|membrane|"
+                          r"polyethersulfone|polyvinylidene|\bPES\b|\bPVDF\b|\bPTFE\b|\d+(?:\.\d+)?\s*(?:㎛|um|μm)\s*\(?\d+\s*inch",
+                          re.I)
+EQUIP_CODE = re.compile(r"^(?:FAB|FAC|EQ|MC|ESF)\d")
 
 
 def is_material(code, name):

@@ -969,6 +969,28 @@ def collect(folder, product_name=None, log=None):
                                       "값을 채워 주세요")
             except Exception as error:
                 note("13", p, "안정성 판독 파일을 읽지 못했습니다 — %s" % error)
+    # 판독 파일과 13 폴더의 시험일지가 짝이 맞는지 본다 — 폴더의 일지를 바꿨는데(2022~2024 → 2023~2025) 옛 판독
+    # 파일이 covers_all 로 남아 있으면 지난해 Lot 이 그대로 실린다 (담당자 2026-09-11 올로원스: "안정성 시험이
+    # 2023·2024·2025년 pdf 인데 기재된 내용은 2022·2023·2024년"). source 가 폴더에 없는 Lot 은 빼고, 폴더에
+    # 있는데 판독에 없는 일지는 covers_all 이어도 읽는다.
+    pdf_names = {os.path.basename(p) for p, _scan in data.stability_files}
+    if data.stability_logs and pdf_names and any((one.get("source") or "").strip() for one in data.stability_logs):
+        def _srcs(one):
+            return [os.path.basename(x.strip()) for x in str(one.get("source") or "").split(",") if x.strip()]
+        gone = [one for one in data.stability_logs if _srcs(one) and not any(x in pdf_names for x in _srcs(one))]
+        if gone:
+            data.stability_logs = [one for one in data.stability_logs if one not in gone]
+            log("  [13] 판독 파일의 %d Lot(%s)은 13 폴더에 그 시험일지가 없어 뺐습니다 — 폴더의 일지가 바뀌었으면 "
+                "판독 파일을 다시 만드세요" % (len(gone), ", ".join("%s←%s" % (one.get("lot"), ",".join(_srcs(one))) for one in gone)))
+            note("13", ", ".join(str(one.get("lot") or "?") for one in gone),
+                 "판독 파일(13. 안정성시험일지 판독.json)에 있는 Lot 인데 13 폴더에 그 시험일지 파일이 없어 표에서 뺐습니다 — "
+                 "폴더의 일지를 바꿨으면 판독 파일을 지우고 다시 읽히세요")
+        referenced = {x for one in data.stability_logs for x in _srcs(one)}
+        fresh = sorted(n for n in pdf_names if n not in referenced)
+        if fresh and getattr(data, "stability_all_read", False):
+            data.stability_all_read = False
+            log("  [13] 판독 파일에 없는 시험일지 %d장(%s) — covers_all 이어도 이 장은 읽습니다"
+                % (len(fresh), ", ".join(fresh[:5])))
     # 판독 파일(.json)도 없고 Claude 비전(API 키)도 없으면 PC 에서 오프라인으로 손글씨를 읽는다
     # (담당자 2026-09: "API 안 하고 json 없이 최대한 판독, 애매한 것만 노랑"). 깨끗이 읽힌 값만
     # 쓰고 나머지는 '애매' 로 남겨 보고서가 노랑·주황으로 칠한다. 결과는 판독 파일로 저장해
