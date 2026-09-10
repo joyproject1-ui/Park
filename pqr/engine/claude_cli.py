@@ -55,6 +55,9 @@ PROMPT = """다음 안정성 시험일지(손글씨 스캔 PDF)를 모두 읽고
 · assays: **숫자로 적힌 시험항목 모두** — 함량(성분이 둘이면 성분마다), 보존제, pH, 삼투압, 비중, 제제균일성 등.
   이름은 표의 시험항목 이름 그대로("pH", "보존제", 성분 이름). 성분 이름을 모르면 "함량".
   pH 는 반드시 넣습니다 — 13.3 경향표의 첫 열이 pH 입니다. 고쳐 쓴 값(두 줄로 적힌 값)은 나중 값을 씁니다.
+  유연물질(성분마다 한 줄: "Olopatadine E-isomer", "유연물질1 기타 유연물질", "총 유연물질" …)·무균처럼 글로
+  적힌 결과("불검출", "불검출(LOQ미만)", "음성")도 그 글 그대로 assays 에 넣습니다 — 13.3 표에 유연물질 열이 있습니다.
+  같은 이름이 두 표(유연물질1·유연물질2)에 있으면 "유연물질1 기타 유연물질"/"유연물질2 기타 유연물질" 로 가릅니다.
 %(parts)s
 · unsure: 읽기 애매한 것의 이름을 넣습니다 — 완료 일자가 애매하면 "done", 함량이 애매하면 그 성분 이름.
 · 값을 지어내지 마세요. 읽지 못한 시점은 빼거나 unsure 에 적습니다.
@@ -299,6 +302,11 @@ def _clean(logs, paths, specs=None):
             for name, value in (p.get("assays") or {}).items():
                 text = re.sub(r"[^\d.]", "", str(value))
                 if not text:
+                    # 글로 적힌 결과('불검출', '불검출(LOQ미만)', '음성')는 글 그대로 — 13.3 유연물질·무균 열
+                    # (올로원스 2026-09-10: 숫자만 받아 유연물질 7열이 비었다)
+                    word = vision_claude.text_result(value)
+                    if word:
+                        assays[vision_claude._part(name, specs)] = word
                     continue
                 try:
                     assays[vision_claude._part(name, specs)] = float(text)
@@ -470,7 +478,19 @@ def _coa_items(got):
     out = {}
     for one in got.get("items") or []:
         name = str((one or {}).get("name") or "").strip()
-        if not name or name in out:
+        if not name:
+            continue
+        if name in out and not re.search(r"\d+\)$", name):
+            # 같은 이름의 줄이 여럿(확인시험 RT·UV, 유연물질 1·2 표) — '유연물질 2)' 로 따로 둔다. 예전에는
+            # 뒤 줄이 버려져 9.1·9.2.4 의 related compound C·총 유연물질 칸이 비거나 앞 줄 글이 통째로
+            # 들어갔다 (올로원스 2026-09-10). vision_claude.read_coa 와 같은 규칙.
+            k = 2
+            while "%s %d)" % (name, k) in out:
+                k += 1
+            if "%s 1)" % name not in out:
+                out["%s 1)" % name] = dict(out[name])
+            name = "%s %d)" % (name, k)
+        if name in out:
             continue
         out[name] = {"spec": str(one.get("spec") or "").strip(),
                      "value": str(one.get("value") or "").strip()}
@@ -486,7 +506,7 @@ def read_coa(path, folder=None, log=None):
     got = _json_object(_ask(_exe(), COA_PROMPT % {"file": os.path.abspath(path)}, where, None, [path]))
     out = {"file": os.path.basename(path), "assays": []}
     for key in ("lot", "mfg_date", "expiry", "appearance", "verdict", "particle", "particle_spec",
-                "metal_total", "metal_each", "bioburden", "bioburden_spec"):
+                "metal_total", "metal_each", "bioburden", "bioburden_spec", "sterility", "sterility_spec"):
         value = str(got.get(key) or "").strip()
         if value:
             out[key] = value
