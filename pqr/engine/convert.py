@@ -305,20 +305,27 @@ def to_xlsx(src, dst):
 
 
 def _pdf_with_word(src, dst):
+    """Word 로 PDF 를 만든다 — pywin32 가 없거나 터지면 PowerShell → VBScript 로.
+
+    예전에는 pywin32 가 없으면 곧장 LibreOffice 로 떨어졌다 — 그러면 목차 쪽 번호를 LibreOffice 의 쪽 나눔으로
+    세어 적어 Word 에서 보는 쪽(머리글 Page n / 전체)과 어긋났다 (담당자 2026-09-11 올로원스: 목차 25쪽, 머리글 23쪽).
+    """
     try:
         _com_ready()
         import win32com.client
-    except ImportError:
-        return False
-    word = win32com.client.DispatchEx("Word.Application")
-    word.Visible = False
-    try:
-        doc = word.Documents.Open(os.path.abspath(src), ReadOnly=True)
-        doc.SaveAs2(os.path.abspath(dst), FileFormat=17)      # wdFormatPDF
-        doc.Close(False)
-    finally:
-        word.Quit()
-    return os.path.isfile(dst)
+        word = win32com.client.DispatchEx("Word.Application")
+        word.Visible = False
+        try:
+            doc = word.Documents.Open(os.path.abspath(src), ReadOnly=True)
+            doc.SaveAs2(os.path.abspath(dst), FileFormat=17)      # wdFormatPDF
+            doc.Close(False)
+        finally:
+            word.Quit()
+        if os.path.isfile(dst):
+            return True
+    except Exception as error:
+        last_error.append("pywin32 PDF: %s" % error)
+    return _word_convert(src, dst, 17)                          # 17 = wdFormatPDF
 
 
 def _pdf_with_soffice(src, dst):

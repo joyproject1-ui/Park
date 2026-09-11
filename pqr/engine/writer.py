@@ -520,7 +520,8 @@ def write_report(folder, product, period, out_path, today=None, recipe=None, log
     log_("순서 검사 0 건 · 저장: %s" % os.path.basename(out_path))
     # 목차 쪽수·머리글 Page 는 Word 가 쪽을 나눠 봐야 안다. 담당자 PC 에는 Word 가 있으므로
     # 여기서 한 번 계산해 둔다 — 그러지 않으면 파일을 열었을 때 목차가 모두 '1' 로 보인다.
-    if convert.refresh_fields(out_path):
+    word_ok = convert.refresh_fields(out_path)
+    if word_ok:
         log_("목차 쪽수·머리글을 Word 로 다시 계산했습니다")
     # Word 가 없거나 계산 결과가 비어 있으면 PDF 로 쪽을 세어 직접 적는다 — 제한된 보기에서는
     # dirty 필드를 다시 계산하지 않아 빈 칸이 그대로 보였다 (담당자 2026-09).
@@ -529,7 +530,7 @@ def write_report(folder, product, period, out_path, today=None, recipe=None, log
         # Word 가 계산했더라도 목차 쪽 번호와 머리글 전체 쪽수를 **한 PDF** 로 다시 맞춘다 — Word 의 필드
         # 갱신은 머리글(NUMPAGES)과 본문(PAGEREF)이 서로 다른 시점의 쪽 나눔을 볼 수 있다
         # (담당자 2026-09-10: 목차는 22쪽까지인데 머리글은 '1 / 21').
-        if not toc_module.fill_page_numbers(out_path, log_):
+        if not toc_module.fill_page_numbers(out_path, log_, trust_word=word_ok):
             log_("목차 쪽 번호를 세지 못했습니다 — 파일을 열고 Ctrl+A, F9 를 누르세요")
     except Exception as error:
         log_("목차 쪽 번호 계산 실패: %s — Ctrl+A, F9 로 갱신하세요" % error)
@@ -545,9 +546,9 @@ def write_report(folder, product, period, out_path, today=None, recipe=None, log
             if hit and toc_module.stop_header_repeat(doc_, hit):
                 doc_.save(out_path)
                 log_("머리행만 남은 쪽: 표 %s 의 머리행 반복을 껐습니다" % ", ".join(str(i + 1) for i in hit))
-                convert.refresh_fields(out_path)
+                word_ok = convert.refresh_fields(out_path)
                 try:
-                    toc_module.fill_page_numbers(out_path, log_)
+                    toc_module.fill_page_numbers(out_path, log_, trust_word=word_ok)
                 except Exception as error:
                     log_("목차 쪽 번호 다시 계산 실패: %s" % error)
                 toc_module.LAST_BODIES.clear()
@@ -582,8 +583,8 @@ def write_report(folder, product, period, out_path, today=None, recipe=None, log
             r_, a_ = _E.sync_attachment_list(doc_, [n for n, _ in attachments], log_)
             if r_ or a_:
                 doc_.save(out_path)
-                convert.refresh_fields(out_path)
-                toc_module.fill_page_numbers(out_path, log_)
+                word_ok = convert.refresh_fields(out_path)
+                toc_module.fill_page_numbers(out_path, log_, trust_word=word_ok)
         except Exception as error:
             log_("18항 첨부 문서 줄 맞춤 실패: %s" % error)
     except Exception as error:

@@ -124,8 +124,12 @@ def empty_results(docx_path):
     return n
 
 
-def fill_page_numbers(docx_path, log=None):
+def fill_page_numbers(docx_path, log=None, trust_word=False):
     """목차 쪽 번호를 PDF 로 직접 세어 필드 결과에 적어 둔다. 적은 수를 돌려준다.
+
+    trust_word: Word 가 필드(PAGEREF·NUMPAGES)를 이미 계산해 둔 상태 — 이때 PDF 가 Word 가 아니라
+    LibreOffice 로 만들어졌으면 쪽 나눔이 달라 그 수로 덮어쓰면 안 된다(담당자 2026-09-11 올로원스:
+    목차 25쪽·머리글 23쪽). Word 값을 그대로 두고 -1 을 돌려준다.
 
     담당자 2026-09: "목차의 페이지 번호는 여전히 적용이 안됐어". 필드에 dirty 표시만 달아
     두면 Word 가 열 때 다시 계산하리라 기대했지만, 제한된 보기(인터넷에서 받은 파일)에서는
@@ -145,10 +149,14 @@ def fill_page_numbers(docx_path, log=None):
     work = tempfile.mkdtemp(prefix="pqr-toc-")
     try:
         pdf = os.path.join(work, "pages.pdf")
-        convert.to_pdf(docx_path, pdf)
+        how = convert.to_pdf(docx_path, pdf)
         pages = _pdf_pages(pdf)
     finally:
         shutil.rmtree(work, ignore_errors=True)
+    log("목차 쪽수 세기: %s 로 만든 PDF %d쪽" % ({"word": "Word", "soffice": "LibreOffice"}.get(how, how), len(pages)))
+    if trust_word and how != "word":
+        log("  Word 가 계산한 목차·머리글 쪽수를 그대로 둡니다 — LibreOffice 쪽 나눔은 Word 와 다릅니다")
+        return -1
     # 목차 쪽 자체에도 제목이 다 있다 — '목차' 가 든 쪽은 건너뛴다
     found = {}
     for number, key in keys.items():
