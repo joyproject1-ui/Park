@@ -974,7 +974,7 @@ tbody tr:hover{background:var(--accent-soft)}
          aria-label="파일 선택 — 끌어다 놓거나 눌러서 고르세요">
       <input type="file" id="bulk-file" multiple hidden>
       <b>파일이나 압축을 끌어다 놓거나 눌러서 고르세요</b>
-      <small>zip · pdf · xlsx · xls · csv · 문서 파일 (파일 하나당 최대 64 MB)</small>
+      <small>zip · pdf · xlsx · xls · csv · 문서 파일 (압축 512 MB · 그 밖의 파일 64 MB)</small>
       <span class="picked" id="bk-picked"></span>
     </div>
     <div class="up-path" id="bk-path"></div>
@@ -1693,6 +1693,15 @@ function pickBulk(list){
   $("#bk-result").innerHTML = ""; $("#bk-result").className = "up-result";
   $("#bk-submit").disabled = false;
 }
+/* 서버가 받을 수 있는 크기 — 넘으면 올리기 전에 까닭을 알린다. 예전에는 서버가 본문을 읽지
+   않고 끊어 '서버에 연결하지 못했습니다' 만 떴다 (담당자 2026-09-11 올로원스 66.1 MB). */
+const MAX_ZIP_MB = 512, MAX_FILE_MB = 64;
+function tooBig(file){
+  const cap = /\.zip$/i.test(file.name) ? MAX_ZIP_MB : MAX_FILE_MB;
+  return file.size > cap * 1024 * 1024
+    ? `${/\.zip$/i.test(file.name) ? "압축" : "이 형식"}은 최대 ${cap} MB 입니다 (이 파일 ${(file.size/1024/1024).toFixed(1)} MB)`
+    : "";
+}
 function bulkRow(i, state, cls, pct){
   const row = $(`#bk-row-${i}`); if (!row) return;
   const el = row.querySelector(".state"); el.textContent = state; el.className = "state " + (cls||"");
@@ -1735,6 +1744,12 @@ async function bulkUpload(){
   for (let i = 0; i < files.length; i++){
     const isZip = /\.zip$/i.test(files[i].name);
     bulkRow(i, "올리는 중 0%", "", 0);
+    const 큼 = tooBig(files[i]);
+    if (큼){
+      bulkRow(i, "실패 · " + 큼, "bad", 0);
+      failures.push(`${files[i].name} — ${큼}`);
+      continue;
+    }
     try {
       const payload = await postBulk(code, files[i], i === files.length - 1, pct=>{
         bulkRow(i, pct >= 99.5 ? (isZip ? "압축 푸는 중 · 항 알아보는 중…" : "저장하는 중…") : `올리는 중 ${Math.round(pct)}%`, "", pct);

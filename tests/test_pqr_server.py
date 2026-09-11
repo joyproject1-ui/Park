@@ -854,3 +854,20 @@ class 적재_오류_목록(unittest.TestCase):
         got = self._space([]).dashboard_payload()
         self.assertEqual(got["issue_count"], 0)
         self.assertEqual(got["issue_list"], [])
+
+
+class 올리기_크기(unittest.TestCase):
+    """폴더째 묶은 압축은 64 MB 를 쉽게 넘는다 — 담당자 2026-09-11 올로원스 66.1 MB 는
+    서버가 본문을 읽지 않고 끊어 화면에 '서버에 연결하지 못했습니다' 만 떴다."""
+
+    def test_압축은_더_크게_받는다(self):
+        self.assertEqual(server_module.limit_for("올로원스 점안액.zip"), server_module.MAX_BUNDLE)
+        self.assertEqual(server_module.limit_for("성적서.pdf"), server_module.MAX_UPLOAD)
+        self.assertGreater(server_module.MAX_BUNDLE, 66 * 1024 * 1024)
+
+    def test_넘으면_까닭이_보이는_말(self):
+        with self.assertRaises(server_module.UploadError) as got:
+            server_module.check_size("성적서.pdf", b"x" * (server_module.MAX_UPLOAD + 1))
+        self.assertIn("최대", str(got.exception))
+        self.assertIn("MB", str(got.exception))
+        server_module.check_size("묶음.zip", b"x" * (server_module.MAX_UPLOAD + 1))      # 압축은 통과

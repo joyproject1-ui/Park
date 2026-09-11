@@ -24,6 +24,10 @@ from . import build as build_module
 from . import report as report_module
 
 MAX_UPLOAD = 64 * 1024 * 1024          # 파일 하나당 64 MB
+# 폴더째 묶은 압축은 성적서 PDF 수십 장이 들어 있어 64 MB 를 쉽게 넘는다 (담당자 2026-09-11
+# 올로원스점안액 66.1 MB: 서버가 크기만 보고 본문을 읽지 않은 채 끊어, 화면에는 까닭이 아니라
+# '서버에 연결하지 못했습니다' 만 떴다). 압축은 따로 넉넉히 받는다.
+MAX_BUNDLE = 512 * 1024 * 1024         # 압축(zip) 하나당 512 MB
 ALLOWED_SUFFIXES = (".csv", ".tsv", ".txt", ".xlsx", ".xlsm")
 # 평가항목 근거 자료는 회사 원본 그대로 들어옵니다 — 성적서 PDF, ERP 가 뽑은 구형 .xls,
 # 한글 문서 등. 표로 읽지 않고 '자료가 왔다' 는 근거로 두므로 형식을 넓게 받습니다.
@@ -35,6 +39,20 @@ _UNSAFE = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
 
 class UploadError(Exception):
     """사용자에게 그대로 보여줄 수 있는 업로드 오류."""
+
+
+def limit_for(filename):
+    """그 파일에 허용되는 크기 — 압축은 MAX_BUNDLE, 그 밖에는 MAX_UPLOAD."""
+    return MAX_BUNDLE if str(filename or "").lower().endswith(".zip") else MAX_UPLOAD
+
+
+def check_size(filename, payload):
+    """크기를 넘으면 까닭이 보이는 말로 알린다."""
+    cap = limit_for(filename)
+    if len(payload) > cap:
+        raise UploadError("파일이 너무 큽니다 — %s 은 최대 %d MB 입니다 (올린 것 %d MB)."
+                          % ("압축" if cap == MAX_BUNDLE else "이 형식",
+                             cap // 1024 // 1024, len(payload) // 1024 // 1024))
 
 
 def safe_filename(name, allowed=None):
@@ -383,8 +401,7 @@ class Workspace(object):
 
     def save_reference_file(self, filename, payload):
         """참고 문서를 참고 폴더에 원본 이름 그대로 둡니다."""
-        if len(payload) > MAX_UPLOAD:
-            raise UploadError("파일이 너무 큽니다 (최대 %d MB)." % (MAX_UPLOAD // 1024 // 1024))
+        check_size(filename, payload)
         if not payload:
             raise UploadError("빈 파일입니다.")
         base = safe_filename(filename, ALLOWED_ITEM_SUFFIXES)
@@ -490,8 +507,7 @@ class Workspace(object):
         엉뚱해집니다 — '원료 공급업체 List' 를 '설비 적격성' 으로 저장하던 문제입니다.
         파일 이름 앞의 항 번호가 곧 인식 규칙이므로 그대로 따릅니다.
         """
-        if len(payload) > MAX_UPLOAD:
-            raise UploadError("파일이 너무 큽니다 (최대 %d MB)." % (MAX_UPLOAD // 1024 // 1024))
+        check_size(filename, payload)
         if not payload:
             raise UploadError("빈 파일입니다.")
         labels = {row[0]: row[1] for row in self.data["items"]}
@@ -616,8 +632,7 @@ class Workspace(object):
         회사 원본은 이름이 항 번호로 시작하므로 저장만 하면 항 인식은 rebuild 가
         합니다. 여러 파일을 연달아 받을 때는 마지막에 한 번만 rebuild 합니다.
         """
-        if len(payload) > MAX_UPLOAD:
-            raise UploadError("파일이 너무 큽니다 (최대 %d MB)." % (MAX_UPLOAD // 1024 // 1024))
+        check_size(filename, payload)
         if not payload:
             raise UploadError("빈 파일입니다: %s" % filename)
         folder = self.product_folder(code)
@@ -1345,13 +1360,38 @@ class Handler(BaseHTTPRequestHandler):
                 "name": os.path.basename(target), "opened": opened,
                 "hint": "" if opened else "파일을 자동으로 열지 못했습니다. 위 경로를 파일 탐색기에 붙여넣으세요."}
 
+    def _drain(self, length):
+        """받다 만 본문을 끝까지 읽어 버린다 — 그래야 브라우저가 답(까닭)을 읽을 수 있다."""
+        left = length
+        while left > 0:
+            chunk = self.rfile.read(min(left, 1024 * 1024))
+            if not chunk:
+                break
+            left -= len(chunk)
+
+    def _read_exact(self, length):
+        """본문을 조각으로 나눠 끝까지 읽는다 — 큰 압축은 한 번에 오지 않는다."""
+        parts, left = [], length
+        while left > 0:
+            chunk = self.rfile.read(min(left, 4 * 1024 * 1024))
+            if not chunk:
+                raise UploadError("올리다 끊겼습니다 — 다시 올려 주세요.")
+            parts.append(chunk)
+            left -= len(chunk)
+        return b"".join(parts)
+
     def _handle_upload(self):
         length = int(self.headers.get("Content-Length") or 0)
         if length <= 0:
             raise UploadError("업로드된 내용이 없습니다.")
-        if length > MAX_UPLOAD + 65536:
-            raise UploadError("파일이 너무 큽니다 (최대 %d MB)." % (MAX_UPLOAD // 1024 // 1024))
-        body = self.rfile.read(length)
+        if length > MAX_BUNDLE + 65536:
+            # 본문을 읽지 않고 끊으면 브라우저는 까닭이 담긴 답이 아니라 '연결 실패' 를 본다 —
+            # 담당자에게는 '대시보드 창이 켜져 있는지 보세요' 로 잘못 보였다(2026-09-11).
+            self._drain(length)
+            raise UploadError("파일이 너무 큽니다 — 압축은 최대 %d MB 입니다 (올린 것 %d MB). "
+                              "폴더를 나눠 압축해 올리세요."
+                              % (MAX_BUNDLE // 1024 // 1024, length // 1024 // 1024))
+        body = self._read_exact(length)
         fields = parse_multipart(self.headers.get("Content-Type", ""), body)
         upload = fields.get("file")
         if not isinstance(upload, tuple):
