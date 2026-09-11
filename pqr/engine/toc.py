@@ -193,17 +193,24 @@ def fill_page_numbers(docx_path, log=None, trust_word=False):
                     t.text = str(found[m.group(1)])
                     n += 1
                     break
-        for r in runs:                       # dirty 표시를 떼야 Word 가 캐시 값을 그대로 보인다
-            fc = r.find(qn("w:fldChar"))
-            if fc is not None and fc.get(qn("w:dirty")):
-                del fc.attrib[qn("w:dirty")]
+        if how == "word":
+            # Word 가 센 쪽수라 캐시가 맞다 — dirty 를 떼어 그 값을 그대로 보이게 한다
+            for r in runs:
+                fc = r.find(qn("w:fldChar"))
+                if fc is not None and fc.get(qn("w:dirty")):
+                    del fc.attrib[qn("w:dirty")]
+        # LibreOffice 가 센 쪽수면 dirty 를 그대로 둔다 — 적어 둔 값은 제한된 보기용 어림수이고,
+        # Word 로 열면 제 쪽 나눔으로 다시 센다. 예전에는 여기서 dirty 를 떼어, 머리글 NUMPAGES 만
+        # Word 가 다시 세고 목차는 LibreOffice 값에 굳어 둘이 어긋났다 (담당자 2026-09-11: 목차 33 ·
+        # 머리글 32, 앞서 올로원스 25/23 · 나조린 22/21 도 같은 원인).
     if n:
         document.save(docx_path)
         log("목차 쪽 번호 %d개를 PDF 에서 세어 적었습니다" % n)
     # 머리글 'Page n / 전체' 의 전체 쪽수도 **같은 PDF** 의 쪽수로 — 목차와 머리글이 서로 다른 계산에서
     # 나오면 어긋난다 (담당자 2026-09-10: 목차는 22쪽까지인데 머리글은 '1 / 21').
     if set_total_pages(docx_path, len(pages)):
-        log("머리글 전체 쪽수를 %d 로 맞췄습니다" % len(pages))
+        log("머리글 전체 쪽수를 %d 로 맞췄습니다 (%s 기준)"
+            % (len(pages), "Word" if how == "word" else "LibreOffice · Word 로 열면 다시 셉니다"))
     return n
 
 

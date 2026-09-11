@@ -143,3 +143,56 @@ class 머리글전체쪽수(unittest.TestCase):
         self.assertEqual(k, 1)
         self.assertIn("<w:t>22</w:t>", out)
         self.assertNotIn("#", _re.sub(r"<[^>]+>", "", out))
+
+
+class 목차_쪽수_출처(unittest.TestCase):
+    """LibreOffice 로 센 쪽수를 적을 때는 dirty 표시를 남긴다 — Word 로 열면 제 쪽 나눔으로 다시 센다.
+
+    담당자 2026-09-11: 목차 33쪽인데 머리글은 '1 / 32'. 머리글 NUMPAGES 만 Word 가 다시 세고
+    목차는 LibreOffice 값에 굳어 둘이 어긋났다 (올로원스 25/23 · 나조린 22/21 도 같은 원인).
+    """
+
+    def _문서(self, path):
+        import docx
+        from docx.oxml.ns import qn as _qn
+        from pqr.engine import toc as T
+        doc = docx.Document()
+        head = doc.add_paragraph("1. 목 적")
+        head.style = doc.styles["Heading 1"]
+        T._bookmark(head._p, "_pqr_toc_1")
+        para = doc.add_paragraph()
+        run = para.add_run("#")._r
+        for el in T._field_runs(run, "PAGEREF _pqr_toc_1 \\h", "#"):
+            run.addprevious(el)
+        run.getparent().remove(run)
+        doc.save(path)
+        return path
+
+    def _세어적기(self, how):
+        import tempfile, os as _os
+        from pqr.engine import toc as T, convert
+        path = self._문서(_os.path.join(tempfile.mkdtemp(), "a.docx"))
+        pdf_to, pages = convert.to_pdf, T._pdf_pages
+        def _가짜pdf(src, dst):
+            with open(dst, "wb") as handle:
+                handle.write(b"%PDF-1.4")
+            return how
+        convert.to_pdf = _가짜pdf
+        T._pdf_pages = lambda p: ["", "1.목적"]
+        try:
+            T.fill_page_numbers(path)
+        finally:
+            convert.to_pdf, T._pdf_pages = pdf_to, pages
+        import zipfile
+        with zipfile.ZipFile(path) as z:
+            return z.read("word/document.xml").decode("utf-8")
+
+    def test_LibreOffice_쪽수면_dirty_를_남긴다(self):
+        xml = self._세어적기("soffice")
+        self.assertIn("<w:t>2</w:t>", xml)          # 어림수는 적어 둔다(제한된 보기용)
+        self.assertIn('w:dirty="true"', xml)        # Word 로 열면 다시 센다
+
+    def test_Word_쪽수면_dirty_를_뗀다(self):
+        xml = self._세어적기("word")
+        self.assertIn("<w:t>2</w:t>", xml)
+        self.assertNotIn('w:dirty="true"', xml)
