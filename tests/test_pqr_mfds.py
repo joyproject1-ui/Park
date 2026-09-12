@@ -107,5 +107,55 @@ class 열쇠찾기(unittest.TestCase):
                 os.environ["MFDS_API_KEY"] = old
 
 
+class 노랑표시(unittest.TestCase):
+    """어긋난 칸만 노랑으로 칠하고 문의에 올린다 (담당자 2026-09-12)."""
+
+    def _표(self):
+        import docx
+        from pqr.engine import docedit as E
+        doc = docx.Document()
+        t = doc.add_table(rows=4, cols=4)
+        for i, (이름, 값) in enumerate((("제품명", "올로원스점안액(올로파타딘염산염)"),
+                                        ("허가일자", "2011년 11월 30일"),
+                                        ("보관조건", "기밀용기, 2~25℃보관"))):
+            cells = E.raw_cells(t.rows[i + 1])
+            E.set_cell(cells[1], 이름)
+            E.set_cell(cells[2], 값)
+        return doc, t
+
+    def _돌린다(self, **바꿀것):
+        from pqr.engine import recipe_ointment as R, docedit as E
+        doc, t = self._표()
+        표3, 칸3 = {}, {}
+        for row in t.rows[1:]:
+            cells = E.raw_cells(row)
+            이름 = E.cell_text(cells[1]).strip()
+            if 이름:
+                표3[이름] = E.cell_text(cells[2]).strip()
+                칸3[이름] = cells[2]
+        old_key, old_fetch = mfds.api_key, mfds.fetch
+        mfds.api_key = lambda folder=None: "열쇠"
+        mfds.fetch = lambda name, key, **kw: [dict(
+            {k: mfds._value(dict(올로원스, **바꿀것), k) for k in mfds.FIELDS})]
+        issues = []
+        try:
+            n = R._check_license(표3, "올로원스점안액(올로파타딘염산염)", "", issues, lambda *a: None, 칸3)
+        finally:
+            mfds.api_key, mfds.fetch = old_key, old_fetch
+        칠한칸 = {이름 for 이름, 칸 in 칸3.items() if "highlight" in 칸._tc.xml}
+        return n, issues, 칠한칸
+
+    def test_어긋난_칸만_칠한다(self):
+        n, issues, 칠한칸 = self._돌린다(ITEM_PERMIT_DATE="20111129")
+        self.assertEqual(n, 1)
+        self.assertEqual(칠한칸, {"허가일자"})
+        self.assertEqual(len(issues), 1)
+        self.assertIn("허가일자", issues[0][1])
+
+    def test_모두_같으면_아무것도_칠하지_않는다(self):
+        n, issues, 칠한칸 = self._돌린다()
+        self.assertEqual((n, issues, 칠한칸), (0, [], set()))
+
+
 if __name__ == "__main__":
     unittest.main()

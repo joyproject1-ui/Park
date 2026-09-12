@@ -1447,11 +1447,12 @@ def use_our_floor(table, support, floor=FLOOR):
     return swapped
 
 
-def _check_license(section3, name, folder, issues, log):
-    """3항 표를 식약처 허가정보와 대조해 어긋난 칸만 문의로 올린다 (담당자 2026-09-12).
+def _check_license(section3, name, folder, issues, log, cells3=None):
+    """3항 표를 식약처 허가정보와 대조해 어긋난 칸만 문의로 올리고 노랑으로 칠한다.
 
+    담당자 2026-09-12: "어긋난 칸만 문의 목록에 문의하고 노랑색 마크로 표시해 줘."
     열쇠가 없거나 회사 밖으로 못 나가면 조용히 넘어간다 — 보고서 작성은 그대로 끝난다.
-    값을 고치지는 않는다: 허가사항은 담당자가 판단할 일이다.
+    값을 고치지는 않는다: 허가사항은 담당자가 판단할 일이다. 노랑은 '여기를 보라' 는 표시일 뿐이다.
     """
     from .readers import mfds
     key = mfds.api_key(folder)
@@ -1476,7 +1477,13 @@ def _check_license(section3, name, folder, issues, log):
     for 항목, 내것, 그쪽, 까닭 in 다른것:
         issues.append(("3", 항목, "%s — 보고서 '%s' · 식약처 허가정보 '%s'. 어느 쪽이 맞는지 "
                                    "확인하세요" % (까닭, 내것, 그쪽)))
-    if not 다른것:
+        칸 = (cells3 or {}).get(항목)
+        if 칸 is not None:
+            E.highlight_cell(칸)
+    if 다른것:
+        log("  3항 대조: 어긋난 칸 %d개를 노랑으로 칠하고 문의에 올림 — %s"
+            % (len(다른것), ", ".join(one[0] for one in 다른것)))
+    else:
         log("  3항 대조: 어긋난 칸 없음")
     return len(다른것)
 
@@ -1533,16 +1540,18 @@ def fill(document, data, product, period, today=None, log=None):
         if blocks:
             log("3항 비고: 빈 칸 %d줄을 %d 묶음으로 합치고 사선" % (rows_, blocks))
         # 결론(16항)의 제품명은 정식 이름(성분명까지)이다 — 머리글이 비어 있으면 여기서 가져온다.
-        표3 = {}
+        표3, 칸3 = {}, {}
         for row in t3[0].rows[1:]:
             cells = E.raw_cells(row)
             if len(cells) >= 3:
-                표3[" ".join(E.cell_text(cells[1]).split())] = " ".join(E.cell_text(cells[2]).split())
+                이름 = " ".join(E.cell_text(cells[1]).split())
+                표3[이름] = " ".join(E.cell_text(cells[2]).split())
+                칸3[이름] = cells[2]                  # 어긋나면 이 '내용' 칸을 노랑으로 칠한다
         for 이름, 값 in 표3.items():
             if "제품명" in 이름 and 값 and (not full_name or full_name == name):
                 full_name = 값
                 break
-        _check_license(표3, full_name or name, getattr(data, "folder", ""), issues, log)
+        _check_license(표3, full_name or name, getattr(data, "folder", ""), issues, log, 칸3)
 
     # ---------- 5항 책임과 권한 ----------
     # 담당자 지시(2026-09): "품질보증 1팀은 AQA 팀으로 변경해줘." EDMS 서식과 2026 결재본
