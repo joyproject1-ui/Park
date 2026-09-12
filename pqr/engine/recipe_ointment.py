@@ -1447,6 +1447,40 @@ def use_our_floor(table, support, floor=FLOOR):
     return swapped
 
 
+def _check_license(section3, name, folder, issues, log):
+    """3항 표를 식약처 허가정보와 대조해 어긋난 칸만 문의로 올린다 (담당자 2026-09-12).
+
+    열쇠가 없거나 회사 밖으로 못 나가면 조용히 넘어간다 — 보고서 작성은 그대로 끝난다.
+    값을 고치지는 않는다: 허가사항은 담당자가 판단할 일이다.
+    """
+    from .readers import mfds
+    key = mfds.api_key(folder)
+    if not key:
+        log("3항: 식약처 허가정보 대조를 건너뜁니다 — 서비스 키가 없습니다(MFDS_API_KEY 또는 %s)"
+            % mfds.KEY_FILE)
+        return 0
+    try:
+        rows = mfds.fetch(name, key)
+    except Exception as error:
+        log("3항: 식약처 허가정보를 받지 못했습니다 — %s" % error)
+        return 0
+    info = mfds.pick(rows, name)
+    if info is None:
+        issues.append(("3", name, "식약처 허가정보에서 이 제품명을 찾지 못했습니다 — 제품명을 "
+                                  "확인하거나 허가정보를 직접 대조하세요"))
+        log("3항: 허가정보에서 '%s' 를 찾지 못했습니다 (받은 건수 %d)" % (name, len(rows)))
+        return 0
+    log("3항: 식약처 허가정보와 대조 — %s (%s) · %s"
+        % (info.get("제품명"), info.get("품목기준코드") or "-", " · ".join(mfds.notes(info))))
+    다른것 = mfds.compare(section3, info)
+    for 항목, 내것, 그쪽, 까닭 in 다른것:
+        issues.append(("3", 항목, "%s — 보고서 '%s' · 식약처 허가정보 '%s'. 어느 쪽이 맞는지 "
+                                   "확인하세요" % (까닭, 내것, 그쪽)))
+    if not 다른것:
+        log("  3항 대조: 어긋난 칸 없음")
+    return len(다른것)
+
+
 def fill(document, data, product, period, today=None, log=None):
     log = log or (lambda *a: None)
     issues = []
@@ -1499,13 +1533,16 @@ def fill(document, data, product, period, today=None, log=None):
         if blocks:
             log("3항 비고: 빈 칸 %d줄을 %d 묶음으로 합치고 사선" % (rows_, blocks))
         # 결론(16항)의 제품명은 정식 이름(성분명까지)이다 — 머리글이 비어 있으면 여기서 가져온다.
+        표3 = {}
         for row in t3[0].rows[1:]:
             cells = E.raw_cells(row)
-            if len(cells) >= 3 and "제품명" in E.cell_text(cells[1]):
-                got = " ".join(E.cell_text(cells[2]).split())
-                if got and (not full_name or full_name == name):
-                    full_name = got
+            if len(cells) >= 3:
+                표3[" ".join(E.cell_text(cells[1]).split())] = " ".join(E.cell_text(cells[2]).split())
+        for 이름, 값 in 표3.items():
+            if "제품명" in 이름 and 값 and (not full_name or full_name == name):
+                full_name = 값
                 break
+        _check_license(표3, full_name or name, getattr(data, "folder", ""), issues, log)
 
     # ---------- 5항 책임과 권한 ----------
     # 담당자 지시(2026-09): "품질보증 1팀은 AQA 팀으로 변경해줘." EDMS 서식과 2026 결재본
