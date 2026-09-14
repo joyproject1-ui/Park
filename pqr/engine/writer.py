@@ -5,6 +5,7 @@
 → 저장 → 변환 흔적·OOXML 순서 정리(polish) → 순서 검사 0 건 확인.
 헷갈린 값은 issues(문의 목록)로 남기고 보고서에는 '확인 필요' 표시를 둔다.
 """
+import json
 import os
 import re
 import time
@@ -314,6 +315,35 @@ def _flag_wrong_reference(document, product_name, data):
             return
 
 
+CPK_RESULT_FILE = "PQR Cpk 결과.json"
+
+
+def save_cpk_result(folder, product, cpk, today, log=None):
+    """이번 작성에서 낸 Cpk 를 제품 폴더에 남긴다 (화면이 읽는다).
+
+    Cpk 를 산출하지 않은 제품(10 Lot 미만 등)은 빈 값으로 남긴다 — 파일이 없는 것과
+    '냈는데 1 미만이 없다' 는 다르다. 화면은 그 둘을 다르게 보여야 한다.
+    """
+    from . import conclusion
+    log = log or (lambda *a: None)
+    values = {k: v for k, v in (cpk or {}).items() if v is not None}
+    low = conclusion.low_cpk_items(values) if values else []
+    code = product if isinstance(product, str) else (product or {}).get("code", "")
+    payload = {
+        "제품": code,
+        "작성일": str(today),
+        "Cpk": {k: round(float(v), 2) for k, v in values.items()},
+        "1미만": [[name, round(float(v), 2)] for name, v in low],
+        "최저": round(min(values.values()), 2) if values else None,
+    }
+    path = os.path.join(folder, CPK_RESULT_FILE)
+    with open(path, "w", encoding="utf-8") as handle:
+        json.dump(payload, handle, ensure_ascii=False, indent=1)
+    log("Cpk 결과를 남겼습니다 — 산출 %d항목, 1 미만 %d항목%s"
+        % (len(values), len(low), (" (" + ", ".join(n for n, _ in low) + ")") if low else ""))
+    return payload
+
+
 def write_report(folder, product, period, out_path, today=None, recipe=None, log=None, vision=None,
                  ignore_previous=False):
     """folder: 제품 폴더 · product: {"code","name","group"} · period: {"from","to"} · out_path: 저장할 .docx
@@ -592,6 +622,13 @@ def write_report(folder, product, period, out_path, today=None, recipe=None, log
         data.issues.append(("첨부", "", "첨부 엑셀 생성 실패: %s" % error))
         for line in traceback.format_exc().splitlines():        # 작성 기록에 멈춘 자리를 남긴다
             log_("    " + line)
+    # 이번에 낸 Cpk 를 제품 폴더에 남긴다 — 화면의 '품질 이슈 경향 · Cpk 1 미만 제품' 이
+    # 이 파일을 읽는다 (담당자 2026-09-14: "PQR 작성할 때 Cpk 1 미만 제품은 여기에 제품정보가
+    # 자동 업데이트 되도록 해줘"). 대장이 없어도 보고서를 쓰면 화면이 채워진다.
+    try:
+        save_cpk_result(folder, product, (ctx or {}).get("cpk"), today, log_)
+    except Exception as error:
+        log_("Cpk 결과를 남기지 못했습니다: %s" % error)
     shutil.rmtree(work, ignore_errors=True)
     return {"path": out_path, "issues": data.issues + list((ctx or {}).get("issues", [])), "log": lines,
             "data": data, "attachments": attachments, "blank_sections": blank}

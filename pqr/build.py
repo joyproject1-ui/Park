@@ -1087,6 +1087,31 @@ def _cpk_trend(products, batches_by_product, today, months=12):
     }
 
 
+CPK_RESULT_FILE = "PQR Cpk 결과.json"
+
+
+def report_cpk(folder):
+    """제품 폴더의 'PQR Cpk 결과.json' — 보고서를 쓸 때 낸 Cpk.
+
+    대장(성적서 CSV)이 없어도 보고서만 쓰면 화면의 'Cpk 1 미만 제품' 이 채워진다
+    (담당자 2026-09-14: "PQR 작성할 때 Cpk 1 미만 제품은 여기에 제품정보가 자동 업데이트
+    되도록 해줘"). 파일이 없으면 None — '아직 안 썼다' 와 '썼는데 1 미만이 없다' 는 다르다.
+    """
+    if not folder:
+        return None
+    path = os.path.join(folder, CPK_RESULT_FILE)
+    try:
+        with open(path, encoding="utf-8") as handle:
+            payload = json.load(handle)
+    except (OSError, ValueError):
+        return None
+    low = [(str(name), float(value)) for name, value in (payload.get("1미만") or [])
+           if value is not None]
+    values = [float(v) for v in (payload.get("Cpk") or {}).values() if v is not None]
+    return {"low": low, "min": min(values) if values else None,
+            "written": payload.get("작성일") or ""}
+
+
 def _trend(deviations, changes, classifier, today, months=12):
     """최근 N개월 일탈 · OOS/OOT · 불만 발생 건수."""
     labels = []
@@ -1357,6 +1382,7 @@ def build(input_dir=None, files=None, today=None, config=None, period=None):
             "cpk_low": len(cpk_low),
             "cpk_low_tests": [test["test_name"] for test in cpk_low],
             "cpk_min": min(cpk_values) if cpk_values else None,
+            "cpk_from_report": False,
             "chg": len(change_rows) + len(license_rows),
             "cmp": len(complaint_rows),
             "checks": checks,
@@ -1386,6 +1412,18 @@ def build(input_dir=None, files=None, today=None, config=None, period=None):
                 "batches": batch_rows,
             },
         })
+
+    # 보고서를 쓸 때 낸 Cpk 가 있으면 그것을 앞세운다 — 대장이 없어도 화면이 채워진다
+    # (담당자 2026-09-14: "PQR 작성할 때 Cpk 1 미만 제품은 여기에 제품정보가 자동 업데이트").
+    for product in products:
+        folder = folder_for_code.get(product["code"])
+        got = report_cpk(os.path.join(input_dir, folder)) if folder else None
+        if got is None:
+            continue
+        product["cpk_low"] = len(got["low"])
+        product["cpk_low_tests"] = [name for name, _ in got["low"]]
+        product["cpk_min"] = got["min"]
+        product["cpk_from_report"] = True
 
     return {
         "generated_at": _dt.datetime.now().replace(microsecond=0).isoformat(),

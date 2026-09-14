@@ -2201,12 +2201,19 @@ function renderTrend(){
      한 건도 없으면 빈 표 대신 그 사실을 적습니다 — 빈 표는 '아직 안 봤다' 로 읽힙니다. */
   const low = DATA.filter(d=>d.cpk_low>0)
                   .sort((a,b)=>(a.cpk_min ?? 99)-(b.cpk_min ?? 99)).slice(0,20);
+  /* 보고서를 쓰면 그때 낸 Cpk 가 여기에 올라옵니다 (담당자 2026-09-14). 아직 한 건도
+     안 썼을 때와 '썼는데 1 미만이 없다' 는 다른 말이므로 문구를 갈라 씁니다. */
+  const wrote = DATA.filter(d=>d.cpk_from_report).length;
   $("#top-body").innerHTML = low.map(d=>`
-    <tr><td>${codeCell(d)}</td><td class="wrap">${esc(d.name)}</td>
+    <tr><td>${codeCell(d)}</td><td class="wrap">${esc(d.name)}${
+      d.cpk_from_report ? ` <span class="pill" title="보고서를 쓸 때 낸 값입니다">보고서</span>` : ""}</td>
     <td class="muted">${esc(d.form_group || d.form || "—")}</td>
     <td class="num" style="font-weight:600">${d.cpk_min != null ? d.cpk_min.toFixed(2) : "—"}</td>
     <td class="wrap muted">${esc((d.cpk_low_tests || []).join(", ") || "—")}</td></tr>`).join("")
-    || `<tr><td colspan="5" class="muted" style="padding:20px">공정능력이 부족한(Cpk 1 미만) 제품이 없습니다.</td></tr>`;
+    || `<tr><td colspan="5" class="muted" style="padding:20px">${
+         wrote ? `공정능력이 부족한(Cpk 1 미만) 제품이 없습니다. <span class="muted">보고서를 쓴 제품 ${wrote}개 기준</span>`
+               : "아직 보고서를 쓴 제품이 없습니다 — 보고서를 만들면 그때 낸 Cpk 가 여기에 자동으로 올라옵니다."
+       }</td></tr>`;
 }
 
 /* ---- 리드타임 · 지연 ---- */
