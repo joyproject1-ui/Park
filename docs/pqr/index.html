@@ -791,21 +791,17 @@ tbody tr:hover{background:var(--accent-soft)}
 
       <!-- ============ PQR 작성 시 참고 사항 ============ -->
       <section class="view" id="v-upload" hidden>
-        <!-- 작성 주의사항 — 담당자가 준 지시를 그대로 보여 준다 (담당자 2026-09-07:
-             "오늘 수정 요청한 모든 PQR 관련 내용도 PQR 작성 주의사항에 반영해야 돼").
-             지시는 지시 대장(standing-orders.md) 한 곳에만 적고 화면은 그것을 읽는다. -->
-        <div class="card">
+        <!-- 작성 주의사항 카드는 화면에서 감춘다 (담당자 2026-09-14: "참고문서만 빼고 위에
+             내용은 모두 안 보이게"). 지시 대장은 그대로 쓰이며 — 보고서를 쓸 때 프로그램이
+             읽고, 이 화면에 올린 참고 문서도 함께 참고한다. 자리는 남겨 둔다(코드가 채운다). -->
+        <div class="card" id="note-card" hidden>
           <div class="card-head">
             <h2>작성 주의사항</h2>
             <span class="pill" id="note-count">0개</span>
             <span class="muted" id="note-updated"></span>
-            <input id="note-find" class="note-find" type="search" placeholder="찾기 (예: 금속성이물, 13항, 들여쓰기)">
+            <input id="note-find" class="note-find" type="search" placeholder="찾기">
           </div>
-          <div class="card-body">
-            <p class="muted" style="margin:0 0 8px">담당자가 준 지시를 모두 모아 둔 것입니다 —
-              <b>모든 제품·모든 PQR 에 그대로 적용</b>됩니다. 새 지시는 이 목록에 한 줄씩 늘어납니다.</p>
-            <div id="note-body"></div>
-          </div>
+          <div class="card-body"><div id="note-body"></div></div>
         </div>
         <div class="card">
           <div class="card-head">
@@ -818,6 +814,7 @@ tbody tr:hover{background:var(--accent-soft)}
           <div class="ref-drop" id="ref-drop">
             <b>여기로 파일을 끌어다 놓으세요</b>
             <span class="muted">또는 눌러서 고르기 · 워드 · 엑셀 · PDF · 한글 (최대 64 MB)</span>
+            <span class="muted">여기 올린 문서는 <b>보고서를 쓸 때 함께 참고</b>합니다 (통일문구·작성방법 등)</span>
           </div>
           <div class="tablewrap">
             <table class="compact">
@@ -950,7 +947,7 @@ tbody tr:hover{background:var(--accent-soft)}
     </label>
     <div class="drop" id="up-drop" tabindex="0" role="button"
          aria-label="파일 선택 — 끌어다 놓거나 눌러서 고르세요">
-      <input type="file" id="up-file" accept=".csv,.tsv,.txt,.xlsx,.xlsm" hidden>
+      <input type="file" id="up-file" multiple hidden>
       <input type="file" id="ref-file" multiple hidden>
       <b>파일을 끌어다 놓거나 눌러서 고르세요</b>
       <small>pdf · xlsx · xls · csv · 문서 파일 (최대 64 MB)</small>
@@ -2251,7 +2248,7 @@ function uploadConfig(){ return (SOURCE && SOURCE.upload) || {}; }
 
 const modal = $("#upload-modal");
 let uploadTarget = null;     // {code, item}
-let pickedFile = null;
+let pickedFiles = [];        // 항목 하나에 여러 파일을 올릴 수 있다
 
 function datasetsForItem(itemKey){
   const map = uploadConfig().item_datasets || {};
@@ -2267,7 +2264,7 @@ function openUpload(code, itemKey){
   const item = ITEMS.find(row=>row[0]===itemKey);
   if (!product || !item) return;
   uploadTarget = { code, item: itemKey };
-  pickedFile = null;
+  pickedFiles = [];
 
   $("#up-product").textContent = `${product.code} · ${product.name}`;
   $("#up-title").textContent = `${item[0]}. ${item[1]}`;
@@ -2325,17 +2322,18 @@ function updatePathHint(){
   const product = DATA.find(d=>d.code===uploadTarget.code);
   const item = ITEMS.find(row=>row[0]===uploadTarget.item);
   const folder = `${uploadTarget.code} ${product ? product.name : ""}`.trim();
-  if (!pickedFile){
+  if (!pickedFiles.length){
     $("#up-path").textContent = `저장 위치:  ${folder}/  (파일을 고르면 이름이 정해집니다)`;
     return;
   }
-  const name = pickedFile.name;
+  const name = pickedFiles[0].name;
   const alreadyNumbered = name.trim().startsWith(uploadTarget.item);
   const dot = name.lastIndexOf(".");
   const stem = dot > 0 ? name.slice(0, dot) : name;
   const suffix = dot > 0 ? name.slice(dot) : "";
   const saved = alreadyNumbered ? name : `${item[0]} ${item[1]} - ${stem}${suffix}`;
-  $("#up-path").textContent = `저장 위치:  ${folder}/${saved}`;
+  $("#up-path").textContent = `저장 위치:  ${folder}/${saved}`
+    + (pickedFiles.length > 1 ? `  (외 ${pickedFiles.length - 1}개도 같은 규칙으로 저장됩니다)` : "");
 }
 
 /* 그 항목에 이미 올라와 있는 파일을 보여 주고, 잘못 올린 것은 지웁니다. */
@@ -2378,52 +2376,68 @@ async function deleteItemFile(name){
 function closeUpload(){
   modal.classList.remove("open");
   if (!drawer.classList.contains("open")) scrim.classList.remove("open");
-  uploadTarget = null; pickedFile = null;
+  uploadTarget = null; pickedFiles = [];
 }
 
-function pickFile(file){
-  if (!file) return;
-  pickedFile = file;
-  $("#up-filename").textContent = `${file.name} · ${(file.size/1024).toFixed(0)} KB`;
+function pickFiles(files){
+  const picked = Array.from(files || []).filter(Boolean);
+  if (!picked.length) return;
+  pickedFiles = picked;
+  $("#up-filename").innerHTML = picked.length === 1
+    ? `${esc(picked[0].name)} · ${(picked[0].size/1024).toFixed(0)} KB`
+    : `<b>${picked.length}개 파일</b> · `
+      + picked.map(f=>esc(f.name)).join(", ").slice(0, 160)
+      + (picked.length > 3 ? " …" : "");
   $("#up-submit").disabled = false;
   updatePathHint();
 }
 
 async function submitUpload(){
-  if (!pickedFile || !uploadTarget) return;
+  if (!pickedFiles.length || !uploadTarget) return;
+  const files = pickedFiles;
   const button = $("#up-submit");
   const result = $("#up-result");
-  button.disabled = true; button.textContent = "올리는 중…";
+  button.disabled = true;
   result.className = "up-result"; result.textContent = "";
-  const form = new FormData();
-  form.append("product", uploadTarget.code);
-  form.append("item", uploadTarget.item);      // 항 번호 파일로 제품 폴더에 저장합니다
-  form.append("file", pickedFile, pickedFile.name);
-  try {
-    const response = await fetch("api/upload", { method:"POST", body: form });
-    const payload = await response.json();
-    if (!response.ok || !payload.ok) throw new Error(payload.error || "업로드에 실패했습니다");
-    adopt(payload.data);
-    render();
-    renderSourceNote();
-    refreshUploadState();
-    result.className = "up-result ok";
-    const errors = payload.errors || [], warnings = payload.warnings || [];
-    result.innerHTML = payload.rows === undefined
-      ? `<div><b>${esc(payload.saved)}</b> 에 저장했습니다.</div>`
-      : `<div><b>${esc(payload.saved)}</b> 에 저장했습니다 · `
-        + `${payload.rows}행 적재${payload.skipped ? ` · ${payload.skipped}행 건너뜀` : ""}</div>`
-      + (errors.length ? `<ul>${errors.map(e=>`<li>${esc(e.row)}행 ${esc(e.field)} — ${esc(e.message)}</li>`).join("")}</ul>` : "")
-      + (warnings.length ? `<ul>${warnings.map(e=>`<li>${esc(e.row)}행 ${esc(e.field)} — ${esc(e.message)}</li>`).join("")}</ul>` : "");
-    if (errors.length){ result.className = "up-result bad"; }
-    $("#up-filename").textContent = ""; pickedFile = null;
-    renderItemFiles();
-  } catch (error) {
-    result.className = "up-result bad";
-    result.textContent = error.message;
-  } finally {
-    button.textContent = "올리기"; button.disabled = !pickedFile;
+  const done = [], failed = [];
+  let last = null;
+  for (let i = 0; i < files.length; i++){
+    const file = files[i];
+    button.textContent = files.length > 1
+      ? `올리는 중… (${i + 1}/${files.length})` : "올리는 중…";
+    const 큼 = tooBig(file);
+    if (큼){ failed.push(`${file.name} — ${큼}`); continue; }
+    const form = new FormData();
+    form.append("product", uploadTarget.code);
+    form.append("item", uploadTarget.item);      // 항 번호 파일로 제품 폴더에 저장합니다
+    form.append("file", file, file.name);
+    try {
+      const response = await fetch("api/upload", { method:"POST", body: form });
+      const payload = await response.json();
+      if (!response.ok || !payload.ok) throw new Error(payload.error || "업로드에 실패했습니다");
+      last = payload;
+      done.push(payload);
+    } catch (error) { failed.push(`${file.name} — ${error.message}`); }
   }
+  if (last && last.data){ adopt(last.data); render(); renderSourceNote(); refreshUploadState(); }
+  const errors = [], warnings = [];
+  done.forEach(p=>{ (p.errors || []).forEach(e=>errors.push(e)); (p.warnings || []).forEach(e=>warnings.push(e)); });
+  result.className = "up-result " + (failed.length ? "bad" : "ok");
+  result.innerHTML =
+    (done.length
+      ? `<div><b>${done.length}개 파일</b>을 저장했습니다.</div>`
+        + `<ul>${done.map(p=>`<li>${esc(p.saved)}`
+            + (p.rows === undefined ? "" : ` · ${p.rows}행 적재${p.skipped ? ` · ${p.skipped}행 건너뜀` : ""}`)
+            + `</li>`).join("")}</ul>`
+      : "")
+    + (errors.length ? `<ul>${errors.map(e=>`<li>${esc(e.row)}행 ${esc(e.field)} — ${esc(e.message)}</li>`).join("")}</ul>` : "")
+    + (warnings.length ? `<ul>${warnings.map(e=>`<li>${esc(e.row)}행 ${esc(e.field)} — ${esc(e.message)}</li>`).join("")}</ul>` : "")
+    + (failed.length ? `<div style="margin-top:6px"><b>실패 ${failed.length}건</b></div>`
+        + `<ul>${failed.map(f=>`<li>${esc(f)}</li>`).join("")}</ul>` : "");
+  if (errors.length) result.className = "up-result bad";
+  $("#up-filename").textContent = ""; pickedFiles = [];
+  button.textContent = "올리기"; button.disabled = true;
+  renderItemFiles();
 }
 
 /* ---- 자료 업로드 화면 ---- */
@@ -2592,7 +2606,7 @@ $("#up-close").addEventListener("click", closeUpload);
 $("#up-cancel").addEventListener("click", closeUpload);
 $("#up-submit").addEventListener("click", submitUpload);
 $("#up-dataset").addEventListener("change", updatePathHint);
-$("#up-file").addEventListener("change", e=>pickFile(e.target.files[0]));
+$("#up-file").addEventListener("change", e=>pickFiles(e.target.files));
 $("#ref-file").addEventListener("change", e=>uploadReference(Array.from(e.target.files)));
 $("#note-find").addEventListener("input", renderNotes);
 $("#ref-add").addEventListener("click", ()=>{ const p=$("#ref-file"); p.value=""; p.click(); });
@@ -2611,7 +2625,7 @@ $("#ref-folder").addEventListener("click", ()=>openReference(""));
     if (files.length) uploadReference(files);
   });
 })();
-$("#up-drop").addEventListener("click", ()=>$("#up-file").click());
+$("#up-drop").addEventListener("click", ()=>{ const p=$("#up-file"); p.value=""; p.click(); });
 $("#up-drop").addEventListener("keydown", e=>{
   if (e.key === "Enter" || e.key === " "){ e.preventDefault(); $("#up-file").click(); }
 });
@@ -2621,7 +2635,7 @@ $("#up-drop").addEventListener("keydown", e=>{
 ["dragleave","drop"].forEach(type=>$("#up-drop").addEventListener(type, e=>{
   e.preventDefault(); $("#up-drop").classList.remove("over");
 }));
-$("#up-drop").addEventListener("drop", e=>pickFile(e.dataTransfer.files[0]));
+$("#up-drop").addEventListener("drop", e=>pickFiles(e.dataTransfer.files));
 $("#reload-btn").addEventListener("click", async ()=>{
   const button = $("#reload-btn");
   button.textContent = "…"; button.disabled = true;
