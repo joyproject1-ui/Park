@@ -1511,8 +1511,15 @@ def _check_penalty(name, entp, folder, issues, log, cells3=None):
     key = mfds.api_key(folder)
     if not key:
         return 0                                   # 열쇠가 없으면 허가정보 쪽에서 이미 알렸다
+    bases = mfds.penalty_base(folder)
+    if not bases:
+        # 파일은 있는데 주소가 아니다 — 열쇠를 넣어 둔 것이 가장 흔하다
+        log("3항 6번: 행정처분 정보를 건너뜁니다 — 공통/%s 에 주소가 아닌 값이 들어 있습니다. "
+            "포털의 '요청 주소'(http:// 로 시작하는 줄)를 넣어 주세요. 인증키는 %s 에서 "
+            "가져다 씁니다" % (mfds.PENALTY_URL_FILE, mfds.KEY_FILE))
+        return 0
     try:
-        rows, base = mfds.fetch_penalties(name, key, mfds.penalty_base(folder))
+        rows, base = mfds.fetch_penalties(name, key, bases)
     except Exception as error:
         log("3항 6번: 행정처분 정보를 받지 못했습니다 — %s" % error)
         return 0

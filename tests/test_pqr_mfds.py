@@ -176,6 +176,45 @@ class 행정처분(unittest.TestCase):
         self.assertEqual(mfds.penalties_for(rows, "올로원스점안액"), [])
 
 
+class 주소와_열쇠_가리기(unittest.TestCase):
+    """파일 두 개가 나란히 있어 서로 바꿔 넣기 쉽다 (담당자 2026-09-14: "둘다 키주소는 동일하네")."""
+
+    def _folder(self, key_text, url_text):
+        root = tempfile.mkdtemp()
+        os.makedirs(os.path.join(root, "공통"))
+        for name, text in ((mfds.KEY_FILE, key_text), (mfds.PENALTY_URL_FILE, url_text)):
+            with open(os.path.join(root, "공통", name), "w", encoding="utf-8") as handle:
+                handle.write(text)
+        return root
+
+    def setUp(self):
+        self.old = (os.environ.pop("MFDS_API_KEY", None),
+                    os.environ.pop("MFDS_PENALTY_URL", None))
+
+    def tearDown(self):
+        for name, value in zip(("MFDS_API_KEY", "MFDS_PENALTY_URL"), self.old):
+            if value is not None:
+                os.environ[name] = value
+
+    def test_제대로_넣으면_둘_다_읽는다(self):
+        root = self._folder("abc123+key==", "http://apis.data.go.kr/1471000/Adm/getAdm")
+        self.assertEqual(mfds.api_key(root), "abc123+key==")
+        self.assertEqual(mfds.penalty_base(root), ["http://apis.data.go.kr/1471000/Adm/getAdm"])
+
+    def test_주소_자리에_열쇠를_넣으면_쓰지_않는다(self):
+        root = self._folder("abc123+key==", "abc123+key==")
+        self.assertEqual(mfds.api_key(root), "abc123+key==")
+        self.assertEqual(mfds.penalty_base(root), [])       # 후보로 물러서지도 않는다
+
+    def test_열쇠_자리에_주소를_넣으면_쓰지_않는다(self):
+        root = self._folder("http://apis.data.go.kr/1471000/x", "http://apis.data.go.kr/1471000/y")
+        self.assertIsNone(mfds.api_key(root))
+
+    def test_주소의_물음표_뒤는_떼어낸다(self):
+        root = self._folder("k", "http://apis.data.go.kr/1471000/Adm/getAdm?serviceKey=zz&type=json")
+        self.assertEqual(mfds.penalty_base(root), ["http://apis.data.go.kr/1471000/Adm/getAdm"])
+
+
 class 행정처분_노랑표시(unittest.TestCase):
     """이력이 있으면 3항 6번 칸을 노랑으로 칠하고 문의에 올린다."""
 

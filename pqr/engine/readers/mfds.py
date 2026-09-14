@@ -42,6 +42,16 @@ FIELDS = {
 }
 
 
+def _looks_like_url(text):
+    """주소인지 열쇠인지 가린다.
+
+    파일 두 개가 나란히 있어 서로 바꿔 넣기 쉽다 — 담당자 2026-09-14: "둘다 키주소는
+    동일하네". 인증키는 계정당 하나라 두 서비스가 같은 키를 쓰지만, 행정처분 파일에는
+    키가 아니라 요청 주소가 들어가야 한다.
+    """
+    return str(text or "").strip().lower().startswith(("http://", "https://"))
+
+
 def api_key(folder=None):
     """서비스 키 — 없으면 None."""
     got = (os.environ.get("MFDS_API_KEY") or "").strip()
@@ -54,7 +64,7 @@ def api_key(folder=None):
                     got = handle.read().strip()
             except OSError:
                 continue
-            if got:
+            if got and not _looks_like_url(got):
                 return got
     return None
 
@@ -270,7 +280,7 @@ def penalty_base(folder=None):
     """행정처분 서비스 주소 — 담당자가 넣어 둔 것이 있으면 그것을 먼저 쓴다."""
     got = (os.environ.get("MFDS_PENALTY_URL") or "").strip()
     if got:
-        return [got]
+        return [got] if _looks_like_url(got) else []
     for root in [folder, os.path.dirname(os.path.abspath(folder))] if folder else []:
         for path in (os.path.join(root or "", PENALTY_URL_FILE),
                      os.path.join(root or "", "공통", PENALTY_URL_FILE)):
@@ -279,8 +289,10 @@ def penalty_base(folder=None):
                     got = handle.read().strip().split("?")[0].strip()
             except OSError:
                 continue
-            if got:
+            if got and _looks_like_url(got):
                 return [got]
+            if got:                                # 주소 자리에 열쇠를 넣은 것 — 못 쓴다
+                return []
     return list(PENALTY_BASES)
 
 
