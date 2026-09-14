@@ -148,6 +148,7 @@ class 행정처분(unittest.TestCase):
         self.assertEqual([one["제품명"] for one in got], ["올로원스점안액"])
 
     def test_주소_후보를_차례로_두드린다(self):
+        mfds.forget_base()
         불린곳 = []
         def opener(url, timeout):
             불린곳.append(url.split("?")[0])
@@ -215,6 +216,64 @@ class 주소와_열쇠_가리기(unittest.TestCase):
         self.assertEqual(mfds.penalty_base(root), ["http://apis.data.go.kr/1471000/Adm/getAdm"])
 
 
+class 부르는_횟수(unittest.TestCase):
+    """느려지지 않게 — 주소를 모르면 부르지 않고, 한 번 통한 주소는 기억한다
+    (담당자 2026-09-14: "너무 오래 걸리면 생략할까 고민하고 있어")."""
+
+    def setUp(self):
+        mfds.forget_base()
+        self.old = os.environ.pop("MFDS_PENALTY_URL", None)
+
+    def tearDown(self):
+        mfds.forget_base()
+        if self.old is not None:
+            os.environ["MFDS_PENALTY_URL"] = self.old
+
+    def _folder(self, url_text=None):
+        root = tempfile.mkdtemp()
+        os.makedirs(os.path.join(root, "공통"))
+        if url_text is not None:
+            with open(os.path.join(root, "공통", mfds.PENALTY_URL_FILE), "w", encoding="utf-8") as h:
+                h.write(url_text)
+        return root
+
+    def test_주소_파일이_없으면_아예_부르지_않는다(self):
+        self.assertEqual(mfds.penalty_base(self._folder()), [])
+
+    def test_자동이라고_적으면_후보를_두드린다(self):
+        self.assertEqual(mfds.penalty_base(self._folder("자동")), list(mfds.PENALTY_BASES))
+
+    def test_한_번_통한_주소는_다음_제품부터_한_번만_부른다(self):
+        불린것 = []
+        body = _처분응답([])
+        def opener(url, timeout):
+            base = url.split("?")[0]
+            불린것.append(base)
+            if base != mfds.PENALTY_BASES[2]:
+                raise OSError("없는 주소")
+            return body
+        for 제품 in ("가", "나", "다"):
+            mfds.fetch_penalties(제품, "열쇠", bases=list(mfds.PENALTY_BASES), opener=opener)
+        self.assertEqual(len(불린것), 5)                  # 첫 제품 3번, 그 뒤 1번씩
+        self.assertEqual(불린것[3:], [mfds.PENALTY_BASES[2]] * 2)
+
+    def test_후보를_두드릴_때는_짧게_기다린다(self):
+        기다린것 = []
+        def opener(url, timeout):
+            기다린것.append(timeout)
+            raise OSError("없는 주소")
+        mfds.fetch_penalties("가", "열쇠", bases=list(mfds.PENALTY_BASES), opener=opener)
+        self.assertEqual(기다린것, [mfds.PROBE_TIMEOUT] * 3)
+
+    def test_주소가_하나면_제대로_기다린다(self):
+        기다린것 = []
+        def opener(url, timeout):
+            기다린것.append(timeout)
+            return _처분응답([])
+        mfds.fetch_penalties("가", "열쇠", bases=["http://example.test/a"], opener=opener)
+        self.assertEqual(기다린것, [mfds.TIMEOUT])
+
+
 class 행정처분_노랑표시(unittest.TestCase):
     """이력이 있으면 3항 6번 칸을 노랑으로 칠하고 문의에 올린다."""
 
@@ -242,8 +301,9 @@ class 행정처분_노랑표시(unittest.TestCase):
             이름 = E.cell_text(cells[1]).strip()
             if 이름:
                 칸3[이름] = cells[2]
-        old_key, old_fetch = mfds.api_key, mfds.fetch_penalties
+        old = (mfds.api_key, mfds.fetch_penalties, mfds.penalty_base)
         mfds.api_key = lambda folder=None: "열쇠"
+        mfds.penalty_base = lambda folder=None: ["http://example.test"]
         mfds.fetch_penalties = lambda name, key, bases=None, **kw: (
             [{k: mfds._penalty_value(one, k) for k in mfds.PENALTY_FIELDS} for one in items],
             "http://example.test")
@@ -252,7 +312,7 @@ class 행정처분_노랑표시(unittest.TestCase):
             n = R._check_penalty("올로원스점안액(올로파타딘염산염)", "한림제약(주)", "",
                                  issues, lambda *a: None, 칸3)
         finally:
-            mfds.api_key, mfds.fetch_penalties = old_key, old_fetch
+            mfds.api_key, mfds.fetch_penalties, mfds.penalty_base = old
         칠한칸 = {이름 for 이름, 칸 in 칸3.items() if "highlight" in 칸._tc.xml}
         return n, issues, 칠한칸
 

@@ -19,6 +19,7 @@ import re
 BASE = "http://apis.data.go.kr/1471000/DrugPrdtPrmsnInfoService06/getDrugPrdtPrmsnDtlInq05"
 KEY_FILE = "식약처-허가정보-키.txt"
 TIMEOUT = 20
+PROBE_TIMEOUT = 6          # 주소 후보를 두드릴 때는 짧게 기다린다 — 아닌 주소에 20초씩 매달리지 않는다
 MAX_ROWS = 20
 
 # 응답 항목 이름은 서비스 판마다 조금씩 다르다 — 아는 이름을 모두 적어 두고 먼저 잡히는 것을 쓴다.
@@ -260,6 +261,10 @@ def notes(info):
 # 복사해 `공통/식약처-행정처분-주소.txt` 에 넣으면 그것을 쓰고, 없으면 아래 후보를 차례로
 # 두드린다. 어느 것도 안 되면 조용히 넘어가고 작성 기록에 주소를 넣어 달라고 적는다.
 PENALTY_URL_FILE = "식약처-행정처분-주소.txt"
+# 주소를 모를 때 '자동' 이라고 적어 두면 아래 후보를 차례로 두드린다. 그냥 두면(파일이 없으면)
+# 건너뛴다 — 매 실행마다 아닌 주소를 기다리느라 시간을 버리지 않기 위해서다
+# (담당자 2026-09-14: "너무 오래 걸리면 생략할까 고민하고 있어").
+AUTO_WORDS = ("자동", "auto", "찾기")
 PENALTY_BASES = (
     "http://apis.data.go.kr/1471000/MdcinPrmisnAdmDsposInfoService/getMdcinPrmisnAdmDsposInq",
     "http://apis.data.go.kr/1471000/AdmDsposInfoService/getAdmDsposInq",
@@ -274,6 +279,22 @@ PENALTY_FIELDS = {
     "근거법령": ("VIOLATION_LAW", "violationLaw", "LAW_NM", "BASIS_LAW"),
     "위반내용": ("VIOLATION_CONT", "violationCont", "VILT_CN"),
 }
+
+
+_WORKING_BASE = ""          # 이번 실행에서 통한 행정처분 주소
+
+
+def remember_base(base):
+    """통한 주소를 기억해 다음 제품부터 바로 쓴다."""
+    global _WORKING_BASE
+    if base:
+        _WORKING_BASE = base
+
+
+def forget_base():
+    """시험에서 기억을 지운다."""
+    global _WORKING_BASE
+    _WORKING_BASE = ""
 
 
 def penalty_base(folder=None):
@@ -291,9 +312,11 @@ def penalty_base(folder=None):
                 continue
             if got and _looks_like_url(got):
                 return [got]
+            if got.strip() in AUTO_WORDS:          # '자동' 이라고 적으면 후보를 두드린다
+                return list(PENALTY_BASES)
             if got:                                # 주소 자리에 열쇠를 넣은 것 — 못 쓴다
                 return []
-    return list(PENALTY_BASES)
+    return []                                      # 주소 파일이 없으면 건너뛴다
 
 
 def _penalty_value(item, name):
@@ -317,12 +340,18 @@ def fetch_penalties(name, key, bases=None, timeout=TIMEOUT, opener=None):
         return [], ""
     get = opener or (lambda u, t: urllib.request.urlopen(u, timeout=t).read())
     last = ""
-    for base in (bases or list(PENALTY_BASES)):
+    candidates = list(bases or PENALTY_BASES)
+    # 한 번 통한 주소를 기억한다 — 제품마다 후보를 다시 두드리면 그만큼 느려진다.
+    if _WORKING_BASE and _WORKING_BASE in candidates:
+        candidates = [_WORKING_BASE] + [b for b in candidates if b != _WORKING_BASE]
+    probing = len(candidates) > 1
+    for base in candidates:
         query = urllib.parse.urlencode({
             "serviceKey": key, "type": "json", "pageNo": "1",
             "numOfRows": str(MAX_ROWS), "PRDUCT": name, "item_name": name})
+        wait = PROBE_TIMEOUT if (probing and base != _WORKING_BASE) else timeout
         try:
-            raw = get("%s?%s" % (base, query), timeout)
+            raw = get("%s?%s" % (base, query), wait)
         except Exception as error:                     # 주소가 아예 없으면 다음 후보로
             last = str(error)
             continue
@@ -340,6 +369,7 @@ def fetch_penalties(name, key, bases=None, timeout=TIMEOUT, opener=None):
             one = {k: _penalty_value(item, k) for k in PENALTY_FIELDS}
             if any(one.values()):
                 out.append(one)
+        remember_base(base)
         return out, base
     return [], last
 

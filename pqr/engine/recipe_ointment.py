@@ -1513,10 +1513,12 @@ def _check_penalty(name, entp, folder, issues, log, cells3=None):
         return 0                                   # 열쇠가 없으면 허가정보 쪽에서 이미 알렸다
     bases = mfds.penalty_base(folder)
     if not bases:
-        # 파일은 있는데 주소가 아니다 — 열쇠를 넣어 둔 것이 가장 흔하다
-        log("3항 6번: 행정처분 정보를 건너뜁니다 — 공통/%s 에 주소가 아닌 값이 들어 있습니다. "
-            "포털의 '요청 주소'(http:// 로 시작하는 줄)를 넣어 주세요. 인증키는 %s 에서 "
-            "가져다 씁니다" % (mfds.PENALTY_URL_FILE, mfds.KEY_FILE))
+        # 주소 파일이 없거나, 있어도 주소가 아니다(열쇠를 넣어 둔 것이 가장 흔하다).
+        # 어느 쪽이든 부르지 않고 넘어간다 — 아닌 주소를 기다리느라 시간을 버리지 않는다.
+        log("3항 6번: 행정처분 확인을 건너뜁니다 — 공통/%s 에 포털의 '요청 주소'"
+            "(http:// 로 시작하는 줄)를 넣으면 다음부터 자동으로 확인합니다. 주소를 모르면 "
+            "그 파일에 '자동' 이라고만 적어도 됩니다. 인증키는 %s 것을 씁니다"
+            % (mfds.PENALTY_URL_FILE, mfds.KEY_FILE))
         return 0
     try:
         rows, base = mfds.fetch_penalties(name, key, bases)
