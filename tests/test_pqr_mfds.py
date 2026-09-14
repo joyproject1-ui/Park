@@ -84,6 +84,43 @@ class 대조(unittest.TestCase):
         self.assertIn("RMP대상: 대상", mfds.notes(self._info(RMP_TARGET="대상")))
 
 
+class 열쇠모양(unittest.TestCase):
+    """마이페이지의 두 인증키 어느 쪽을 넣어도 되게 한다 (담당자 2026-09-14)."""
+
+    def test_Decoding_키는_그대로_쓴다(self):
+        self.assertEqual(mfds.plain_key("abc+de/fg=="), "abc+de/fg==")
+
+    def test_Encoding_키는_되돌려_쓴다(self):
+        self.assertEqual(mfds.plain_key("abc%2Bde%2Ffg%3D%3D"), "abc+de/fg==")
+
+    def test_앞뒤_빈칸과_줄바꿈은_지운다(self):
+        self.assertEqual(mfds.plain_key("  키값\n"), "키값")
+
+    def test_빈_열쇠는_빈_글(self):
+        self.assertEqual(mfds.plain_key(None), "")
+
+
+class 오류알림(unittest.TestCase):
+    """인증이 안 되면 포털은 HTTP 200 에 XML 오류를 준다 — 그 까닭을 그대로 올린다."""
+
+    KEY_ERROR = ('<OpenAPI_ServiceResponse><cmmMsgHeader>'
+                 '<returnAuthMsg>SERVICE_KEY_IS_NOT_REGISTERED_ERROR</returnAuthMsg>'
+                 '<returnReasonCode>30</returnReasonCode></cmmMsgHeader></OpenAPI_ServiceResponse>')
+
+    def test_아는_오류는_우리말로_알린다(self):
+        got = mfds.service_error(self.KEY_ERROR)
+        self.assertIn("등록되지 않은 서비스 키", got)
+        self.assertIn("SERVICE_KEY_IS_NOT_REGISTERED_ERROR", got)
+
+    def test_JSON_이_아니면_그_까닭을_올린다(self):
+        with self.assertRaises(ValueError) as caught:
+            mfds.fetch("올로원스점안액", "열쇠", opener=lambda u, t: self.KEY_ERROR.encode())
+        self.assertIn("등록되지 않은 서비스 키", str(caught.exception))
+
+    def test_오류_글이_없으면_빈_글(self):
+        self.assertEqual(mfds.service_error("<x><y>1</y></x>"), "")
+
+
 class 열쇠찾기(unittest.TestCase):
     def test_제품_폴더의_파일에서_읽는다(self):
         root = tempfile.mkdtemp()

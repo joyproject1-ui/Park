@@ -91,10 +91,63 @@ def _rows(payload):
     return out
 
 
+def plain_key(key):
+    """공공데이터포털이 주는 두 가지 인증키 어느 쪽을 넣어도 되게 맞춰 준다.
+
+    마이페이지에는 '일반 인증키(Encoding)' 와 '(Decoding)' 이 나란히 있다. 우리는 주소를
+    만들 때 다시 인코딩하므로 Decoding 키가 맞는데, 담당자가 어느 것을 복사했는지 알 수
+    없다. Encoding 키(`%2B`·`%3D` 가 섞인 것)면 되돌려 쓴다 — 두 번 인코딩되면 인증이
+    조용히 실패한다 (담당자 2026-09-14 열쇠 넣기 안내).
+    """
+    import urllib.parse
+    got = (key or "").strip()
+    if not got:
+        return got
+    if re.search(r"%[0-9A-Fa-f]{2}", got):
+        back = urllib.parse.unquote(got)
+        if back != got:
+            return back.strip()
+    return got
+
+
+ERROR_TAGS = ("returnAuthMsg", "errMsg", "resultMsg")
+
+# 포털이 자주 주는 오류를 담당자가 알아볼 말로 바꾼다 — 영어 코드만 보면 무엇을 고칠지 모른다.
+ERROR_KOREAN = {
+    "SERVICE_KEY_IS_NOT_REGISTERED_ERROR":
+        "등록되지 않은 서비스 키입니다 — 마이페이지의 '일반 인증키' 를 다시 복사해 넣어 주세요",
+    "SERVICE ERROR": "서비스 쪽 오류입니다 — 잠시 뒤 다시 해 보세요",
+    "LIMITED_NUMBER_OF_SERVICE_REQUESTS_EXCEEDS_ERROR":
+        "오늘 쓸 수 있는 횟수를 다 썼습니다 — 내일 다시 되거나, 포털에서 한도를 늘려야 합니다",
+    "DEADLINE_HAS_EXPIRED_ERROR": "서비스 활용 기간이 끝났습니다 — 포털에서 연장해 주세요",
+    "UNREGISTERED_IP_ERROR": "등록되지 않은 IP 입니다 — 포털의 활용 정보에서 IP 를 지우거나 이 PC 것으로 바꿔 주세요",
+    "NO_OPENAPI_SERVICE_ERROR": "주소가 맞지 않습니다 — 서비스 주소를 확인해 주세요",
+}
+
+
+def service_error(raw):
+    """포털이 돌려준 오류 글 — 없으면 빈 글. 아는 오류는 우리말로 바꾼다."""
+    text = raw if isinstance(raw, str) else (raw or b"").decode("utf-8", "replace")
+    found = []
+    for tag in ERROR_TAGS:
+        for m in re.finditer(r"<%s>(.*?)</%s>" % (tag, tag), text, re.S):
+            one = " ".join(m.group(1).split())
+            if one and one not in found:
+                found.append(one)
+    if not found:
+        return ""
+    out = []
+    for one in found[:2]:
+        korean = ERROR_KOREAN.get(one.upper().replace(" ", "_")) or ERROR_KOREAN.get(one.upper())
+        out.append("%s (%s)" % (korean, one) if korean else one)
+    return " · ".join(out)
+
+
 def fetch(name, key, base=None, timeout=TIMEOUT, opener=None):
     """제품명으로 허가정보를 받아 [{항목: 값}] — 못 받으면 []."""
     import urllib.parse
     import urllib.request
+    key = plain_key(key)
     if not name or not key:
         return []
     query = urllib.parse.urlencode({
@@ -105,7 +158,12 @@ def fetch(name, key, base=None, timeout=TIMEOUT, opener=None):
     raw = get(url, timeout)
     if isinstance(raw, bytes):
         raw = raw.decode("utf-8", "replace")
-    payload = json.loads(raw)
+    try:
+        payload = json.loads(raw)
+    except ValueError:
+        # 인증이 안 되면 포털은 HTTP 200 에 XML 오류를 준다. 그 글을 그대로 올려야
+        # 담당자가 '열쇠가 틀렸구나' 를 안다 — 안 그러면 까닭 없이 넘어간다.
+        raise ValueError(service_error(raw) or "응답을 읽지 못했습니다 (JSON 이 아닙니다)")
     out = []
     for item in _rows(payload):
         if not isinstance(item, dict):
