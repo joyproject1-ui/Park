@@ -241,6 +241,15 @@ td.wrap{white-space:normal;min-width:220px}
 .up-files{margin-top:10px;display:flex;flex-direction:column;gap:4px;font-size:12px}
 .up-files-head{font-weight:600;color:var(--ink-2)}
 .up-file-row{display:flex;align-items:center;gap:8px;padding:5px 8px;border:1px solid var(--line);border-radius:7px}
+.up-borrow{margin-top:8px}
+.up-borrow-box{margin-top:8px;border:1px solid var(--line);border-radius:9px;padding:10px;
+  max-height:230px;overflow:auto;display:flex;flex-direction:column;gap:8px}
+.up-borrow-grp{display:flex;flex-direction:column;gap:4px}
+.up-borrow-grp>b{font-size:12px;color:var(--ink-2)}
+.up-borrow-row{display:flex;align-items:center;gap:8px;font-size:12.5px;padding:4px 6px;border-radius:6px}
+.up-borrow-row:hover{background:var(--surface-2)}
+.up-borrow-row label{flex:1;word-break:break-all;cursor:pointer}
+.up-borrow-foot{display:flex;align-items:center;gap:8px;margin-top:6px}
 .up-file-name{flex:1;word-break:break-all}
 .mini.danger{color:var(--crit);border-color:var(--crit)}
 .bulk-btn[disabled]{opacity:.55;cursor:default}
@@ -955,6 +964,10 @@ tbody tr:hover{background:var(--accent-soft)}
     </div>
     <div class="up-path" id="up-path"></div>
     <div class="up-files" id="up-files"></div>
+    <div class="up-borrow" id="up-borrow">
+      <button class="link" id="up-borrow-open">다른 항목에 올린 파일 쓰기 ↔</button>
+      <div class="up-borrow-box" id="up-borrow-box" hidden></div>
+    </div>
     <div class="up-result" id="up-result"></div>
   </div>
   <div class="modal-foot">
@@ -2273,6 +2286,7 @@ function openUpload(code, itemKey){
   $("#up-result").textContent = "";
   $("#up-result").className = "up-result";
   $("#up-submit").disabled = true;
+  if ($("#up-borrow-box")) $("#up-borrow-box").hidden = true;
 
 
   if (!uploadEnabled()){
@@ -2284,6 +2298,7 @@ function openUpload(code, itemKey){
     $("#up-path").hidden = true;
     $("#up-submit").hidden = true;
     $("#up-none").hidden = true;
+    $("#up-borrow").hidden = true;
   } else {
     refreshUploadState();
     // 평가항목 자료는 회사 원본 그대로 제품 폴더에 들어갑니다. 표준 대장이 아니므로
@@ -2293,6 +2308,7 @@ function openUpload(code, itemKey){
     $("#up-path").hidden = false;
     $("#up-submit").hidden = false;
     $("#up-none").hidden = false;
+    $("#up-borrow").hidden = false;
     updatePathHint();
   }
   scrim.classList.add("open");
@@ -2625,6 +2641,71 @@ $("#ref-folder").addEventListener("click", ()=>openReference(""));
     if (files.length) uploadReference(files);
   });
 })();
+
+/* 같은 원본이 여러 항에 필요할 때, 다시 올리지 않고 다른 항목의 파일을 골라 씁니다
+   (담당자 2026-09-14: "8.2.1과 8.2.2 첨부 파일이 동일해 … 다른 항의 첨부 파일을
+   선택하여 사용할 수 있도록"). 서버는 같은 폴더에서 하드링크를 걸므로 자리를 두 번
+   먹지 않습니다. */
+async function renderBorrowList(){
+  const box = $("#up-borrow-box");
+  if (!uploadTarget) return;
+  box.hidden = false;
+  box.innerHTML = `<div class="muted">다른 항목의 파일을 불러오는 중…</div>`;
+  try {
+    const response = await fetch("api/product-files", { method:"POST",
+      headers:{ "Content-Type":"application/json" },
+      body: JSON.stringify({ product: uploadTarget.code, item: uploadTarget.item }) });
+    const payload = await response.json();
+    if (!payload.ok) throw new Error(payload.error || "목록을 불러오지 못했습니다");
+    const groups = payload.groups || [];
+    if (!groups.length){
+      box.innerHTML = `<div class="muted">다른 항목에 올린 파일이 없습니다.</div>`;
+      return;
+    }
+    box.innerHTML = groups.map(g=>`<div class="up-borrow-grp">
+        <b>${esc(g.item)}. ${esc(g.label)}</b>
+        ${g.files.map(f=>`<div class="up-borrow-row">
+            <input type="checkbox" class="borrow-pick" value="${esc(f.name)}" id="bw-${esc(f.name)}">
+            <label for="bw-${esc(f.name)}">${esc(f.short || f.name)}
+              <span class="muted">· ${(f.size/1024).toFixed(0)} KB</span></label>
+          </div>`).join("")}
+      </div>`).join("")
+      + `<div class="up-borrow-foot">
+           <button class="btn" id="up-borrow-go">고른 파일 가져오기</button>
+           <span class="muted">파일을 복사하지 않고 이어 붙입니다 — 자리를 더 먹지 않습니다.</span>
+         </div>`;
+    $("#up-borrow-go").addEventListener("click", borrowFiles);
+  } catch (error) { box.innerHTML = `<div class="muted">${esc(error.message)}</div>`; }
+}
+async function borrowFiles(){
+  const names = Array.from(document.querySelectorAll(".borrow-pick:checked")).map(el=>el.value);
+  if (!names.length){ showToast("가져올 파일을 고르세요."); return; }
+  const button = $("#up-borrow-go");
+  button.disabled = true; button.textContent = "가져오는 중…";
+  const result = $("#up-result");
+  try {
+    const response = await fetch("api/item-borrow", { method:"POST",
+      headers:{ "Content-Type":"application/json" },
+      body: JSON.stringify({ product: uploadTarget.code, item: uploadTarget.item, names }) });
+    const payload = await response.json();
+    if (!response.ok || !payload.ok) throw new Error(payload.error || "가져오지 못했습니다");
+    if (payload.data){ adopt(payload.data); render(); renderSourceNote(); refreshUploadState(); }
+    const made = payload.linked || [], same = payload.skipped || [];
+    result.className = "up-result ok";
+    result.innerHTML = (made.length ? `<div><b>${made.length}개 파일</b>을 이 항목으로 가져왔습니다.</div>`
+        + `<ul>${made.map(n=>`<li>${esc(n)}</li>`).join("")}</ul>` : "")
+      + (same.length ? `<div class="muted">이미 있어 건너뛴 파일 ${same.length}개</div>` : "");
+    $("#up-borrow-box").hidden = true;
+    renderItemFiles();
+  } catch (error) {
+    result.className = "up-result bad";
+    result.textContent = error.message;
+  } finally { button.disabled = false; button.textContent = "고른 파일 가져오기"; }
+}
+$("#up-borrow-open").addEventListener("click", ()=>{
+  const box = $("#up-borrow-box");
+  if (box.hidden) renderBorrowList(); else box.hidden = true;
+});
 $("#up-drop").addEventListener("click", ()=>{ const p=$("#up-file"); p.value=""; p.click(); });
 $("#up-drop").addEventListener("keydown", e=>{
   if (e.key === "Enter" || e.key === " "){ e.preventDefault(); $("#up-file").click(); }

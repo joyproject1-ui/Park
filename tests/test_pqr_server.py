@@ -499,6 +499,65 @@ class ItemFileListTest(ItemUploadTest):
         self.assertFalse(result.get("ok"))
 
 
+class 다른항목_파일_쓰기(ItemFileListTest):
+    """같은 원본이 여러 항에 필요할 때 다시 올리지 않고 골라 쓴다 (담당자 2026-09-14)."""
+
+    def test_다른_항목의_파일만_목록에_나온다(self):
+        self.upload_item("HP-110", "13", "안정성 결과표.xlsx")
+        self.upload_item("HP-110", "12", "변경관리 대장.xlsx")
+        got = self.call("/api/product-files", {"product": "HP-110", "item": "13"})
+        self.assertTrue(got["ok"], got.get("error"))
+        items = [group["item"] for group in got["groups"]]
+        self.assertIn("12", items)
+        self.assertNotIn("13", items)
+
+    def test_고른_파일이_이_항목_이름으로_생긴다(self):
+        saved = self.upload_item("HP-110", "12", "제조기록서.xlsx")
+        name = os.path.basename(saved["saved"])
+        got = self.call("/api/item-borrow",
+                        {"product": "HP-110", "item": "13", "names": [name]})
+        self.assertTrue(got["ok"], got.get("error"))
+        self.assertEqual(len(got["linked"]), 1)
+        made = got["linked"][0]
+        self.assertTrue(made.startswith("13"), made)
+        self.assertIn("제조기록서", made)
+        folder = os.path.join(self.dir, self.folder)
+        self.assertTrue(os.path.isfile(os.path.join(folder, made)))
+        self.assertTrue(os.path.isfile(os.path.join(folder, name)))   # 원본은 그대로
+        # 화면의 수집 현황도 그 항목이 찬 것으로 바뀐다
+        product = next(p for p in got["data"]["products"] if p["code"] == "HP-110")
+        ids = [item[0] for item in got["data"]["items"]]
+        self.assertEqual(dict(zip(ids, product["checks"]))["13"], "y")
+
+    def test_같은_내용이_두_번_저장되지_않는다(self):
+        saved = self.upload_item("HP-110", "12", "제조기록서.xlsx")
+        name = os.path.basename(saved["saved"])
+        folder = os.path.join(self.dir, self.folder)
+        got = self.call("/api/item-borrow",
+                        {"product": "HP-110", "item": "13", "names": [name]})
+        made = got["linked"][0]
+        source = os.path.join(folder, name)
+        target = os.path.join(folder, made)
+        with open(source, "rb") as a, open(target, "rb") as b:
+            self.assertEqual(a.read(), b.read())
+        if hasattr(os, "link"):                       # 링크가 되는 곳에서는 자리를 두 번 먹지 않는다
+            self.assertEqual(os.stat(source).st_ino, os.stat(target).st_ino)
+
+    def test_이미_있으면_건너뛴다(self):
+        saved = self.upload_item("HP-110", "12", "제조기록서.xlsx")
+        name = os.path.basename(saved["saved"])
+        self.call("/api/item-borrow", {"product": "HP-110", "item": "13", "names": [name]})
+        again = self.call("/api/item-borrow", {"product": "HP-110", "item": "13", "names": [name]})
+        self.assertTrue(again["ok"], again.get("error"))
+        self.assertEqual(again["linked"], [])
+        self.assertEqual(len(again["skipped"]), 1)
+
+    def test_폴더_밖_이름은_막는다(self):
+        got = self.call("/api/item-borrow",
+                        {"product": "HP-110", "item": "13", "names": ["../config.json"]})
+        self.assertFalse(got.get("ok"))
+
+
 class FinalAttachmentTest(ItemUploadTest):
     """보고서 완료 — 워드와 함께 첨부 엑셀(경향분석 Sheet)도 확인합니다."""
 

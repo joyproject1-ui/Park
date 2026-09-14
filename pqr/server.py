@@ -517,13 +517,7 @@ class Workspace(object):
         base = safe_filename(filename, ALLOWED_ITEM_SUFFIXES) or "자료"
         # 회사 원본은 이미 항 번호로 시작하는 일이 많습니다. 그럴 때는 이름을 그대로 둡니다 —
         # 앞에 번호를 또 붙이면 '8.1.1 … - 8.1.1 …' 처럼 됩니다.
-        matcher = build_module.item_matcher(self.data["items"])
-        if matcher(base) == item_id:
-            target = os.path.join(folder, base)
-        else:
-            stem, suffix = os.path.splitext(base)
-            label = " ".join(_UNSAFE.sub(" ", labels[item_id]).split())
-            target = os.path.join(folder, "%s %s - %s%s" % (item_id, label, stem, suffix))
+        target = os.path.join(folder, self.item_filename(item_id, base, labels))
         with self.lock:
             with open(target, "wb") as handle:
                 handle.write(payload)
@@ -531,6 +525,97 @@ class Workspace(object):
         return {"saved": os.path.relpath(target, self.input_dir),
                 "folder": os.path.abspath(folder),
                 "name": os.path.basename(target)}
+
+    def item_filename(self, item_id, base, labels=None):
+        """그 항목에 저장될 파일 이름 — 화면의 '저장 위치' 안내와 같은 규칙입니다.
+
+        회사 원본은 이미 항 번호로 시작하는 일이 많습니다. 그럴 때는 이름을 그대로 둡니다 —
+        앞에 번호를 또 붙이면 '8.1.1 … - 8.1.1 …' 처럼 됩니다.
+        """
+        labels = labels or {row[0]: row[1] for row in self.data["items"]}
+        matcher = build_module.item_matcher(self.data["items"])
+        if matcher(base) == item_id:
+            return base
+        stem, suffix = os.path.splitext(base)
+        label = " ".join(_UNSAFE.sub(" ", labels[item_id]).split())
+        return "%s %s - %s%s" % (item_id, label, stem, suffix)
+
+    def without_item_prefix(self, name, labels=None):
+        """'8.2.1 주원료 시험성적 - 원본.pdf' 에서 '원본.pdf' 만 남깁니다.
+
+        다른 항목의 파일을 빌려 올 때, 앞 항 번호를 떼고 새 항 번호를 붙이기 위한 것입니다.
+        """
+        labels = labels or {row[0]: row[1] for row in self.data["items"]}
+        matcher = build_module.item_matcher(self.data["items"])
+        item_id = matcher(name)
+        if not item_id:
+            return name
+        label = " ".join(_UNSAFE.sub(" ", labels.get(item_id, "")).split())
+        prefix = "%s %s - " % (item_id, label)
+        if name.startswith(prefix):
+            return name[len(prefix):]
+        return name
+
+    def product_item_files(self, code, exclude=None):
+        """제품 폴더의 파일을 평가항목별로 묶어 돌려줍니다 (exclude 항목은 뺍니다).
+
+        같은 원본이 여러 항에 필요할 때, 다시 올리지 않고 골라 쓰게 하려는 것입니다
+        (담당자 2026-09-14: "8.2.1과 8.2.2 첨부 파일이 동일해 … 다른 항의 첨부 파일을
+        선택하여 사용할 수 있도록").
+        """
+        folder = self.product_folder(code)
+        matcher = build_module.item_matcher(self.data["items"])
+        labels = {row[0]: row[1] for row in self.data["items"]}
+        order = [row[0] for row in self.data["items"]]
+        groups = {}
+        for name in sorted(os.listdir(folder)):
+            path = os.path.join(folder, name)
+            if not os.path.isfile(path) or name.startswith("~$") or name.startswith("."):
+                continue
+            item_id = matcher(name)
+            if not item_id or item_id == exclude:
+                continue
+            stat = os.stat(path)
+            groups.setdefault(item_id, []).append(
+                {"name": name, "size": stat.st_size,
+                 "short": self.without_item_prefix(name, labels),
+                 "modified": _dt.datetime.fromtimestamp(stat.st_mtime).strftime("%Y-%m-%d %H:%M")})
+        return [{"item": item_id, "label": labels.get(item_id, ""), "files": groups[item_id]}
+                for item_id in order if item_id in groups]
+
+    def borrow_item_files(self, code, item_id, names):
+        """다른 항목에 올린 파일을 이 항목 이름으로 잇습니다.
+
+        같은 폴더 안에서 하드링크를 겁니다 — 자리를 두 번 먹지 않고, 지울 때도 한쪽만
+        지워집니다. 링크가 안 되는 파일 시스템이면 복사로 내려갑니다.
+        """
+        labels = {row[0]: row[1] for row in self.data["items"]}
+        if item_id not in labels:
+            raise UploadError("평가항목을 찾지 못했습니다: %s" % item_id)
+        if not names:
+            raise UploadError("가져올 파일을 고르세요.")
+        folder = self.product_folder(code)
+        made, skipped = [], []
+        with self.lock:
+            for name in names:
+                base = os.path.basename(name or "")
+                if not base or base != name or _UNSAFE.search(base):
+                    raise UploadError("파일 이름이 올바르지 않습니다.")
+                source = os.path.join(folder, base)
+                if not os.path.isfile(source):
+                    raise UploadError("파일을 찾지 못했습니다: %s" % base)
+                target = os.path.join(
+                    folder, self.item_filename(item_id, self.without_item_prefix(base, labels), labels))
+                if os.path.exists(target):
+                    skipped.append(os.path.basename(target))
+                    continue
+                try:
+                    os.link(source, target)
+                except (OSError, AttributeError):
+                    shutil.copy2(source, target)
+                made.append(os.path.basename(target))
+        self.rebuild()
+        return {"linked": made, "skipped": skipped, "folder": os.path.abspath(folder)}
 
     ATTACHMENT_HINTS = build_module.ATTACHMENT_HINTS
 
@@ -972,6 +1057,10 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(200, self._handle_item_files())
             if path == "/api/item-delete":
                 return self._json(200, self._handle_item_delete())
+            if path == "/api/product-files":
+                return self._json(200, self._handle_product_files())
+            if path == "/api/item-borrow":
+                return self._json(200, self._handle_item_borrow())
             if path == "/api/reference-open":
                 return self._json(200, self._handle_reference_open())
         except UploadError as error:
@@ -1322,6 +1411,27 @@ class Handler(BaseHTTPRequestHandler):
             str(body.get("product") or "").strip(),
             str(body.get("item") or "").strip(),
             str(body.get("name") or "").strip())
+        result["ok"] = True
+        result["data"] = self.workspace.dashboard_payload()
+        return result
+
+    def _handle_product_files(self):
+        """다른 평가항목에 올라와 있는 파일 목록 — 같은 원본을 다시 올리지 않게 합니다."""
+        body = self._read_json()
+        code = str(body.get("product") or "").strip()
+        item_id = str(body.get("item") or "").strip()
+        return {"ok": True, "groups": self.workspace.product_item_files(code, exclude=item_id)}
+
+    def _handle_item_borrow(self):
+        """고른 파일을 이 항목 이름으로 이어 붙입니다 (하드링크, 안 되면 복사)."""
+        body = self._read_json()
+        names = body.get("names") or []
+        if isinstance(names, str):
+            names = [names]
+        result = self.workspace.borrow_item_files(
+            str(body.get("product") or "").strip(),
+            str(body.get("item") or "").strip(),
+            [str(n).strip() for n in names if str(n).strip()])
         result["ok"] = True
         result["data"] = self.workspace.dashboard_payload()
         return result
