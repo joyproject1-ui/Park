@@ -121,6 +121,114 @@ class 오류알림(unittest.TestCase):
         self.assertEqual(mfds.service_error("<x><y>1</y></x>"), "")
 
 
+처분 = {"PRDUCT": "올로원스점안액", "ENTP_NAME": "한림제약(주)",
+        "DISPOS_DATE": "20250401", "DISPOS_CONT": "판매업무정지 1개월",
+        "VIOLATION_CONT": "표시 기재 위반"}
+
+
+def _처분응답(items):
+    return json.dumps({"body": {"items": [{"item": one} for one in items]}}).encode("utf-8")
+
+
+class 행정처분(unittest.TestCase):
+    """3항 6번 '행정 처분 이력 없음' 을 식약처 행정처분 정보로 확인한다 (담당자 2026-09-14)."""
+
+    def test_이력을_읽는다(self):
+        rows, base = mfds.fetch_penalties("올로원스점안액", "열쇠",
+                                          opener=lambda u, t: _처분응답([처분]))
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["처분일자"], "20250401")
+        self.assertEqual(rows[0]["처분내용"], "판매업무정지 1개월")
+        self.assertTrue(base)
+
+    def test_우리_제품_것만_고른다(self):
+        남의것 = dict(처분, PRDUCT="다른회사점안액", ENTP_NAME="다른제약")
+        rows, _ = mfds.fetch_penalties("x", "열쇠", opener=lambda u, t: _처분응답([처분, 남의것]))
+        got = mfds.penalties_for(rows, "올로원스점안액(올로파타딘염산염)")
+        self.assertEqual([one["제품명"] for one in got], ["올로원스점안액"])
+
+    def test_주소_후보를_차례로_두드린다(self):
+        불린곳 = []
+        def opener(url, timeout):
+            불린곳.append(url.split("?")[0])
+            if len(불린곳) == 1:
+                raise OSError("없는 주소")
+            return _처분응답([처분])
+        rows, base = mfds.fetch_penalties("올로원스점안액", "열쇠", opener=opener)
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(base, mfds.PENALTY_BASES[1])
+        self.assertEqual(len(불린곳), 2)
+
+    def test_담당자가_넣은_주소를_먼저_쓴다(self):
+        root = tempfile.mkdtemp()
+        os.makedirs(os.path.join(root, "공통"))
+        with open(os.path.join(root, "공통", mfds.PENALTY_URL_FILE), "w", encoding="utf-8") as h:
+            h.write("http://example.test/행정처분?serviceKey=xxx\n")
+        old = os.environ.pop("MFDS_PENALTY_URL", None)
+        try:
+            self.assertEqual(mfds.penalty_base(root), ["http://example.test/행정처분"])
+        finally:
+            if old is not None:
+                os.environ["MFDS_PENALTY_URL"] = old
+
+    def test_이력이_없으면_빈_목록(self):
+        rows, _ = mfds.fetch_penalties("올로원스점안액", "열쇠", opener=lambda u, t: _처분응답([]))
+        self.assertEqual(mfds.penalties_for(rows, "올로원스점안액"), [])
+
+
+class 행정처분_노랑표시(unittest.TestCase):
+    """이력이 있으면 3항 6번 칸을 노랑으로 칠하고 문의에 올린다."""
+
+    def _표(self):
+        import docx
+        from pqr.engine import docedit as E
+        doc = docx.Document()
+        t = doc.add_table(rows=4, cols=4)
+        rows = (("제품명", "올로원스점안액(올로파타딘염산염)"),
+                ("허가 및 시판 후 준수 사항의 이행 여부 검토",
+                 "1. 허가상 제조방법 준수하여 생산함을 확인함."),
+                ("보관조건", "기밀용기, 2~25℃보관"))
+        for i, (이름, 값) in enumerate(rows):
+            cells = E.raw_cells(t.rows[i + 1])
+            E.set_cell(cells[1], 이름)
+            E.set_cell(cells[2], 값)
+        return doc, t
+
+    def _돌린다(self, items):
+        from pqr.engine import recipe_ointment as R, docedit as E
+        doc, t = self._표()
+        칸3 = {}
+        for row in t.rows[1:]:
+            cells = E.raw_cells(row)
+            이름 = E.cell_text(cells[1]).strip()
+            if 이름:
+                칸3[이름] = cells[2]
+        old_key, old_fetch = mfds.api_key, mfds.fetch_penalties
+        mfds.api_key = lambda folder=None: "열쇠"
+        mfds.fetch_penalties = lambda name, key, bases=None, **kw: (
+            [{k: mfds._penalty_value(one, k) for k in mfds.PENALTY_FIELDS} for one in items],
+            "http://example.test")
+        issues = []
+        try:
+            n = R._check_penalty("올로원스점안액(올로파타딘염산염)", "한림제약(주)", "",
+                                 issues, lambda *a: None, 칸3)
+        finally:
+            mfds.api_key, mfds.fetch_penalties = old_key, old_fetch
+        칠한칸 = {이름 for 이름, 칸 in 칸3.items() if "highlight" in 칸._tc.xml}
+        return n, issues, 칠한칸
+
+    def test_이력이_있으면_6번_칸을_칠한다(self):
+        n, issues, 칠한칸 = self._돌린다([처분])
+        self.assertEqual(n, 1)
+        self.assertEqual(len(issues), 1)
+        self.assertIn("행정처분 이력", issues[0][2])
+        self.assertIn("판매업무정지 1개월", issues[0][2])
+        self.assertEqual(칠한칸, {"허가 및 시판 후 준수 사항의 이행 여부 검토"})
+
+    def test_이력이_없으면_아무것도_하지_않는다(self):
+        self.assertEqual(self._돌린다([]), (0, [], set()))
+
+
 class 열쇠찾기(unittest.TestCase):
     def test_제품_폴더의_파일에서_읽는다(self):
         root = tempfile.mkdtemp()

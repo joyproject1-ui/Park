@@ -240,3 +240,107 @@ def notes(info):
     if info.get("재심사기간"):
         out.append("재심사기간: %s" % info["재심사기간"])
     return out
+
+
+# ── 의약품 행정처분 정보 ────────────────────────────────────────────────
+# 담당자 2026-09-14: "행정처분 정보 API 도 함께 승인되어 있습니다 … 같이 넣어줘".
+# 3항 6번 '시판 후 준수사항 이행하여 행정 처분 이력 없음을 확인함' 을 사람 대신 확인한다.
+#
+# 이 서비스는 판마다 주소가 달라서 하나로 못 박는다. 담당자가 포털 '요청 주소' 를 그대로
+# 복사해 `공통/식약처-행정처분-주소.txt` 에 넣으면 그것을 쓰고, 없으면 아래 후보를 차례로
+# 두드린다. 어느 것도 안 되면 조용히 넘어가고 작성 기록에 주소를 넣어 달라고 적는다.
+PENALTY_URL_FILE = "식약처-행정처분-주소.txt"
+PENALTY_BASES = (
+    "http://apis.data.go.kr/1471000/MdcinPrmisnAdmDsposInfoService/getMdcinPrmisnAdmDsposInq",
+    "http://apis.data.go.kr/1471000/AdmDsposInfoService/getAdmDsposInq",
+    "http://apis.data.go.kr/1471000/DrugAdmDsposInfoService/getDrugAdmDsposInq",
+)
+PENALTY_FIELDS = {
+    "업체명": ("ENTP_NAME", "entpName", "BSSH_NM", "bsshNm", "COMPANY_NAME"),
+    "제품명": ("PRDUCT", "ITEM_NAME", "itemName", "PRDLST_NM", "prdlstNm", "PRODUCT_NAME"),
+    "처분일자": ("DISPOS_DATE", "disposDate", "ADM_DISPOS_DE", "DSPS_DT", "PROCESS_DATE"),
+    "처분내용": ("DISPOS_CONT", "disposCont", "ADM_DISPOS_CN", "DSPS_CN", "PROCESS_CONTENT"),
+    "처분기간": ("DISPOS_PERIOD", "disposPeriod", "DSPS_PD"),
+    "근거법령": ("VIOLATION_LAW", "violationLaw", "LAW_NM", "BASIS_LAW"),
+    "위반내용": ("VIOLATION_CONT", "violationCont", "VILT_CN"),
+}
+
+
+def penalty_base(folder=None):
+    """행정처분 서비스 주소 — 담당자가 넣어 둔 것이 있으면 그것을 먼저 쓴다."""
+    got = (os.environ.get("MFDS_PENALTY_URL") or "").strip()
+    if got:
+        return [got]
+    for root in [folder, os.path.dirname(os.path.abspath(folder))] if folder else []:
+        for path in (os.path.join(root or "", PENALTY_URL_FILE),
+                     os.path.join(root or "", "공통", PENALTY_URL_FILE)):
+            try:
+                with open(path, encoding="utf-8-sig") as handle:
+                    got = handle.read().strip().split("?")[0].strip()
+            except OSError:
+                continue
+            if got:
+                return [got]
+    return list(PENALTY_BASES)
+
+
+def _penalty_value(item, name):
+    for key in PENALTY_FIELDS.get(name, ()):
+        value = item.get(key)
+        if value not in (None, ""):
+            return " ".join(str(value).split())
+    return ""
+
+
+def fetch_penalties(name, key, bases=None, timeout=TIMEOUT, opener=None):
+    """제품명으로 행정처분 이력을 받아 [{항목: 값}].
+
+    주소 후보를 차례로 두드려 **처음으로 제대로 답한 것**을 쓴다. 못 받으면 마지막 까닭을
+    올린다 — 조용히 '이력 없음' 으로 넘어가면 안 되는 항목이다.
+    """
+    import urllib.parse
+    import urllib.request
+    key = plain_key(key)
+    if not name or not key:
+        return [], ""
+    get = opener or (lambda u, t: urllib.request.urlopen(u, timeout=t).read())
+    last = ""
+    for base in (bases or list(PENALTY_BASES)):
+        query = urllib.parse.urlencode({
+            "serviceKey": key, "type": "json", "pageNo": "1",
+            "numOfRows": str(MAX_ROWS), "PRDUCT": name, "item_name": name})
+        try:
+            raw = get("%s?%s" % (base, query), timeout)
+        except Exception as error:                     # 주소가 아예 없으면 다음 후보로
+            last = str(error)
+            continue
+        if isinstance(raw, bytes):
+            raw = raw.decode("utf-8", "replace")
+        try:
+            payload = json.loads(raw)
+        except ValueError:
+            last = service_error(raw) or "응답을 읽지 못했습니다 (JSON 이 아닙니다)"
+            continue
+        out = []
+        for item in _rows(payload):
+            if not isinstance(item, dict):
+                continue
+            one = {k: _penalty_value(item, k) for k in PENALTY_FIELDS}
+            if any(one.values()):
+                out.append(one)
+        return out, base
+    return [], last
+
+
+def penalties_for(rows, name, entp=""):
+    """우리 제품(또는 우리 회사)에 걸린 것만 추린다."""
+    want, company = _flat(name), _flat(entp)
+    out = []
+    for one in rows:
+        product = _flat(one.get("제품명"))
+        maker = _flat(one.get("업체명"))
+        if product and want and (want in product or product in want):
+            out.append(one)
+        elif company and maker and not product and company in maker:
+            out.append(one)
+    return out

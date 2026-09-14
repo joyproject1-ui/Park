@@ -1488,6 +1488,56 @@ def _check_license(section3, name, folder, issues, log, cells3=None):
     return len(다른것)
 
 
+PENALTY_LABELS = ("허가 및 시판 후 준수", "시판 후 준수", "행정처분", "행정 처분")
+
+
+def _penalty_cell(cells3):
+    """3항 6번 '허가 및 시판 후 준수 사항의 이행 여부 검토' 의 내용 칸."""
+    for 이름, 칸 in (cells3 or {}).items():
+        flat = " ".join(str(이름).split())
+        if any(label in flat for label in PENALTY_LABELS):
+            return 칸
+    return None
+
+
+def _check_penalty(name, entp, folder, issues, log, cells3=None):
+    """3항 6번 '행정 처분 이력 없음' 을 식약처 행정처분 정보로 확인한다.
+
+    담당자 2026-09-14: "행정처분 정보 API 도 … 같이 넣어줘". 이력이 나오면 문의로 올리고
+    그 칸을 노랑으로 칠한다 — 값을 고치지는 않는다(무엇이라 쓸지는 담당자가 판단한다).
+    이력이 없으면 확인했다는 사실만 작성 기록에 남긴다.
+    """
+    from .readers import mfds
+    key = mfds.api_key(folder)
+    if not key:
+        return 0                                   # 열쇠가 없으면 허가정보 쪽에서 이미 알렸다
+    try:
+        rows, base = mfds.fetch_penalties(name, key, mfds.penalty_base(folder))
+    except Exception as error:
+        log("3항 6번: 행정처분 정보를 받지 못했습니다 — %s" % error)
+        return 0
+    if not base:
+        log("3항 6번: 행정처분 정보 주소를 몰라 건너뜁니다 — 포털의 '요청 주소' 를 "
+            "공통/%s 에 넣어 주세요" % mfds.PENALTY_URL_FILE)
+        return 0
+    mine = mfds.penalties_for(rows, name, entp)
+    if not mine:
+        log("3항 6번: 행정처분 이력 없음을 확인 (받은 건수 %d · %s)" % (len(rows), base))
+        return 0
+    for one in mine:
+        issues.append(("3", "허가 및 시판 후 준수 사항",
+                       "식약처 행정처분 이력이 있습니다 — %s · %s%s. 3항 6번 문구를 "
+                       "그대로 둘지 확인하세요"
+                       % (one.get("처분일자") or "일자 미상",
+                          one.get("처분내용") or one.get("위반내용") or "내용 미상",
+                          (" (%s)" % one["처분기간"]) if one.get("처분기간") else "")))
+    칸 = _penalty_cell(cells3)
+    if 칸 is not None:
+        E.highlight_cell(칸)
+    log("3항 6번: 행정처분 이력 %d건을 문의에 올리고 노랑으로 칠함" % len(mine))
+    return len(mine)
+
+
 def fill(document, data, product, period, today=None, log=None):
     log = log or (lambda *a: None)
     issues = []
@@ -1552,6 +1602,8 @@ def fill(document, data, product, period, today=None, log=None):
                 full_name = 값
                 break
         _check_license(표3, full_name or name, getattr(data, "folder", ""), issues, log, 칸3)
+        _check_penalty(full_name or name, 표3.get("업체명") or "", getattr(data, "folder", ""),
+                       issues, log, 칸3)
 
     # ---------- 5항 책임과 권한 ----------
     # 담당자 지시(2026-09): "품질보증 1팀은 AQA 팀으로 변경해줘." EDMS 서식과 2026 결재본
