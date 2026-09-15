@@ -417,11 +417,17 @@ class Workspace(object):
                 handle.write(payload)
         return {"saved": base, "folder": os.path.abspath(folder)}
 
-    def save_common_file(self, filename, payload):
-        """공통 자료를 '공통' 폴더에 원본 이름 그대로 둡니다.
+    def common_item_ids(self):
+        """한 번 올리면 모든 제품에 걸리는 항목 번호들('6' · '8.1.1' · '10.1' …)."""
+        return set(self.config.get("common_items") or []) if hasattr(self, "config") else set()
+
+    def save_common_file(self, filename, payload, item_id=None):
+        """공통 자료를 '공통' 폴더에 둡니다.
 
         담당자 2026-09-14: "공통 자료가 업로드되면 모든 제품에 업로드 완료 되었다고 녹색불".
         이름이 항 번호로 시작해야 어느 항목인지 알 수 있으므로, 아니면 그 사실을 알려 줍니다.
+        어느 항목 칸에서 올렸는지 알 때(item_id)는 제품 폴더와 같은 규칙으로 앞에 항 번호를
+        붙여 줍니다 — 담당자가 이름을 고쳐 올려야 할 까닭이 없습니다.
         """
         check_size(filename, payload)
         if not payload:
@@ -429,9 +435,12 @@ class Workspace(object):
         base = safe_filename(filename, ALLOWED_ITEM_SUFFIXES)
         if not base:
             raise UploadError("허용되지 않는 파일 형식입니다: %s" % filename)
+        labels = {row[0]: row[1] for row in self.data["items"]}
+        if item_id and item_id in labels:
+            base = self.item_filename(item_id, base, labels)
         matcher = build_module.item_matcher(self.data["items"])
         item_id = matcher(base)
-        common = set(self.config.get("common_items") or []) if hasattr(self, "config") else set()
+        common = self.common_item_ids()
         folder = self.common_folder(create=True)
         target = os.path.join(folder, base)
         with self.lock:
@@ -1602,9 +1611,17 @@ class Handler(BaseHTTPRequestHandler):
             return result
         item_id = (fields.get("item") or "").strip()
         if item_id:
-            result = self.workspace.save_item_file(
-                code=fields.get("product") or "", item_id=item_id,
-                filename=upload[0], payload=upload[1])
+            # 공통 자료 항목(6 · 8.1.1 · 10.1 …)은 제품 폴더가 아니라 '공통' 폴더로 갑니다.
+            # 화면은 그 칸을 '공통 자료' 라고 알려 주는데 저장은 그 제품 폴더에만 되어,
+            # 올려도 공통 자료 칸에 보이지 않았습니다(담당자 2026-09-15: "6. 제조내역을
+            # 공통 자료로 올렸는데 업로드가 확인이 안되네").
+            if item_id in self.workspace.common_item_ids():
+                result = self.workspace.save_common_file(
+                    upload[0], upload[1], item_id=item_id)
+            else:
+                result = self.workspace.save_item_file(
+                    code=fields.get("product") or "", item_id=item_id,
+                    filename=upload[0], payload=upload[1])
             result["ok"] = True
             result["data"] = self.workspace.dashboard_payload()
             return result

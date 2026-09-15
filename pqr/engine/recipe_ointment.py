@@ -141,6 +141,26 @@ def sheet_job_for(jobs, process, lab):
     return best[1] if best else None
 
 
+# 5항 '책임과 권한' 의 담당 팀 — 옛 이름(품질보증1팀)·AQA팀·SQA팀을 모두 이 제품의 팀으로 고친다.
+_TEAM_RE = re.compile(r"품질보증\s*\d*\s*팀|AQA\s*팀|SQA\s*팀")
+
+
+def quality_team_of(product):
+    """이 제품의 5항 담당 팀. build 가 이미 정해 두었으면 그 값을 쓴다.
+
+    담당자 2026-09-15: "점안제, 주사제, 안연고제, 안구이식제는 AQA팀이고 나머지 제품은
+    SQA팀." 화면을 거치지 않고 부른 경우(시험·단독 실행)에도 제형으로 다시 풀 수 있게
+    build 의 규칙을 그대로 부른다.
+    """
+    team = str((product or {}).get("quality_team") or "").strip()
+    if team:
+        return team
+    from .. import build as build_module
+    return build_module.quality_team((product or {}).get("form") or "",
+                                     build_module.load_config(),
+                                     (product or {}).get("name") or "")
+
+
 def _tables(document, prefix):
     return [document.tables[i] for i in find_tables(document, prefix)]
 
@@ -1615,21 +1635,25 @@ def fill(document, data, product, period, today=None, log=None):
                        issues, log, 칸3)
 
     # ---------- 5항 책임과 권한 ----------
-    # 담당자 지시(2026-09): "품질보증 1팀은 AQA 팀으로 변경해줘." EDMS 서식과 2026 결재본
-    # 모두 'AQA팀 담당' · 'AQA팀 팀장' 이다. 전년도 결재본은 옛 이름이라 그대로 물려받는다.
+    # 담당자 지시(2026-09): "품질보증 1팀은 AQA 팀으로 변경해줘." 옛 이름(품질보증n팀)은
+    # 그대로 두지 않는다. 다만 팀은 제품마다 다르다 —
+    # 담당자 지시(2026-09-15): "점안제, 주사제, 안연고제, 안구이식제는 AQA팀이고 나머지
+    # 제품은 SQA팀으로 작성해주면 돼." 전에는 모두 AQA팀으로 바꿔 고형제 결재본까지
+    # AQA팀이 되었다. EDMS 빈 서식에 AQA팀이 박혀 있어도 이 제품의 팀으로 고친다.
     # '품질보증부서장' 은 팀이 아니므로 건드리지 않는다.
+    team = quality_team_of(product)
     t5 = _tables(document, "5.")
     if t5:
         renamed = 0
         for row in t5[0].rows[1:]:
             for cell in E.raw_cells(row):
                 text = E.cell_text(cell)
-                new_text = re.sub(r"품질보증\s*\d*\s*팀", "AQA팀", text)
+                new_text = _TEAM_RE.sub(team, text)
                 if new_text != text:
                     E.set_cell(cell, *new_text.split("\n"))
                     renamed += 1
         if renamed:
-            log("5항: 품질보증n팀 → AQA팀 %d칸" % renamed)
+            log("5항: 담당 팀 → %s %d칸" % (team, renamed))
 
     # ---------- 4항 ----------
     # 1항 '목적' 도 "제품품질평가는" 으로 시작하므로 평가 기간 문장만 집어 찾는다.

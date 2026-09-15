@@ -167,14 +167,17 @@ def has_diag(cell):
                                        for t in ("w:tl2br", "w:tr2bl"))
 
 
-NA_ONLY = re.compile(r"^\s*(N\s*/\s*A|해당\s*없음|없음)\s*$", re.I)
+# 사선이 곧 '해당 없음' 이므로, 사선 칸에는 이 글자들을 함께 적지 않는다 — 하이픈도 마찬가지다.
+NA_ONLY = re.compile(r"^[\s\u00a0]*(N\s*/\s*A|해당\s*없\s*음|없음|[-–—ㅡ~]+)[\s\u00a0]*$", re.I)
 
 
 def drop_na_in_diag_cells(document):
-    """사선을 그은 칸에 남아 있는 'N/A' 를 지운다. 지운 칸 수를 돌려준다.
+    """사선을 그은 칸에 남아 있는 'N/A' · '해당 없음' · 하이픈을 지운다. 지운 칸 수를 돌려준다.
 
     담당자 지시(2026-09): "비고에 사선이 그어졌으니 N/A 는 삭제해줘." 사선이 곧 '해당 없음'
     이라 글자를 겹쳐 적지 않는다.
+    담당자 지시(2026-09-15): "사선 완료한 칸에 하이폰이나 해당없음 기재는 하지 마 —
+    모든 PQR 작성 시 공통 사항이야." 그래서 하이픈(-·–·—)도 함께 지운다.
     """
     gone = 0
     for table in document.tables:
@@ -184,6 +187,66 @@ def drop_na_in_diag_cells(document):
                     set_cell(cell, "")
                     gone += 1
     return gone
+
+
+# '해당 없음' 일 수 없는 칸 — 여기에 사선이 그어져 있으면 값을 못 채운 것이다.
+MUST_FILL = ("제조일자", "제조년월일", "제조일", "제조번호", "포장번호", "lot no", "lot no.",
+             "제조단위", "시험일자", "시험번호", "제품명", "제품코드")
+
+
+def shade_cell(cell, fill="FFFF00"):
+    """칸 바탕을 칠한다 — 글자가 없는 칸은 형광펜으로는 표시되지 않는다."""
+    from .ooxml_order import place
+    pr = get_or_add(cell._tc, "tcPr")
+    old = pr.find(qn("w:shd"))
+    if old is not None:
+        pr.remove(old)
+    shd = cell._tc.makeelement(qn("w:shd"), {})
+    shd.set(qn("w:val"), "clear")
+    shd.set(qn("w:color"), "auto")
+    shd.set(qn("w:fill"), fill)
+    place(pr, shd)
+    return True
+
+
+def flag_empty_diag_cells(document, labels=MUST_FILL, color="FFFF00"):
+    """값이 반드시 있어야 하는 칸에 그어진 사선을 노랑으로 짚는다 → 짚은 칸 이름 목록.
+
+    담당자 지시(2026-09-15): "1~3행 제조일자 칸이 사선입니다. 제조일자가 해당 없을 수는
+    없으니 값이 안 채워진 채로 사선이 그어진 것으로 보입니다. 이런식으로 일반적이지 않으면
+    노랑마크를 표시해줘야 추가 메모와 함께 확인할 수 있어."
+
+    사선이 '해당 없음' 이라는 뜻으로 맞는 칸(비고·조치사항 …)은 건드리지 않는다. 열 머리글
+    이나 줄 이름이 MUST_FILL 에 걸리는 칸만 본다.
+    """
+    def _key(text):
+        return re.sub(r"[\s\u00a0().]", "", (text or "")).lower()
+
+    def _watched(text):
+        key = _key(text)
+        return bool(key) and any(_key(word) in key for word in labels)
+
+    found = []
+    for table in document.tables:
+        rows = table.rows
+        if not rows:
+            continue
+        heads = [cell_text(c) for c in raw_cells(rows[0])]
+        for ri, row in enumerate(rows[1:], start=1):
+            cells = raw_cells(row)
+            first = cell_text(cells[0]) if cells else ""
+            for ci, cell in enumerate(cells):
+                if (cell_text(cell) or "").strip():
+                    continue
+                if not has_diag(cell):
+                    continue
+                head = heads[ci] if ci < len(heads) else ""
+                name = head if _watched(head) else (first if _watched(first) else "")
+                if not name:
+                    continue
+                shade_cell(cell, color)
+                found.append((" ".join(name.split()), ri))
+    return found
 
 
 def highlight(document, needle="확인 필요", color="yellow"):

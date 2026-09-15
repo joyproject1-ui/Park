@@ -59,11 +59,12 @@ def is_edms(document):
     return False
 
 
-def apply(document, log=None, product_title=None, edms=None):
+def apply(document, log=None, product_title=None, edms=None, issues=None):
     """document 를 제자리에서 다듬는다. log(문구) 로 진행을 알린다.
 
     edms: EDMS 서식이면 True. None 이면 바닥글로 알아낸다. EDMS 서식은 표지·결재표·개정 내역이
     없고 목차 줄 간격도 서식이 정한 것이므로 앞부분 조판을 건너뛴다.
+    issues: 문의 목록. 담당자가 눈으로 봐야 할 것(값이 없는데 사선이 그어진 칸)을 여기에 남긴다.
     """
     log = log or (lambda *a: None)
     if edms is None:
@@ -293,7 +294,22 @@ def apply(document, log=None, product_title=None, edms=None):
     log("빈 문단 뭉치 정리: %d" % E.collapse_blank_runs(document, keep=1, min_run=2, protect_before=protect))
     # 각주·표 다음의 작은 제목 앞에는 빈 줄 한 줄 (담당자 2026-09 — 앞서의 "각주 뒤 엔터 삭제" 를 뒤집음)
     log("작은 제목 앞 빈 줄: %d" % E.blank_before_subheadings(document))
-    log("사선 칸의 N/A 삭제: %d" % E.drop_na_in_diag_cells(document))
+    log("사선 칸의 N/A·하이픈 삭제: %d" % E.drop_na_in_diag_cells(document))
+    # 사선은 '해당 없음' 이라는 뜻이다. 제조일자처럼 해당 없을 수 없는 칸에 사선이 있으면
+    # 값을 못 채운 것이므로 노랑으로 칠해 두고 문의 목록에도 남긴다
+    # (담당자 2026-09-15: "이런식으로 일반적이지 않으면 노랑마크를 표시해줘야 추가 메모와
+    # 함께 확인할 수 있어").
+    odd = E.flag_empty_diag_cells(document)
+    if odd:
+        names = []
+        for name, _row in odd:
+            if name not in names:
+                names.append(name)
+        log("값 없이 사선만 그어진 칸 노랑 표시: %d (%s)" % (len(odd), ", ".join(names)))
+        if issues is not None:
+            issues.append(("", "", "값이 비어 있는데 사선이 그어진 칸이 %d곳 있습니다(노랑) — %s. "
+                                   "사선은 '해당 없음' 이라는 뜻이므로, 이 칸들은 값을 채우거나 "
+                                   "사선을 지워야 합니다." % (len(odd), ", ".join(names))))
     log("항 제목 줄맞춤: %d" % E.align_section_titles(document))
     log("9.2 소제목 번호 바로잡음: %d" % E.renumber_subheadings(document, "9.2"))
     log("‘확인 필요’ 노랑 표시: %d" % E.highlight(document, "확인 필요"))

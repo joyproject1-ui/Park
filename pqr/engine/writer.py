@@ -533,7 +533,8 @@ def write_report(folder, product, period, out_path, today=None, recipe=None, log
                                 "달라 전년도 결재본에서 표를 물려받아야 합니다. 직접 작성하시거나, "
                                 "전년도 결재본을 .docx 로 제품 폴더에 두고 다시 만드세요."
                                 % ", ".join(empty)))
-    layout.apply(document, log=log_, product_title=(ctx or {}).get("cover_title"))
+    layout.apply(document, log=log_, product_title=(ctx or {}).get("cover_title"),
+                 issues=data.issues)
     out_path = _writable(out_path, data, log_)
     document.save(out_path)
     polish.polish(out_path)

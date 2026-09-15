@@ -2646,8 +2646,10 @@ function itemState(code, itemKey){
 function refreshUploadState(){
   if (!uploadTarget) return;
   const item = ITEMS.find(row=>row[0]===uploadTarget.item);
+  const common = COMMON_ITEMS.has(uploadTarget.item);
   $("#up-desc").innerHTML = `현재 상태: <b>${itemState(uploadTarget.code, uploadTarget.item)}</b> · `
-    + `${esc(item[2])}<br>이 항목은 아래 자료로 채워집니다.`;
+    + `${esc(item[2])}<br>이 항목은 아래 자료로 채워집니다.`
+    + (common ? `<br><b>공통 자료</b> — '공통' 폴더에 저장되어 모든 제품에 함께 적용됩니다.` : "");
 }
 
 /* 파일이 실제로 어디에 어떤 이름으로 저장되는지 그대로 보여 줍니다.
@@ -2656,9 +2658,12 @@ function updatePathHint(){
   if (!uploadTarget || !uploadEnabled()) return;
   const product = DATA.find(d=>d.code===uploadTarget.code);
   const item = ITEMS.find(row=>row[0]===uploadTarget.item);
-  const folder = `${uploadTarget.code} ${product ? product.name : ""}`.trim();
+  // 공통 자료 항목은 제품 폴더가 아니라 '공통' 폴더로 갑니다 — 서버도 같은 규칙입니다.
+  const common = COMMON_ITEMS.has(uploadTarget.item);
+  const folder = common ? "공통" : `${uploadTarget.code} ${product ? product.name : ""}`.trim();
   if (!pickedFiles.length){
-    $("#up-path").textContent = `저장 위치:  ${folder}/  (파일을 고르면 이름이 정해집니다)`;
+    $("#up-path").textContent = `저장 위치:  ${folder}/  (파일을 고르면 이름이 정해집니다)`
+      + (common ? "   — 한 번 올리면 모든 제품에 적용됩니다" : "");
     return;
   }
   const name = pickedFiles[0].name;
@@ -2668,6 +2673,7 @@ function updatePathHint(){
   const suffix = dot > 0 ? name.slice(dot) : "";
   const saved = alreadyNumbered ? name : `${item[0]} ${item[1]} - ${stem}${suffix}`;
   $("#up-path").textContent = `저장 위치:  ${folder}/${saved}`
+    + (common ? "   — 한 번 올리면 모든 제품에 적용됩니다" : "")
     + (pickedFiles.length > 1 ? `  (외 ${pickedFiles.length - 1}개도 같은 규칙으로 저장됩니다)` : "");
 }
 
@@ -2753,7 +2759,8 @@ async function submitUpload(){
     if (큼){ failed.push(`${file.name} — ${큼}`); continue; }
     const form = new FormData();
     form.append("product", uploadTarget.code);
-    form.append("item", uploadTarget.item);      // 항 번호 파일로 제품 폴더에 저장합니다
+    // 항 번호로 저장합니다 — 공통 자료 항목이면 서버가 '공통' 폴더로 보냅니다
+    form.append("item", uploadTarget.item);
     form.append("file", file, file.name);
     try {
       const response = await fetch("api/upload", { method:"POST", body: form });

@@ -565,6 +565,27 @@ class 공통_자료_올리기(ItemFileListTest):
         for product in result["data"]["products"]:
             self.assertEqual(product["checks"][index], "y", product["code"])
 
+    def test_공통_항목_칸에서_올려도_공통_폴더로_간다(self):
+        """화면은 그 칸을 '공통 자료' 라고 알려 주는데 저장은 제품 폴더로만 되어,
+        올려도 공통 자료 칸에 보이지 않았습니다 (담당자 2026-09-15: "6. 제조내역을
+        공통 자료로 올렸는데 업로드가 확인이 안되네")."""
+        result = self.upload_item("HP-110", "6", "제조내역_2025.xlsx")
+        self.assertTrue(result.get("ok"), result.get("error"))
+        names = os.listdir(os.path.join(self.dir, "공통"))
+        self.assertTrue(any(name.startswith("6") for name in names), names)
+        self.assertFalse(any(name.startswith("6") for name
+                             in os.listdir(os.path.join(self.dir, self.folder))))
+        # 한 번 올렸으니 모든 제품에 녹색불이 들어온다
+        ids = [item[0] for item in result["data"]["items"]]
+        index = ids.index("6")
+        for product in result["data"]["products"]:
+            self.assertEqual(product["checks"][index], "y", product["code"])
+
+    def test_공통_아닌_항목은_그대로_제품_폴더로_간다(self):
+        result = self.upload_item("HP-110", "13", "안정성 결과표.xlsx")
+        self.assertTrue(result.get("ok"), result.get("error"))
+        self.assertIn("HP-110", result["saved"])
+
     def test_어떤_파일이_올라갔는지_이름으로_확인한다(self):
         """제품 폴더에는 없지만 공통 폴더에 있으므로, 항목 창 목록에 나와야 한다."""
         self.upload_common("6. 제조내역.xlsx")

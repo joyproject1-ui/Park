@@ -250,6 +250,23 @@ def form_group(text, config, name=""):
     return FORM_FALLBACK if (text or name) else ""
 
 
+def quality_team(form, config, name=""):
+    """5항 '책임과 권한' 에 적을 담당 팀 — 점안제·주사제·안연고·안구이식제는 AQA팀,
+    그 밖의 제품은 SQA팀입니다.
+
+    담당자 2026-09-15: "점안제, 주사제, 안연고제, 안구이식제는 AQA팀이고 나머지 제품은
+    SQA팀으로 작성해주면 돼." 안연고는 연고제 군, 안구이식제는 기타제 군에 들어가므로
+    제형 군만으로는 가릴 수 없습니다 — 낱말(aqa_keywords)로 한 번 더 봅니다.
+    """
+    rule = config.get("quality_teams") or {}
+    aqa = rule.get("aqa") or "AQA팀"
+    default = rule.get("default") or "SQA팀"
+    words = rule.get("aqa_keywords") or []
+    if _matches(form, words) or _matches(name, words):
+        return aqa
+    return aqa if form_group(form, config, name) in set(rule.get("aqa_forms") or []) else default
+
+
 class Classifier:
     """config 의 키워드로 구분값(일탈 · 변경 · 불만 …)을 판정합니다."""
 
@@ -1393,6 +1410,8 @@ def build(input_dir=None, files=None, today=None, config=None, period=None):
             "name": name,
             "form": meta.get("form", ""),
             "form_group": form_group(meta.get("form", ""), config, name),
+            # 5항 담당 팀 — 보고서를 만드는 쪽(recipe)이 제형을 다시 풀지 않아도 되게 여기서 정한다
+            "quality_team": quality_team(meta.get("form", ""), config, name),
             "group": meta.get("group", ""),
             "item_files": with_common_files(item_files_by_product.get(code, {}), common_item_files),
             # 폴더에 완성본(제출용) 보고서가 올라오면 화면에 '보고서 완료' 단추가 생깁니다.

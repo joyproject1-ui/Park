@@ -481,8 +481,6 @@ def _fill_sheet(data, sheet_name, product, lots, item, storage, lcl, ucl, remark
     xml = set_cell(xml, "C3", product)
     xml = set_cell(xml, "G3", item)
     xml = set_cell(xml, "C4", storage)
-    xml = set_cell(xml, "H4", lcl)
-    xml = set_cell(xml, "J4", ucl)
     xml = set_cell(xml, "M3", prepared_by)
     xml = set_cell(xml, "M4", prepared_on)
     if unsure:
@@ -491,8 +489,16 @@ def _fill_sheet(data, sheet_name, product, lots, item, storage, lcl, ucl, remark
     xml = set_cell(xml, "A27", remark)
     lot_style = style_at(xml, "B%d" % FIRST_ROW, LOT_STYLE)
     value_style = style_at(xml, "C%d" % FIRST_ROW, VALUE_STYLE)
-    data["xl/styles.xml"], diag = diagonal_styles(data["xl/styles.xml"],
-                                                  (lot_style, value_style))
+    lcl_style = style_at(xml, "H4", value_style)
+    ucl_style = style_at(xml, "J4", value_style)
+    data["xl/styles.xml"], diag = diagonal_styles(
+        data["xl/styles.xml"], (lot_style, value_style, lcl_style, ucl_style))
+    # 관리 기준(LCL·UCL)이 없는 시험항목은 그 칸을 비워 두지 않고 사선을 긋는다 —
+    # 담당자 2026-09-15: "작성자도 공란으로 작성해줘. 기준 공란인 경우는 사선처리 해줘."
+    xml = set_cell(xml, "H4", lcl,
+                   style=None if lcl not in (None, "") else str(diag[lcl_style]))
+    xml = set_cell(xml, "J4", ucl,
+                   style=None if ucl not in (None, "") else str(diag[ucl_style]))
     data["xl/styles.xml"], yellow = yellow_styles(data["xl/styles.xml"], (value_style,))
     for i in range(ROWS):
         row = FIRST_ROW + i

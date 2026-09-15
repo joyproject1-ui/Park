@@ -2,6 +2,9 @@
 """HLF-QC-126-06 안정성 경향 파일 생성기 — 칸 치환·계열 재구성 단위 시험."""
 from __future__ import unicode_literals
 
+import os
+import shutil
+import tempfile
 import unittest
 
 from lxml import etree
@@ -401,3 +404,38 @@ class 서식_시트_고르기(unittest.TestCase):
         from pqr.engine.excel_attach import pick_form_sheets
         got = pick_form_sheets([("pH", "pH")], ["함량", "A"])
         self.assertEqual(got, [("함량", "pH")])
+
+
+class 기준_공란_사선(unittest.TestCase):
+    """관리 기준이 없는 시험항목은 그 칸을 비워 두지 않고 사선을 긋는다.
+
+    담당자 2026-09-15: "작성자도 공란으로 작성해줘. 기준 공란인 경우는 사선처리 해줘."
+    (작성자·작성일은 예전부터 기본값이 빈칸이다 — 결재 전에 이름이 박혀 나가지 않게.)
+    """
+
+    FORM = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                        "pqr", "data", "HLF-QC-126-06 안정성 시험 경향 분석 결과 서식.xlsx")
+
+    def 만들기(self, lcl, ucl):
+        import openpyxl
+        folder = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, folder, True)
+        out = os.path.join(folder, "t.xlsx")
+        S.build(self.FORM, out, "시험제품", [("XMY401", {})], item="함량(%)", lcl=lcl, ucl=ucl)
+        return openpyxl.load_workbook(out)["함량"]
+
+    def test_기준이_비면_사선(self):
+        sheet = self.만들기("", "")
+        for ref in ("H4", "J4"):
+            self.assertTrue(sheet[ref].border.diagonalUp, ref)
+
+    def test_기준이_있으면_사선이_없다(self):
+        sheet = self.만들기(95.0, 105.0)
+        for ref, value in (("H4", 95.0), ("J4", 105.0)):
+            self.assertEqual(sheet[ref].value, value)
+            self.assertFalse(sheet[ref].border.diagonalUp, ref)
+
+    def test_작성자는_기본이_빈칸(self):
+        sheet = self.만들기("", "")
+        self.assertIn(sheet["M3"].value, (None, ""))
+        self.assertIn(sheet["M4"].value, (None, ""))
