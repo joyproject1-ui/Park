@@ -17,7 +17,8 @@ import tempfile
 from docx import Document
 from docx.oxml.ns import qn
 
-REVIEW_TEXT = "PQR 검토용 본문 - %s.txt"          # 'PQR ' 로 시작해야 어느 항의 자료로도 셈해지지 않는다
+REVIEW_TEXT = "PQR 검토용 본문 - %s.txt"
+TIMEOUT_MINUTES = 30                                 # claude_cli.TIMEOUT 과 같은 값 — 문구에 적는다          # 'PQR ' 로 시작해야 어느 항의 자료로도 셈해지지 않는다
 MAX_FINDINGS = 20
 XLSX_ROWS = 120
 
@@ -165,7 +166,11 @@ def review(folder, product, report_path, issues, log=None, period=None):
             "issues": "\n".join("  [%s] %s — %s" % (i, f, w) for i, f, w in (issues or [])[:60]) or "  (없음)",
             "max": MAX_FINDINGS,
         }
-        say("검토: Claude Code 가 보고서를 첨부 %d개와 대조합니다 (몇 분 걸립니다)" % len(sources))
+        # 담당자 2026-09-16: "검토가 너무 오래 걸리는것 아닌지?" — 보고서는 이미 저장되어 있고
+        # 이 단계는 뒤에 붙는 것임을, 그리고 얼마나 기다릴 수 있는지를 문구에 적는다.
+        say("검토: 보고서는 이미 저장되었습니다 — Claude Code 가 첨부 %d개와 대조하는 중 "
+            "(최대 %d분, 끝나면 어긋난 곳을 문의 목록에 보탭니다. 먼저 열어 보셔도 됩니다)"
+            % (len(sources), TIMEOUT_MINUTES))
         answer = claude_cli._ask(claude_cli._exe(), prompt, folder, say,
                                  [text_path] + [p for _, p in sources])
         found = _findings(answer)
