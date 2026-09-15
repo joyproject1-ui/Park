@@ -705,8 +705,12 @@ def change_covers(cc, name, parts=()):
 
 
 def _within(got, cutoff):
-    """평가 기간 끝(cutoff 'YYYYMMDD')까지 완료된 것만 — 하나도 없으면 그대로 (올로원스 2026-09-10 검토:
-    10.2 PQ 를 2026.04.27 것으로 적었는데 2025년 PQR 이니 2025.04.28 것이어야 한다)."""
+    """평가 기간 끝(cutoff 'YYYYMMDD')까지 완료된 것만 — 하나도 없으면 그대로.
+
+    담당자 2026-09-15 확정: "2026년도 PQR 이니까 2025.12.31 까지 완료된 것이고, 2027년 PQR 은
+    2026.12.31 까지 완료된 것". cutoff 는 평가 기간 끝(period['to'])에서 오므로 해마다 저절로 옮겨 간다.
+    (올로원스 2026-09-10 검토: 10.2 PQ 를 2026.04.27 것으로 적었는데 2025.12.31 까지면 2025.04.28 것이다.)
+    """
     if not cutoff:
         return got
     inside = [x for x in got if re.sub(r"\D", "", x[1])[:8] <= cutoff]
@@ -1344,6 +1348,7 @@ def update_qualification(table, lookup, cutoff=None):
     빈 서식(공양식)의 IQ·OQ 칸은 사선만 그어져 있고 비어 있다 — 마스터파일에서 읽어
     채우고 사선을 지운다(담당자 2026-09). 이미 값이 있으면 마스터가 더 최근일 때만 바꾼다.
     cutoff('YYYYMMDD'): 평가 기간 끝 — 그 뒤에 완료된 문서(다음 해 재적격성평가)는 이번 PQR 에 적지 않는다.
+    (담당자 2026-09-15 확정)
     """
     rows = table.rows
     width = E.grid_width(table)
@@ -3639,7 +3644,9 @@ def fill(document, data, product, period, today=None, log=None):
     # 마스터파일로 문서·완료일을 갱신한다(담당자 2026-09-06: "작성할 줄 모르겠으면 16항의 전년도 PQR 결재본을
     # 참고해서 작성하고 … 업로드한 파일로 최신 내용으로 업데이트하면 돼").
     seeds = getattr(data, "prev_equipment", None) or {}
-    # 평가 기간 끝까지 완료된 IQ·OQ·PQ 만 — 다음 해(2026) 재적격성평가는 이번(2025년) PQR 것이 아니다
+    # 평가 기간 끝까지 완료된 IQ·OQ·PQ 만 — 그 뒤에 한 재적격성평가는 이번 PQR 것이 아니다
+    # (담당자 2026-09-15 확정: 2026년도 PQR = 2025.12.31 까지, 2027년 PQR = 2026.12.31 까지).
+    # 연도를 박지 않고 평가 기간 끝에서 가져오므로 해마다 저절로 옮겨 간다
     qual_cutoff = re.sub(r"\D", "", str((period or {}).get("to") or ""))[:8] or None
     for prefix in ("10.2", "10.3", "10.4", "10.5"):
         for t in _tables(document, prefix):
