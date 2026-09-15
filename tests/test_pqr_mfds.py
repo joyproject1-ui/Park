@@ -393,6 +393,35 @@ class 노랑표시(unittest.TestCase):
         n, issues, 칠한칸 = self._돌린다(ITEM_PERMIT_DATE="20111129")
         self.assertEqual(n, 1)
         self.assertEqual(칠한칸, {"허가일자"})
+
+    def test_칸_바탕도_노랑이고_문의에_두_값이_다_적힌다(self):
+        """담당자 2026-09-16: "보고서에 노랑으로 표시해주고 문의목록에 내용을 기재해줘"."""
+        from pqr.engine import recipe_ointment as R, docedit as E
+        doc, t = self._표()
+        표3, 칸3 = {}, {}
+        for row in t.rows[1:]:
+            cells = E.raw_cells(row)
+            이름 = E.cell_text(cells[1]).strip()
+            if 이름:
+                표3[이름] = E.cell_text(cells[2]).strip(); 칸3[이름] = cells[2]
+        old_key, old_fetch = mfds.api_key, mfds.fetch
+        mfds.api_key = lambda folder=None: "열쇠"
+        mfds.fetch = lambda name, key, **kw: [dict(
+            {k: mfds._value(dict(올로원스, ITEM_PERMIT_DATE="20111129"), k) for k in mfds.FIELDS})]
+        issues = []
+        try:
+            R._check_license(표3, "올로원스점안액(올로파타딘염산염)", "", issues, lambda *a: None, 칸3)
+        finally:
+            mfds.api_key, mfds.fetch = old_key, old_fetch
+        xml = 칸3["허가일자"]._tc.xml
+        self.assertIn("w:shd", xml)                       # 칸 바탕
+        self.assertIn("highlight", xml)                   # 글자 형광펜
+        self.assertEqual(len(issues), 1)
+        item, where, text = issues[0]
+        self.assertEqual((item, where), ("3", "3항 허가일자"))
+        self.assertIn("2011년 11월 30일", text)           # 보고서 값
+        self.assertIn("2011", text) and self.assertIn("식약처", text)
+        self.assertIn("노랑", text)
         self.assertEqual(len(issues), 1)
         self.assertIn("허가일자", issues[0][1])
 

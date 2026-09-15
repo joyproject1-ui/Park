@@ -1531,11 +1531,17 @@ def _check_license(section3, name, folder, issues, log, cells3=None, ledger=None
         % (info.get("제품명"), info.get("품목기준코드") or "-", " · ".join(mfds.notes(info))))
     다른것 = mfds.compare(section3, info)
     for 항목, 내것, 그쪽, 까닭 in 다른것:
-        issues.append(("3", 항목, "%s — 보고서 '%s' · 식약처 허가정보 '%s'. 어느 쪽이 맞는지 "
-                                   "확인하세요" % (까닭, 내것, 그쪽)))
+        # 담당자 2026-09-16: "식약처 허가정보가 어긋나면 … 보고서에 노랑으로 표시해주고 문의목록에
+        # 내용을 기재해줘" — 보고서 칸은 글자 형광펜 + 칸 바탕(글자가 없어도 보이게), 문의에는
+        # 어느 칸이 보고서 값 · 식약처 값 각각 무엇인지 그대로 적는다. 값은 고치지 않는다.
+        issues.append(("3", "3항 %s" % 항목,
+                       "식약처 허가정보와 다릅니다 — 보고서 '%s' ↔ 식약처 '%s' (%s). 보고서 3항의 그 칸을 "
+                       "노랑으로 표시했습니다. 식약처가 맞으면 보고서를 고치고, 보고서가 맞으면 허가정보 "
+                       "갱신 여부를 확인하세요" % (내것, 그쪽, 까닭)))
         칸 = (cells3 or {}).get(항목)
         if 칸 is not None:
             E.highlight_cell(칸)
+            E.shade_cell(칸)
     if 다른것:
         log("  3항 대조: 어긋난 칸 %d개를 노랑으로 칠하고 문의에 올림 — %s"
             % (len(다른것), ", ".join(one[0] for one in 다른것)))
@@ -1607,6 +1613,7 @@ def _check_penalty(name, entp, folder, issues, log, cells3=None, ledger=None):
     칸 = _penalty_cell(cells3)
     if 칸 is not None:
         E.highlight_cell(칸)
+        E.shade_cell(칸)
     log("3항 6번: 행정처분 이력 %d건을 문의에 올리고 노랑으로 칠함" % len(mine))
     _ledger(ledger, LEDGER_PENALTY, "읽음", "확인함 — 행정처분 이력 %d건을 문의에 올리고 노랑으로 칠함" % len(mine))
     return len(mine)
