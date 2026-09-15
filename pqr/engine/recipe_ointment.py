@@ -1483,6 +1483,23 @@ def _ledger(ledger, name, status, detail):
         ledger.append(("3", name, status, detail))
 
 
+def section3_mismatch(section3, name):
+    """3항 표의 제품명이 이 제품이 아니면 그 이름을, 맞으면 빈 글을 돌려준다.
+
+    담당자 PC 2026-09-16: EDMS 서식에 남아 있던 한림포비돈점안액 3항이 올로원스점안액 보고서에
+    나갔는데, 식약처 대조가 표의 제품명으로 찾아 비교해 '어긋남 없음' 이 되었다. 표의 이름이
+    이 제품이 아니면 그 자체가 어긋난 것이다.
+    """
+    from .collect import _core_name
+    core = _core_name(name)
+    for label, value in (section3 or {}).items():
+        if "제품명" in label and value:
+            if core and core not in re.sub(r"\s+", "", value):
+                return value
+            return ""
+    return ""
+
+
 def _check_license(section3, name, folder, issues, log, cells3=None, ledger=None):
     """3항 표를 식약처 허가정보와 대조해 어긋난 칸만 문의로 올리고 노랑으로 칠한다.
 
@@ -1654,8 +1671,17 @@ def fill(document, data, product, period, today=None, log=None):
                 이름 = " ".join(E.cell_text(cells[1]).split())
                 표3[이름] = " ".join(E.cell_text(cells[2]).split())
                 칸3[이름] = cells[2]                  # 어긋나면 이 '내용' 칸을 노랑으로 칠한다
+        다른제품 = section3_mismatch(표3, name)
+        if 다른제품:
+            issues.insert(0, ("3", 다른제품, "★ 3항 대상 제품 표가 이 제품(%s)이 아니라 '%s' 의 값입니다 — "
+                                          "서식에 남아 있던 다른 제품 정보입니다. 전년도 결재본을 폴더에 두거나 "
+                                          "3항을 직접 고치세요" % (name, 다른제품)))
+            for 이름, 칸 in 칸3.items():
+                if "제품명" in 이름:
+                    E.highlight_cell(칸)
+            log("3항: 표의 제품명 '%s' 이 이 제품(%s)이 아닙니다 — 문의에 올리고 노랑" % (다른제품, name))
         for 이름, 값 in 표3.items():
-            if "제품명" in 이름 and 값 and (not full_name or full_name == name):
+            if "제품명" in 이름 and 값 and not 다른제품 and (not full_name or full_name == name):
                 full_name = 값
                 break
         장부 = getattr(data, "ledger", None)

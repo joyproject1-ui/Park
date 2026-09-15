@@ -186,3 +186,36 @@ class 올해_이력만(unittest.TestCase):
         new, table = make([["연번", "관리번호", "규격"], ["1", "EPB116", ""]])
         C.carry(new, old)
         self.assertEqual(E.cell_text(table.rows[1].cells[2]), "KP")
+
+
+class 삼항은_덮어쓴다(unittest.TestCase):
+    """3항 대상 제품은 서식에 다른 제품 값이 차 있어도 전년도 결재본 값으로 덮어쓴다
+    (담당자 PC 2026-09-16: EDMS 서식의 한림포비돈점안액 3항이 올로원스 보고서에 그대로 나갔다)."""
+
+    HEAD3 = ["No.", "점검 항목", "내  용", "비 고"]
+
+    def test_서식에_남은_다른_제품_값을_전년도_값으로_바꾼다(self):
+        old = _doc([self.HEAD3, ["3", "제품명", "올로원스점안액(올로파타딘염산염)", "주성분: 올로파타딘염산염"],
+                    ["4", "허가번호", "제 5029호", ""], ["5", "허가일자", "2011년 11월 30일", ""]], "3. 대상 제품")
+        new = _doc([self.HEAD3, ["3", "제품명", "한림포비돈점안액", "주성분: 포비돈 K-25"],
+                    ["4", "허가번호", "제 99 호", ""], ["5", "허가일자", "1998년 05월 29일", ""]], "3. 대상 제품")
+        carry.carry(new, old)
+        rows = [[c.text for c in r.cells] for r in new.tables[0].rows[1:]]
+        self.assertEqual(rows[0][2], "올로원스점안액(올로파타딘염산염)")
+        self.assertEqual(rows[0][3], "주성분: 올로파타딘염산염")
+        self.assertEqual(rows[1][2], "제 5029호")
+        self.assertEqual(rows[2][2], "2011년 11월 30일")
+
+    def test_전년도에_없는_줄은_그대로_둔다(self):
+        old = _doc([self.HEAD3, ["3", "제품명", "올로원스점안액", ""]], "3. 대상 제품")
+        new = _doc([self.HEAD3, ["3", "제품명", "한림포비돈점안액", ""], ["8", "사용기한", "제조일로부터 36개월", ""]], "3. 대상 제품")
+        carry.carry(new, old)
+        rows = [[c.text for c in r.cells] for r in new.tables[0].rows[1:]]
+        self.assertEqual(rows[0][2], "올로원스점안액")
+        self.assertEqual(rows[1][2], "제조일로부터 36개월")
+
+    def test_다른_항은_여전히_빈_칸만(self):
+        old = _doc([HEAD, ["1", "RBG201", "겐타마이신황산염", "KP", "예전 제조원", ""]])
+        new = _doc([HEAD, ["1", "RBG201", "겐타마이신황산염", "USP", "올해 제조원", ""]])
+        carry.carry(new, old)
+        self.assertEqual([c.text for c in new.tables[0].rows[1].cells][3], "USP")

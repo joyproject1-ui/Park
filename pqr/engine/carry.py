@@ -116,6 +116,12 @@ def _label_columns(headers):
 # 일탈 문서번호 DR-240509-06 이 옮겨져 '이력 없음' 이라는 특이사항과 어긋났다).
 THIS_YEAR_ONLY = ("11", "12", "14", "15")
 
+# 제품 신원 — 3항 '대상 제품' 은 서식에 값이 차 있어도 이 제품 것이 아니다. 담당자 PC 2026-09-16:
+# 0항에 올린 EDMS 서식에 한림포비돈점안액의 3항(허가번호 제 99 호 · 1998년 · 36개월)이 그대로
+# 남아 올로원스점안액 보고서에 나갔다 — 이어받기가 빈 칸만 채웠기 때문이다. 전년도 결재본에
+# 같은 항목 줄이 있으면 덮어쓴다.
+PRODUCT_IDENTITY = ("3",)
+
 
 def carry(document, old_document, log=None):
     """빈 칸에 전년도 값을 넣는다. 넣은 칸 수를 돌려준다."""
@@ -138,6 +144,7 @@ def carry(document, old_document, log=None):
             if [h for h in head if h] != [h for h in old_head if h]:
                 continue                       # 열 구성이 다르면 옮기지 않는다
             key, old_key = _key_col(head), _key_col(old_head)
+            force = section.split(".")[0] in PRODUCT_IDENTITY and bool(_label_columns(head))
             old_rows = _rows(old)
             by_key = {}
             for cells in old_rows:
@@ -148,11 +155,16 @@ def carry(document, old_document, log=None):
                 source = by_key.get(code) if code else None
                 for col, name in want.items():
                     cell = cells.get(col)
-                    if cell is None or E.cell_text(cell).strip():
+                    if cell is None:
+                        continue
+                    filled = bool(E.cell_text(cell).strip())
+                    if filled and not force:
                         continue
                     text = ""
                     if source is not None and col in source:
                         text = E.cell_text(source[col]).strip()
+                    if filled and (not text or text == E.cell_text(cell).strip()):
+                        continue                   # 덮어쓸 값이 없거나 같으면 그대로
                     elif key is None:
                         # 줄 열쇠가 해마다 다른 표(6항 Lot No.) — 전년도 값이 한 가지면 그 값을 쓴다.
                         # 관리번호로 짝지을 수 있는 표에서는 짝이 없으면 가져오지 않는다 — 다른

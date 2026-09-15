@@ -451,3 +451,20 @@ class 판독_대장에_남김(unittest.TestCase):
             self.assertEqual(R._check_license({}, "x", "", [], lambda *a: None, {}), 0)
         finally:
             mfds.api_key = saved
+
+
+class 삼항_제품명_확인(unittest.TestCase):
+    """3항 표의 제품명이 이 제품이 아니면 잡아낸다 (담당자 PC 2026-09-16: 서식에 남은 한림포비돈 3항)."""
+
+    def test_다른_제품이면_그_이름을_돌려준다(self):
+        from pqr.engine.recipe_ointment import section3_mismatch
+        self.assertEqual(section3_mismatch({"제품명": "한림포비돈점안액"}, "올로원스점안액"), "한림포비돈점안액")
+
+    def test_같은_제품이면_빈_글(self):
+        from pqr.engine.recipe_ointment import section3_mismatch
+        self.assertEqual(section3_mismatch({"제품명": "올로원스점안액(올로파타딘염산염)"}, "올로원스점안액"), "")
+        self.assertEqual(section3_mismatch({"제품명": "올로원스 점안액"}, "올로원스점안액(다회용)"), "")
+
+    def test_제품명_줄이_없으면_빈_글(self):
+        from pqr.engine.recipe_ointment import section3_mismatch
+        self.assertEqual(section3_mismatch({"허가번호": "제 99 호"}, "올로원스점안액"), "")
