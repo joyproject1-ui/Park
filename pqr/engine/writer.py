@@ -512,6 +512,10 @@ def write_report(folder, product, period, out_path, today=None, recipe=None, log
                                 "전년도 결재본을 읽지 못해 원료 규격·제조단위 같은 값을 이어받지 "
                                 "못했습니다 — 빈 칸을 직접 채우세요"))
     ctx = recipe(document, data, product, period, today=today, log=log_)
+    # 3항 식약처 대조 결과는 채우는 동안 판독 대장에 더해진다 — 대장을 한 번 더 써서 담는다
+    # (담당자 2026-09-16: 대장만 보고 "허가 식약처 사이트에서 확인한 것인지?")
+    if collect_module.write_ledger(folder, product.get("code", ""), data):
+        log_("자료 판독 대장에 식약처 확인 결과를 더했습니다")
     for item, why in _compare_with_previous(document, getattr(data, "prev_shape", None), log_):
         data.issues.insert(0, (item, data.previous_name or "", why))
     if form and source is previous:

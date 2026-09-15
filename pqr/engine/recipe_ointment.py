@@ -1472,7 +1472,18 @@ def use_our_floor(table, support, floor=FLOOR):
     return swapped
 
 
-def _check_license(section3, name, folder, issues, log, cells3=None):
+LEDGER_LICENSE = "식약처 허가정보 (공공데이터 API)"
+LEDGER_PENALTY = "식약처 행정처분 (공공데이터 API)"
+
+
+def _ledger(ledger, name, status, detail):
+    """자료 판독 대장에 식약처 확인 결과를 한 줄 남긴다 (담당자 2026-09-16: 판독 대장만 보고
+    "허가 식약처 사이트에서 확인한 것인지?" — 접속 결과가 작성 기록에만 있어 보이지 않았다)."""
+    if ledger is not None:
+        ledger.append(("3", name, status, detail))
+
+
+def _check_license(section3, name, folder, issues, log, cells3=None, ledger=None):
     """3항 표를 식약처 허가정보와 대조해 어긋난 칸만 문의로 올리고 노랑으로 칠한다.
 
     담당자 2026-09-12: "어긋난 칸만 문의 목록에 문의하고 노랑색 마크로 표시해 줘."
@@ -1484,17 +1495,20 @@ def _check_license(section3, name, folder, issues, log, cells3=None):
     if not key:
         log("3항: 식약처 허가정보 대조를 건너뜁니다 — 서비스 키가 없습니다(MFDS_API_KEY 또는 %s)"
             % mfds.KEY_FILE)
+        _ledger(ledger, LEDGER_LICENSE, "못 읽음", "서비스 키가 없어 대조하지 않음 — 공통/%s" % mfds.KEY_FILE)
         return 0
     try:
         rows = mfds.fetch(name, key)
     except Exception as error:
         log("3항: 식약처 허가정보를 받지 못했습니다 — %s" % error)
+        _ledger(ledger, LEDGER_LICENSE, "안 읽음", "접속했지만 받지 못함 — %s" % error)
         return 0
     info = mfds.pick(rows, name)
     if info is None:
         issues.append(("3", name, "식약처 허가정보에서 이 제품명을 찾지 못했습니다 — 제품명을 "
                                   "확인하거나 허가정보를 직접 대조하세요"))
         log("3항: 허가정보에서 '%s' 를 찾지 못했습니다 (받은 건수 %d)" % (name, len(rows)))
+        _ledger(ledger, LEDGER_LICENSE, "안 읽음", "접속했지만 '%s' 를 찾지 못함 (받은 건수 %d) — 제품명 확인" % (name, len(rows)))
         return 0
     log("3항: 식약처 허가정보와 대조 — %s (%s) · %s"
         % (info.get("제품명"), info.get("품목기준코드") or "-", " · ".join(mfds.notes(info))))
@@ -1508,8 +1522,12 @@ def _check_license(section3, name, folder, issues, log, cells3=None):
     if 다른것:
         log("  3항 대조: 어긋난 칸 %d개를 노랑으로 칠하고 문의에 올림 — %s"
             % (len(다른것), ", ".join(one[0] for one in 다른것)))
+        _ledger(ledger, LEDGER_LICENSE, "읽음", "대조함 — %s · 어긋난 칸 %d개(%s)를 노랑으로 칠하고 문의에 올림"
+                % (info.get("제품명"), len(다른것), ", ".join(one[0] for one in 다른것)))
     else:
         log("  3항 대조: 어긋난 칸 없음")
+        _ledger(ledger, LEDGER_LICENSE, "읽음", "대조함 — %s (허가일자 %s) · 어긋난 칸 없음"
+                % (info.get("제품명"), info.get("허가일자") or "-"))
     return len(다른것)
 
 
@@ -1525,7 +1543,7 @@ def _penalty_cell(cells3):
     return None
 
 
-def _check_penalty(name, entp, folder, issues, log, cells3=None):
+def _check_penalty(name, entp, folder, issues, log, cells3=None, ledger=None):
     """3항 6번 '행정 처분 이력 없음' 을 식약처 행정처분 정보로 확인한다.
 
     담당자 2026-09-14: "행정처분 정보 API 도 … 같이 넣어줘". 이력이 나오면 문의로 올리고
@@ -1538,6 +1556,7 @@ def _check_penalty(name, entp, folder, issues, log, cells3=None):
         return 0                                   # 열쇠가 없으면 허가정보 쪽에서 이미 알렸다
     bases = mfds.penalty_base(folder)
     if not bases:
+        _ledger(ledger, LEDGER_PENALTY, "못 읽음", "주소 파일이 없어 확인하지 않음 — 공통/%s" % mfds.PENALTY_URL_FILE)
         # 주소 파일이 없거나, 있어도 주소가 아니다(열쇠를 넣어 둔 것이 가장 흔하다).
         # 어느 쪽이든 부르지 않고 넘어간다 — 아닌 주소를 기다리느라 시간을 버리지 않는다.
         log("3항 6번: 행정처분 확인을 건너뜁니다 — 공통/%s 에 포털의 '요청 주소'"
@@ -1549,14 +1568,17 @@ def _check_penalty(name, entp, folder, issues, log, cells3=None):
         rows, base = mfds.fetch_penalties(name, key, bases)
     except Exception as error:
         log("3항 6번: 행정처분 정보를 받지 못했습니다 — %s" % error)
+        _ledger(ledger, LEDGER_PENALTY, "안 읽음", "접속했지만 받지 못함 — %s" % error)
         return 0
     if not base:
+        _ledger(ledger, LEDGER_PENALTY, "못 읽음", "요청 주소를 몰라 확인하지 않음 — 공통/%s" % mfds.PENALTY_URL_FILE)
         log("3항 6번: 행정처분 정보 주소를 몰라 건너뜁니다 — 포털의 '요청 주소' 를 "
             "공통/%s 에 넣어 주세요" % mfds.PENALTY_URL_FILE)
         return 0
     mine = mfds.penalties_for(rows, name, entp)
     if not mine:
         log("3항 6번: 행정처분 이력 없음을 확인 (받은 건수 %d · %s)" % (len(rows), base))
+        _ledger(ledger, LEDGER_PENALTY, "읽음", "확인함 — 이 제품 · 업체의 행정처분 이력 없음 (받은 건수 %d)" % len(rows))
         return 0
     for one in mine:
         issues.append(("3", "허가 및 시판 후 준수 사항",
@@ -1569,6 +1591,7 @@ def _check_penalty(name, entp, folder, issues, log, cells3=None):
     if 칸 is not None:
         E.highlight_cell(칸)
     log("3항 6번: 행정처분 이력 %d건을 문의에 올리고 노랑으로 칠함" % len(mine))
+    _ledger(ledger, LEDGER_PENALTY, "읽음", "확인함 — 행정처분 이력 %d건을 문의에 올리고 노랑으로 칠함" % len(mine))
     return len(mine)
 
 
@@ -1635,9 +1658,10 @@ def fill(document, data, product, period, today=None, log=None):
             if "제품명" in 이름 and 값 and (not full_name or full_name == name):
                 full_name = 값
                 break
-        _check_license(표3, full_name or name, getattr(data, "folder", ""), issues, log, 칸3)
+        장부 = getattr(data, "ledger", None)
+        _check_license(표3, full_name or name, getattr(data, "folder", ""), issues, log, 칸3, ledger=장부)
         _check_penalty(full_name or name, 표3.get("업체명") or "", getattr(data, "folder", ""),
-                       issues, log, 칸3)
+                       issues, log, 칸3, ledger=장부)
 
     # ---------- 5항 책임과 권한 ----------
     # 담당자 지시(2026-09): "품질보증 1팀은 AQA 팀으로 변경해줘." 옛 이름(품질보증n팀)은

@@ -403,3 +403,51 @@ class 노랑표시(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class 판독_대장에_남김(unittest.TestCase):
+    """식약처 확인 결과가 자료 판독 대장에도 한 줄 남는다 (담당자 2026-09-16: 대장만 보고
+    "허가 식약처 사이트에서 확인한 것인지?")."""
+
+    def _run(self, key, fetch=None, pick=None):
+        from pqr.engine import recipe_ointment as R
+        from pqr.engine.readers import mfds
+        saved = (mfds.api_key, mfds.fetch, mfds.pick, mfds.compare)
+        mfds.api_key = lambda folder: key
+        mfds.fetch = fetch or (lambda name, k: [{"제품명": name, "허가일자": "20111130"}])
+        mfds.pick = pick or (lambda rows, name: rows[0] if rows else None)
+        mfds.compare = lambda s3, info: []
+        ledger = []
+        try:
+            R._check_license({"제품명": "올로원스점안액"}, "올로원스점안액", "", [], lambda *a: None, {}, ledger=ledger)
+        finally:
+            mfds.api_key, mfds.fetch, mfds.pick, mfds.compare = saved
+        return ledger
+
+    def test_대조하면_읽음으로_남는다(self):
+        got = self._run("열쇠")
+        self.assertEqual(len(got), 1)
+        item, name, status, detail = got[0]
+        self.assertEqual((item, status), ("3", "읽음"))
+        self.assertIn("식약처 허가정보", name)
+        self.assertIn("어긋난 칸 없음", detail)
+
+    def test_열쇠가_없으면_못_읽음(self):
+        got = self._run("")
+        self.assertEqual(got[0][2], "못 읽음")
+        self.assertIn("서비스 키", got[0][3])
+
+    def test_받지_못하면_안_읽음(self):
+        def 터짐(name, k): raise RuntimeError("연결 실패")
+        got = self._run("열쇠", fetch=터짐)
+        self.assertEqual(got[0][2], "안 읽음")
+        self.assertIn("연결 실패", got[0][3])
+
+    def test_대장이_없어도_돈다(self):
+        from pqr.engine import recipe_ointment as R
+        from pqr.engine.readers import mfds
+        saved = mfds.api_key; mfds.api_key = lambda folder: ""
+        try:
+            self.assertEqual(R._check_license({}, "x", "", [], lambda *a: None, {}), 0)
+        finally:
+            mfds.api_key = saved
