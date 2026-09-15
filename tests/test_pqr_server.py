@@ -860,7 +860,7 @@ class BulkZipTest(BulkUploadTest):
         product = next(p for p in result["data"]["products"] if p["code"] == "HP-110")
         ids = [item[0] for item in result["data"]["items"]]
         checks = dict(zip(ids, product["checks"]))
-        self.assertEqual(checks["3"], "y")
+        self.assertEqual(checks["3"], "a")   # 3항은 API 자동 확인
         self.assertEqual(checks["7"], "y")
         self.assertEqual(checks["9.2.1"], "y")
 

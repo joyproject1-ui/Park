@@ -414,6 +414,39 @@ class Workspace(object):
                 handle.write(payload)
         return {"saved": base, "folder": os.path.abspath(folder)}
 
+    COMMON_FOLDER = "공통"
+
+    def common_folder(self, create=False):
+        """제품이 아니라 모두에게 걸리는 자료를 두는 폴더."""
+        folder = os.path.join(self.input_dir, self.COMMON_FOLDER)
+        if create and not os.path.isdir(folder):
+            os.makedirs(folder, exist_ok=True)
+        return folder
+
+    def save_common_file(self, filename, payload):
+        """공통 자료를 '공통' 폴더에 원본 이름 그대로 둡니다.
+
+        담당자 2026-09-14: "공통 자료가 업로드되면 모든 제품에 업로드 완료 되었다고 녹색불".
+        이름이 항 번호로 시작해야 어느 항목인지 알 수 있으므로, 아니면 그 사실을 알려 줍니다.
+        """
+        check_size(filename, payload)
+        if not payload:
+            raise UploadError("빈 파일입니다.")
+        base = safe_filename(filename, ALLOWED_ITEM_SUFFIXES)
+        if not base:
+            raise UploadError("허용되지 않는 파일 형식입니다: %s" % filename)
+        matcher = build_module.item_matcher(self.data["items"])
+        item_id = matcher(base)
+        common = set(self.config.get("common_items") or []) if hasattr(self, "config") else set()
+        folder = self.common_folder(create=True)
+        target = os.path.join(folder, base)
+        with self.lock:
+            with open(target, "wb") as handle:
+                handle.write(payload)
+        self.rebuild()
+        return {"saved": base, "item": item_id or "", "folder": os.path.abspath(folder),
+                "common_ok": bool(item_id) and (not common or item_id in common)}
+
     def reference_path(self, name):
         """목록에서 고른 문서의 실제 경로 — 폴더 밖으로 나가지 못하게 막습니다."""
         base = os.path.basename(name or "")
@@ -1508,6 +1541,11 @@ class Handler(BaseHTTPRequestHandler):
             raise UploadError("파일을 선택하세요.")
         if (fields.get("reference") or "").strip():
             result = self.workspace.save_reference_file(upload[0], upload[1])
+            result["ok"] = True
+            result["data"] = self.workspace.dashboard_payload()
+            return result
+        if (fields.get("common") or "").strip():
+            result = self.workspace.save_common_file(upload[0], upload[1])
             result["ok"] = True
             result["data"] = self.workspace.dashboard_payload()
             return result

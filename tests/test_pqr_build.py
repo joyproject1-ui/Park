@@ -50,7 +50,7 @@ class TreeLayoutTest(unittest.TestCase):
     def test_every_product_has_twelve_checks(self):
         for product in self.data["products"]:
             self.assertEqual(len(product["checks"]), len(ITEM_IDS))
-            self.assertTrue(set(product["checks"]) <= {"y", "p", "n"})
+            self.assertTrue(set(product["checks"]) <= {"y", "p", "n", "a"})
 
     def test_common_folder_data_applies_to_all_products(self):
         """설비 적격성은 공통 자료이므로 모든 제품의 (k) 항목이 채워집니다."""

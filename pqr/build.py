@@ -460,6 +460,43 @@ def collect_item_files(input_dir, items):
     return result
 
 
+def is_common_folder(name):
+    """'공통' 처럼 제품이 아니라 모두에게 해당하는 폴더인지."""
+    return (name or "").strip().lower() in [c.lower() for c in COMMON_FOLDERS]
+
+
+def collect_common_files(input_dir, items, common_items=()):
+    """공통 폴더에서 항 번호로 시작하는 자료를 찾습니다 — {항목번호: [이름, ...]}.
+
+    담당자 2026-09-14: "6. 제조 내역은 공통 자료니까 … 공통 자료가 업로드되면 모든 제품에
+    업로드 완료 되었다고 녹색불 들어오도록". 제품마다 같은 파일을 올리지 않게 하려는 것이라,
+    여기서 찾은 것은 모든 제품의 수집 현황에 그대로 더해집니다.
+    """
+    match = item_matcher(items)
+    found = {}
+    if not input_dir or not os.path.isdir(input_dir):
+        return found
+    want = set(common_items or ())
+    for folder in sorted(os.listdir(input_dir)):
+        folder_path = os.path.join(input_dir, folder)
+        if not os.path.isdir(folder_path) or folder.startswith(".") or not is_common_folder(folder):
+            continue
+        for number, names in item_files_in(folder_path, match).items():
+            if want and number not in want:
+                continue                       # 공통으로 정한 항목만 모두에게 나눠 준다
+            found.setdefault(number, []).extend(names)
+    return found
+
+
+def with_common_files(per_product, common):
+    """제품별 자료에 공통 자료를 더한 사본 — 원본은 건드리지 않습니다."""
+    merged = dict(per_product or {})
+    for number, names in (common or {}).items():
+        merged[number] = list(merged.get(number, [])) + [n for n in names
+                                                         if n not in merged.get(number, [])]
+    return merged
+
+
 def zip_member_name(info):
     """압축 안 파일 이름 — Windows 가 만든 압축은 한글이 CP437 로 깨져 오므로 되돌립니다."""
     name = info.filename
@@ -818,8 +855,15 @@ def _checks(context, config, meta=None):
     meta = meta or {}
     item_files = context.get("item_files") or {}
     rules = config.get("item_rules") or {}
+    # 프로그램이 대신 확인하는 항목(3항 허가증 — 식약처 허가정보·행정처분 API)은 담당자가
+    # 올릴 것이 없다. 'a'(자동) 로 두고 수집률에서도 뺀다 (담당자 2026-09-14: "첨부 문서는
+    # 불필요하니 첨부할 수 없도록 검은 음영으로 네모칸을 채워줘").
+    auto = set(config.get("auto_items") or ())
     states = []
     for number, _label, _hint in config["items"]:
+        if number in auto:
+            states.append("a")
+            continue
         rule = rules.get(number) or {}
         datasets = rule.get("datasets") or []
         fields = rule.get("fields") or []
@@ -848,8 +892,9 @@ def optional_items(config):
     든 기본 서식으로 만들 수 있다. 자료가 아니라 양식이라 없다고 '지연' 이 되면 안 된다.
     """
     rules = config.get("item_rules") or {}
-    return {number for number, _l, _h in config["items"]
+    skip = {number for number, _l, _h in config["items"]
             if isinstance(rules.get(number), dict) and rules[number].get("optional")}
+    return skip | set(config.get("auto_items") or ())      # 자동 확인 항목도 수집률에서 뺀다
 
 
 def _required_checks(checks, config):
@@ -1192,6 +1237,10 @@ def build(input_dir=None, files=None, today=None, config=None, period=None):
 
     # 항 번호가 붙은 파일·폴더 — 표로 못 읽는 자료도 수집 현황에는 보여야 합니다.
     item_files_by_product = collect_item_files(input_dir, config["items"]) if input_dir else {}
+    # 공통 폴더에 올린 자료는 모든 제품의 수집 현황에 그대로 더한다 (담당자 2026-09-14)
+    common_item_files = (collect_common_files(input_dir, config["items"],
+                                              config.get("common_items") or ())
+                         if input_dir else {})
     final_reports = collect_final_reports(input_dir, config["items"]) if input_dir else {}
     folder_for_code = product_folders(input_dir) if input_dir else {}
     matcher = item_matcher(config["items"])
@@ -1286,7 +1335,7 @@ def build(input_dir=None, files=None, today=None, config=None, period=None):
         }
         context = {
             "has": product_has,
-            "item_files": item_files_by_product.get(code, {}),
+            "item_files": with_common_files(item_files_by_product.get(code, {}), common_item_files),
             "material_rows": len(material_rows),
             "material_fail": sum(1 for row in material_rows if classifier.failed(row)),
             "batch_rows": len(batch_rows),
@@ -1345,7 +1394,7 @@ def build(input_dir=None, files=None, today=None, config=None, period=None):
             "form": meta.get("form", ""),
             "form_group": form_group(meta.get("form", ""), config, name),
             "group": meta.get("group", ""),
-            "item_files": item_files_by_product.get(code, {}),
+            "item_files": with_common_files(item_files_by_product.get(code, {}), common_item_files),
             # 폴더에 완성본(제출용) 보고서가 올라오면 화면에 '보고서 완료' 단추가 생깁니다.
             # 단, 근거 자료가 제품 폴더에서 사라졌으면 완료로 세우지 않습니다 — 그 보고서는
             # 더 이상 폴더의 자료로 뒷받침되지 않으므로 다시 작성해야 합니다
@@ -1387,6 +1436,9 @@ def build(input_dir=None, files=None, today=None, config=None, period=None):
             "cmp": len(complaint_rows),
             "checks": checks,
             "collected": collected,
+            # 수집률의 분모 — 공양식(0항)이나 프로그램이 대신 확인하는 항목은 뺀 개수입니다.
+            # 화면에서 '남은 항목' 을 셀 때도 전체 항목 수가 아니라 이 수를 써야 합니다.
+            "required": len(required),
             "pct": int(round(collected / max(1, len(required)) * 100)),
             "reason": reasons[0] if reasons else "",
             "reasons": reasons,
@@ -1431,6 +1483,10 @@ def build(input_dir=None, files=None, today=None, config=None, period=None):
         "period": {"from": period_from, "to": period_to},
         "stages": stages,
         "items": config["items"],
+        # 화면이 '공통 자료' 와 '프로그램이 대신 확인하는 항목' 을 알아보도록 함께 내린다
+        "common_items": list(config.get("common_items") or []),
+        "auto_items": list(config.get("auto_items") or []),
+        "common_files": common_item_files,
         "dosage_forms": config.get("dosage_forms", {}),
         "products": products,
         "quality": quality,

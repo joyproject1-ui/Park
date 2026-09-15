@@ -21,7 +21,8 @@ ITEM_SECTIONS = [
     ("l", "위 · 수탁 기술협약 검토", "contract"),
 ]
 
-STATE_LABEL = {"y": "수집 완료", "p": "진행 중", "n": "자료 미제출"}
+STATE_LABEL = {"y": "수집 완료", "p": "진행 중", "n": "자료 미제출",
+               "a": "자동 확인 · 올릴 자료 없음"}
 
 
 def _fmt(value, digits=2):

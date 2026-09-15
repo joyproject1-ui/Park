@@ -60,7 +60,8 @@ def build_payload(data, code):
         raise KeyError("제품 코드를 찾을 수 없습니다: %s" % code)
     quality = data.get("quality", {}).get(code, {})
     items = {key: name for key, name, _ in data["items"]}
-    state_label = {"y": "수집 완료", "p": "진행 중", "n": "자료 미제출"}
+    state_label = {"y": "수집 완료", "p": "진행 중", "n": "자료 미제출",
+                   "a": "자동 확인 · 올릴 자료 없음"}
 
     tests = [{
         "시험항목": test["test_name"], "n": test["n"], "평균": test["mean"],

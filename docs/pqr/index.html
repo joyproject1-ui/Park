@@ -300,6 +300,13 @@ td.wrap{white-space:normal;min-width:220px}
 .dot.p{background:var(--warn-soft);border-color:var(--warn);position:relative}
 .dot.p::after{content:"";position:absolute;left:2px;top:2px;right:2px;bottom:2px;border-radius:3px;background:var(--warn);clip-path:polygon(0 0,100% 0,0 100%)}
 .dot.n{background:var(--surface-3);border-color:var(--line-2)}
+/* 프로그램이 대신 확인하는 항목(3항 허가증) — 올릴 것이 없으므로 검은 음영으로 막아 둔다
+   (담당자 2026-09-14: "첨부할 수 없도록 검은 음영으로 네모칸을 채워줘"). */
+.dot.a{background:var(--ink);border-color:var(--ink);opacity:.82}
+.cell-btn.auto{cursor:not-allowed}
+.cell-btn.auto:hover{background:none}
+.pill.common{background:var(--accent-soft);color:var(--accent);border-color:var(--accent-line)}
+.pill.auto{background:var(--surface-3);color:var(--ink-2)}
 .legend{display:flex;gap:16px;flex-wrap:wrap;align-items:center;font-size:12px;color:var(--ink-2)}
 .legend .k{display:inline-flex;align-items:center;gap:6px}
 .swatch{width:11px;height:11px;border-radius:3px;display:inline-block}
@@ -727,12 +734,16 @@ tbody tr:hover{background:var(--accent-soft)}
       <!-- ============ 평가항목 자료 수집 ============ -->
       <section class="view" id="v-items" hidden>
         <div class="card">
-          <div class="card-head"><h2>평가항목별 자료 수집 현황</h2><span class="pill">PQR 보고서 항 번호</span></div>
+          <div class="card-head"><h2>평가항목별 자료 수집 현황</h2><span class="pill">PQR 보고서 항 번호</span>
+            <span class="spacer"></span>
+            <button class="link" id="common-add" title="한 번 올리면 모든 제품에 적용되는 자료입니다">공통 자료 올리기 +</button>
+          </div>
           <div class="card-body" style="display:flex;flex-direction:column;gap:14px">
             <div class="legend">
               <span class="k"><i class="swatch" style="background:var(--ok)"></i>수집 완료</span>
               <span class="k"><i class="swatch" style="background:var(--warn)"></i>요청 · 진행 중</span>
               <span class="k"><i class="swatch" style="background:var(--line-2)"></i>미착수</span>
+              <span class="k"><i class="swatch" style="background:var(--ink);opacity:.82"></i>자동 확인 · 올릴 자료 없음</span>
               <span class="k muted" id="matrix-hint">· 셀에 마우스를 올리면 항목명과 상태가 표시됩니다</span>
             </div>
             <div class="itemkey" id="itemkey"></div>
@@ -958,6 +969,7 @@ tbody tr:hover{background:var(--accent-soft)}
          aria-label="파일 선택 — 끌어다 놓거나 눌러서 고르세요">
       <input type="file" id="up-file" multiple hidden>
       <input type="file" id="ref-file" multiple hidden>
+      <input type="file" id="common-file" multiple hidden>
       <b>파일을 끌어다 놓거나 눌러서 고르세요</b>
       <small>pdf · xlsx · xls · csv · 문서 파일 (최대 64 MB)</small>
       <span class="picked" id="up-filename"></span>
@@ -1054,7 +1066,7 @@ const SAMPLE_STAGES = ["자료 수집","보고서 작성"];
 /* 평가항목 — PQR 보고서 항 번호(3 · 8.1.1 · 9.2.4 …) */
 const SAMPLE_ITEMS = [
   ["3","허가증","EDMS"],
-  ["6","제조 내역","ERP 및 제조/충전/포장 공 기록서 word"],
+  ["6","제조내역","ERP"],
   ["7","수율현황표","개인 작성"],
   ["8.1.1","원료 공급업체 List",""],
   ["8.1.2","주성분 공급망 마스터파일","HLF-GR-15-25"],
@@ -1076,6 +1088,12 @@ const SAMPLE_ITEMS = [
   ["16","전년도 PQR word & excel","결재본"],
   ["0","당해 년도 PQR word & excel","E-HLF-32 최신 양식 · 이 양식으로 보고서를 만듭니다"]
 ];
+
+/* 공통 자료 — '공통' 폴더에 한 번 올리면 모든 제품에 적용됩니다.
+   프로그램이 대신 확인하는 항목 — 올릴 자료가 없어 첨부 칸을 막습니다.
+   pqr/data/config.json 의 common_items · auto_items 와 같은 내용입니다. */
+const SAMPLE_COMMON_ITEMS = ["6","8.1.1","8.1.2","8.1.3","10.1","10.2","10.3-5"];
+const SAMPLE_AUTO_ITEMS = ["3"];
 
 /* [코드, 제품명, 제형, 공장, 마감일, 단계, 담당자, 일탈, OOS/OOT, 변경, 불만, 배치수, 지연사유] */
 const SAMPLE_RAW = [
@@ -1137,8 +1155,11 @@ function seeded(str){ let h=2166136261; for(const c of str){h^=c.charCodeAt(0);h
 /* 샘플 행에는 자료 수집 상태가 없으므로 단계에 따라 만들어 씁니다. */
 function sampleChecks(code, stage, done, itemCount){
   const rnd = seeded(code), bias = Math.min(1, stage/5.2);
-  return Array.from({length:itemCount}, ()=>{
+  return Array.from({length:itemCount}, (_, i)=>{
+    const key = ITEMS && ITEMS[i] ? ITEMS[i][0] : null;
     const v = rnd();
+    // 프로그램이 대신 확인하는 항목은 올릴 자료가 없으므로 언제나 자동입니다.
+    if (key && AUTO_ITEMS.has(key)) return "a";
     if (done) return "y";
     if (v < 0.12 + bias*0.78) return "y";
     if (v < 0.42 + bias*0.5) return "p";
@@ -1154,6 +1175,8 @@ function sampleSource(){
     period: { from: "2025-07-01", to: "2026-06-30" },
     stages: SAMPLE_STAGES,
     items: SAMPLE_ITEMS,
+    common_items: SAMPLE_COMMON_ITEMS,
+    auto_items: SAMPLE_AUTO_ITEMS,
     trend: SAMPLE_TREND,
     leadtime: SAMPLE_LEADTIME,
     sample: true,
@@ -1162,11 +1185,17 @@ function sampleSource(){
       dev:r[7], oos:r[8], chg:r[9], cmp:r[10], batches:r[11], reason:r[12],
       // 샘플에서 버튼 모양을 보여 주기 위한 것 — HP-201 은 수집 완료 + 완성본까지 있는 예입니다.
       ...(r[0]==="HP-201" ? {
-        checks: SAMPLE_ITEMS.map(()=> "y"), stage: 1,
+        checks: SAMPLE_ITEMS.map(row=> SAMPLE_AUTO_ITEMS.includes(row[0]) ? "a" : "y"), stage: 1,
         final_report: "2026 로수바틴 정 10mg 제품품질평가 완성본.docx",
       } : {}),
     })),
   };
+}
+
+/* 수집률의 분모 — 올릴 자료가 없는 항목(프로그램이 대신 확인하는 3항, 공양식 0항)은 뺍니다.
+   전체 항목 수로 나누면 다 모아도 100% 가 되지 않습니다. */
+function requiredCount(checks){
+  return checks.filter(c=>c!=="a").length;
 }
 
 /* 원본(생성 데이터 또는 샘플)을 화면이 쓰는 형태로 바꿉니다. */
@@ -1175,6 +1204,9 @@ function adopt(source){
   STAGES = source.stages;
   FORM_RULES = source.dosage_forms || FORM_RULES;
   ITEMS = source.items;
+  COMMON_ITEMS = new Set(source.common_items || []);   // 한 번 올리면 모든 제품에 걸리는 자료
+  AUTO_ITEMS = new Set(source.auto_items || []);       // 프로그램이 대신 확인 — 올릴 것이 없다
+  COMMON_FILES = source.common_files || {};
   TREND = source.trend;
   LEADTIME = source.leadtime || [];
   TODAY = parse(source.today);
@@ -1193,7 +1225,8 @@ function adopt(source){
     const collected = p.collected != null ? p.collected : checks.filter(c=>c==="y").length;
     return Object.assign({}, p, {
       dueD, dday, done, checks, collected,
-      pct: p.pct != null ? p.pct : Math.round(collected/ITEMS.length*100),
+      required: p.required != null ? p.required : requiredCount(checks),
+      pct: p.pct != null ? p.pct : Math.round(collected/Math.max(1, requiredCount(checks))*100),
       issues: (p.dev||0) + (p.oos||0) + (p.cmp||0),
       late: !done && dday != null && dday < 0,
       reasons: p.reasons || (p.reason ? [p.reason] : []),
@@ -1399,7 +1432,7 @@ function needText(d){
   if (d.dev) p.push(`일탈 미결 ${d.dev}건`);
   if (d.oos) p.push(`OOS/OOT ${d.oos}건`);
   if (d.cmp) p.push(`불만 ${d.cmp}건`);
-  const miss = ITEMS.length - d.collected;
+  const miss = (d.required != null ? d.required : ITEMS.length) - d.collected;
   if (miss) p.push(`평가자료 ${miss}개 미수집`);
   return p.length ? p.join(" / ") : "확인 완료";
 }
@@ -2113,9 +2146,14 @@ function renderProducts(rows, mode){
 
 /* 표의 열 머리는 a·b·c… 로 짧게 쓰고, 어느 항인지는 위 목록에서 봅니다.
    항 번호(9.2.4 처럼 긴 것)를 머리에 그대로 쓰면 열이 넓어져 한 화면에 안 들어옵니다. */
+/* 평가항목 칸에 붙는 글자 — (A) (B) … (Z) (AA) …
+   표 머리글은 CSS(thead th{text-transform:uppercase})로 대문자가 되는데 범례는 그렇지
+   않아 둘이 달라 보였다. 글자 자체를 대문자로 만들어 어디서나 같게 한다
+   (담당자 2026-09-14: "위에 알파벳은 모두 대문자로 변경해줘 … 아래 제품명 오른쪽
+   알파벳도 대문자라서 통일하자"). */
 function itemLetter(index){
   let letter = "", n = index;
-  do { letter = String.fromCharCode(97 + (n % 26)) + letter; n = Math.floor(n / 26) - 1; }
+  do { letter = String.fromCharCode(65 + (n % 26)) + letter; n = Math.floor(n / 26) - 1; }
   while (n >= 0);
   return letter;
 }
@@ -2127,30 +2165,41 @@ function renderMatrix(rows){
     : "· 셀에 마우스를 올리면 항목명과 상태가 표시됩니다";
   $("#itemkey").innerHTML = ITEMS.map(([k,n,hint],i)=>
     `<div><b>(${itemLetter(i)})</b> ${esc(k)}. ${esc(n)}`
+    + (COMMON_ITEMS.has(k) ? ` <span class="pill common">공통 자료</span>` : "")
+    + (AUTO_ITEMS.has(k) ? ` <span class="pill auto">자동 확인</span>` : "")
     + (hint ? ` <span class="muted">· ${esc(hint)}</span>` : "") + `</div>`).join("");
   const head = $("#matrix-head");
   head.innerHTML = `<th>코드</th><th>제품명</th>`
     + ITEMS.map((item,i)=>`<th class="rot mono" title="${esc(item[0])}. ${esc(item[1])}">${itemLetter(i)}</th>`).join("")
     + `<th>수집률</th><th>단계</th>`;
-  const label = { y:"수집 완료", p:"요청 · 진행 중", n:"미착수" };
+  const label = { y:"수집 완료", p:"요청 · 진행 중", n:"미착수",
+                  a:"프로그램이 대신 확인 — 올릴 자료 없음" };
   const list = rows.slice().sort((a,b)=>a.collected-b.collected);
   $("#matrix-body").innerHTML = list.map(d=>`
     <tr>
       <td>${codeCell(d)}</td>
       ${nameCell(d)}
-      ${d.checks.map((c,i)=>`<td class="cell"><button class="cell-btn" data-upload="${d.code}|${ITEMS[i][0]}"
-          data-tip="${d.code}|${i}" ${uploadEnabled()?"":"disabled"}
-          aria-label="${esc(d.name)} ${esc(ITEMS[i][0])}. ${esc(ITEMS[i][1])} 자료 올리기"><span class="dot ${c}"></span></button>`).join("")}
+      ${d.checks.map((c,i)=>{
+        const auto = AUTO_ITEMS.has(ITEMS[i][0]);
+        return `<td class="cell"><button class="cell-btn${auto ? " auto" : ""}" data-upload="${d.code}|${ITEMS[i][0]}"
+          data-tip="${d.code}|${i}" ${(uploadEnabled() && !auto) ? "" : "disabled"}
+          aria-label="${esc(d.name)} ${esc(ITEMS[i][0])}. ${esc(ITEMS[i][1])}${
+            auto ? " — 프로그램이 대신 확인합니다" : " 자료 올리기"}"><span class="dot ${c}"></span></button>`;
+      }).join("")}
       <td>${progCell(d)}${reportButton(d)}</td>
       <td>${stageTag(d)}</td>
     </tr>`).join("");
   $("#matrix-body").querySelectorAll(".cell-btn").forEach(n=>{
     const [code,i] = n.dataset.tip.split("|");
     const d = DATA.find(x=>x.code===code), it = ITEMS[+i];
-    const hint = uploadEnabled() ? "<br><b>눌러서 자료 올리기</b>"
-      : "<br>자료를 올리려면 <b>python -m pqr serve</b> 로 실행하세요";
+    const auto = AUTO_ITEMS.has(it[0]);
+    const hint = auto
+      ? "<br>3항은 식약처 허가정보·행정처분을 프로그램이 자동으로 대조합니다 — 첨부할 것이 없습니다"
+      : (COMMON_ITEMS.has(it[0]) ? "<br><b>공통 자료</b> — 한 번 올리면 모든 제품에 적용됩니다" : "")
+        + (uploadEnabled() ? "<br><b>눌러서 자료 올리기</b>"
+                           : "<br>자료를 올리려면 <b>python -m pqr serve</b> 로 실행하세요");
     bindTip(n, `<b>(${itemLetter(+i)}) ${esc(it[0])}. ${esc(it[1])}</b><br>${esc(d.name)}`
-      + `<br>${label[d.checks[+i]]}${hint}`);
+      + `<br>${label[d.checks[+i]] || d.checks[+i]}${hint}`);
   });
 }
 
@@ -2268,6 +2317,7 @@ function uploadConfig(){ return (SOURCE && SOURCE.upload) || {}; }
 
 const modal = $("#upload-modal");
 let uploadTarget = null;     // {code, item}
+let COMMON_ITEMS = new Set(), AUTO_ITEMS = new Set(), COMMON_FILES = {};
 let pickedFiles = [];        // 항목 하나에 여러 파일을 올릴 수 있다
 
 function datasetsForItem(itemKey){
@@ -2328,7 +2378,8 @@ function itemState(code, itemKey){
   const product = DATA.find(d=>d.code===code);
   const index = ITEMS.findIndex(row=>row[0]===itemKey);
   if (!product || index < 0) return "—";
-  return { y:"수집 완료", p:"요청 · 진행 중", n:"미착수" }[product.checks[index]];
+  return { y:"수집 완료", p:"요청 · 진행 중", n:"미착수",
+           a:"프로그램이 대신 확인 — 올릴 자료 없음" }[product.checks[index]] || "—";
 }
 
 function refreshUploadState(){
@@ -2519,12 +2570,17 @@ async function uploadReference(files){
     + (failed.length ? `<br>실패: ${failed.map(esc).join("<br>")}` : ""));
 }
 
+/* 서랍을 닫을 때 원래 있던 자리로 초점을 돌려 줍니다. 선언해 두지 않으면
+   "use strict" 라서 서랍을 여는 순간 오류가 나고 상세 화면이 뜨지 않습니다. */
+let lastFocus = null;
+
 function openDrawer(code){
   const d = DATA.find(x=>x.code===code); if(!d) return;
   lastFocus = document.activeElement;
   $("#dr-code").textContent = [d.code, d.site, formOf(d) || d.form].filter(Boolean).join(" · ");
   $("#dr-title").textContent = d.name;
-  const label = { y:['tag g','수집 완료'], p:['tag a','요청 · 진행 중'], n:['tag n','미착수'] };
+  const label = { y:['tag g','수집 완료'], p:['tag a','요청 · 진행 중'], n:['tag n','미착수'],
+                  a:['tag n','자동 확인'] };
   $("#dr-body").innerHTML = `
     <div style="display:flex;gap:8px;flex-wrap:wrap">
       <button class="mini" data-folder="${d.code}">📂 제품 폴더 열기</button>
@@ -2555,7 +2611,7 @@ function openDrawer(code){
     <div>
       <div class="sec-title">평가항목 자료 (보고서 항 번호)</div>
       <div class="checklist">${ITEMS.map(([k,n],i)=>{
-        const [cls,txt] = label[d.checks[i]];
+        const [cls,txt] = label[d.checks[i]] || label.n;
         return `<div class="checkrow"><span class="k">(${k})</span><span>${esc(n)}</span><span class="st"><span class="${cls}">${txt}</span></span></div>`;
       }).join("")}</div>
     </div>`;
@@ -2713,6 +2769,40 @@ $("#up-borrow-open").addEventListener("click", ()=>{
   const box = $("#up-borrow-box");
   if (box.hidden) renderBorrowList(); else box.hidden = true;
 });
+
+/* 공통 자료 — 한 번 올리면 모든 제품의 수집 현황에 녹색으로 들어옵니다
+   (담당자 2026-09-14: "공통 자료 업로드하는 칸을 만들어주고 공통 자료가 업로드되면
+   모든 제품에 업로드 완료 되었다고 녹색불 들어오도록 반영해줘").
+   '공통' 폴더에 원본 이름 그대로 두므로, 이름이 항 번호로 시작해야 어느 항목인지 압니다. */
+async function uploadCommon(files){
+  const list = Array.from(files || []).filter(Boolean);
+  if (!list.length) return;
+  showToast(`⏳ 공통 자료 ${list.length}개를 올리는 중…`);
+  let last = null; const done = [], failed = [], unnamed = [];
+  for (const file of list){
+    const 큼 = tooBig(file);
+    if (큼){ failed.push(`${file.name} — ${큼}`); continue; }
+    const form = new FormData();
+    form.append("common", "1");
+    form.append("file", file, file.name);
+    try {
+      const response = await fetch("api/upload", { method:"POST", body: form });
+      const payload = await response.json();
+      if (!response.ok || !payload.ok) throw new Error(payload.error || "실패");
+      last = payload; done.push(payload);
+      if (!payload.item) unnamed.push(file.name);
+    } catch (error) { failed.push(`${file.name} — ${error.message}`); }
+  }
+  if (last && last.data){ adopt(last.data); render(); renderSourceNote(); }
+  const items = done.map(p=>p.item).filter(Boolean);
+  showToast(`📦 공통 자료 ${done.length}개를 올렸습니다`
+    + (items.length ? `<br>모든 제품에 적용된 항목: <b>${esc([...new Set(items)].join(", "))}</b>` : "")
+    + (unnamed.length ? `<br>항 번호가 없어 어느 항목인지 모르는 파일: ${esc(unnamed.join(", "))}`
+        + `<br>이름 앞에 항 번호를 붙여 주세요 (예: <code>6. 제조내역.xlsx</code>)` : "")
+    + (failed.length ? `<br>실패: ${failed.map(esc).join("<br>")}` : ""));
+}
+$("#common-add").addEventListener("click", ()=>{ const p=$("#common-file"); p.value=""; p.click(); });
+$("#common-file").addEventListener("change", e=>uploadCommon(e.target.files));
 $("#up-drop").addEventListener("click", ()=>{ const p=$("#up-file"); p.value=""; p.click(); });
 $("#up-drop").addEventListener("keydown", e=>{
   if (e.key === "Enter" || e.key === " "){ e.preventDefault(); $("#up-file").click(); }
@@ -2894,7 +2984,7 @@ function updateBadges(){
   // 메뉴는 늘어나고 줄어듭니다. 없는 배지에 값을 넣으려다 화면 전체가 멈추지 않도록
   // 있는 것만 채웁니다.
   const counts = {
-    "b-items": open.filter(d=>d.collected<ITEMS.length).length,
+    "b-items": open.filter(d=>d.collected < (d.required != null ? d.required : ITEMS.length)).length,
     "b-dev": open.filter(d=>d.dev+d.oos>0).length,
     "b-sched": DATA.length,
     "b-late": open.filter(d=>d.late).length,
