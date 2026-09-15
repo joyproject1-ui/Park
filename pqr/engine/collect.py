@@ -776,8 +776,12 @@ def collect(folder, product_name=None, log=None):
                     data.license = license_reader.read_license(p)
                     saw(p, "허가증")
                 else:
-                    saw(p, "스캔 허가증 — 결재본 값을 씀")
-                    log("  [3] %s — 글자 없는 스캔본이라 허가 정보는 결재본 값을 그대로 씁니다"
+                    saw(p, "스캔 허가증 — 3항 값은 결재본에서 옮기고 식약처와 대조")
+                    # 담당자 2026-09-16: "글자없는 스캔본...이런식으로 나오네" — '건너뛴다' 로 읽혔다.
+                    # 스캔본은 읽지 않을 뿐이고, 3항 값은 결재본에서 옮긴 뒤 식약처 허가정보와
+                    # 자동 대조한다. 그 순서가 보이게 적는다.
+                    log("  [3] %s — 스캔본이라 글자를 읽지 않습니다. 3항 값은 결재본에서 옮기고, "
+                        "이어서 식약처 허가정보와 자동 대조합니다(어긋난 칸은 노랑)"
                         % os.path.basename(p))
             except PdfTextError as e:
                 note("3", p, str(e))
