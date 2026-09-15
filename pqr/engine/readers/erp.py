@@ -138,9 +138,35 @@ def lot_from_erp(m):
     return "%s%s%s%s%02d" % (a, b, c, letter, seq)
 
 
+def _sheet_text(path):
+    """엑셀 제조내역을 PDF 글과 같은 꼴의 줄들로 — 날짜 칸은 2025.10.20 꼴로.
+
+    올로원스 2026-09-16: '6. 제조내역- ERP.xlsx' 를 올렸는데 6항이 PDF 만 읽어 "못 읽음" 으로
+    남았다. ERP 가 엑셀로 내려 준 표도 같은 네 칸(Lot · 품명 · 제조일자 · 사용기한)이므로
+    줄로 풀어 같은 규칙으로 읽는다.
+    """
+    import datetime
+    lines = []
+    for row in _sheet_rows(path):
+        cells = []
+        for c in row:
+            if isinstance(c, (datetime.datetime, datetime.date)):
+                cells.append(c.strftime("%Y.%m.%d"))
+            elif isinstance(c, float) and c.is_integer():
+                cells.append(str(int(c)))
+            else:
+                cells.append(str(c if c is not None else "").strip().replace("\n", " "))
+        if any(cells):
+            lines.append("   ".join(cells))
+    return "\n".join(lines)
+
+
 def read_manufacturing(path):
-    """제조내역 PDF — [(Lot, 품명, 제조일자, 사용기한), ...]"""
-    text = squash(read_text(path))
+    """제조내역 PDF 또는 ERP 엑셀 — [(Lot, 품명, 제조일자, 사용기한), ...]"""
+    if path.lower().endswith((".xlsx", ".xls")):
+        text = _sheet_text(path)
+    else:
+        text = squash(read_text(path))
     out = [(m.group(1), m.group(2).strip(), m.group(3), m.group(4)) for m in LOT_LINE.finditer(text)]
     if out:
         return out

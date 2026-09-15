@@ -288,7 +288,7 @@ def handwriting_cache_name():
 # ("도대체 왜 작성이 안 되는 거야?", "뭐가 문제인지 정확히 나한테 요구해").
 READABLE = {
     "3":       ((".pdf",),            "허가증 PDF"),
-    "6":       ((".pdf", ".docx"),    "제조내역 ERP PDF 또는 공 기록서 .docx"),
+    "6":       ((".pdf", ".docx", ".xlsx", ".xls"), "제조내역 ERP(PDF·엑셀) 또는 공 기록서 .docx"),
     "7":       ((".xlsx", ".xls"),    "수율현황표 엑셀"),
     "8.1.1":   ((".xlsx",),           "공급업체 List 엑셀"),
     "8.1.2":   ((".xlsx",),           "주성분 공급망 엑셀"),
@@ -630,13 +630,19 @@ def collect(folder, product_name=None, log=None):
             # '6. 퀴노비드점안액(이라크) 포장기록서 rev0.pdf' 가 "제조내역 0줄" ★ 로 올라왔다)
             saw(p, "공 기록서(PDF) — 제조·충전·포장 기록서는 .docx 만 읽습니다")
             continue
-        if p.lower().endswith(".pdf"):
+        if p.lower().endswith((".pdf", ".xlsx", ".xls")):
+            # ERP 제조내역은 PDF 로도 엑셀로도 내려온다 — 둘 다 같은 네 칸이다
+            # (올로원스 2026-09-16: 엑셀을 올렸는데 "못 읽음" 으로 남았다)
             try:
                 got_rows = erp.read_manufacturing(p)
                 data.manufacturing += got_rows
                 saw(p, "제조내역 %d줄" % len(got_rows))
+                if not got_rows:
+                    note("6", p, "제조내역 표를 알아보지 못했습니다 — Lot · 품명 · 제조일자 · 사용기한 네 칸이 한 줄에 있어야 합니다")
             except PdfTextError as e:
                 note("6", p, str(e))
+            except Exception as e:
+                note("6", p, "제조내역 엑셀을 읽지 못했습니다: %s" % e)
         elif p.lower().endswith(".docx"):
             # 공 기록서(제조·충전·포장) — 제조단위·포장단위·수율 기준·원/자재 코드 (담당자 2026-09-06)
             try:
