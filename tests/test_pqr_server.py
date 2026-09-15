@@ -517,7 +517,7 @@ class 화면에_내려보내는_값(ServerTest):
     def test_화면이_읽는_값이_모두_들어_있다(self):
         data = self.payload()
         for key in ("items", "products", "stages", "trend", "leadtime",
-                    "common_items", "auto_items", "common_files", "dosage_forms"):
+                    "common_items", "auto_items", "common_files", "dosage_forms", "effort_table"):
             self.assertIn(key, data, "화면이 읽는 %s 가 payload 에 없습니다" % key)
 
     def test_공통_항목과_자동_항목은_config_와_같다(self):

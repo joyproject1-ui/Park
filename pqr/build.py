@@ -250,6 +250,31 @@ def form_group(text, config, name=""):
     return FORM_FALLBACK if (text or name) else ""
 
 
+def effort_of(lots, config):
+    """PQR 한 건의 공수 — 생산 Lot 수를 config 의 effort_table 구간에 맞춥니다.
+
+    담당자 2026-09-16: "총 352개 제품이 작성되어야 해 오른쪽 공수표에 맞게 공수 시간을
+    산출해줘". {code, label, hours, lots, over} — 구간 위(100 Lot 초과)는 맨 위 구간을 쓰고
+    over=True 로 표시합니다. Lot 수를 모르면 None.
+    """
+    table = (config.get("effort_table") or {}).get("rows") or []
+    if lots is None or not table:
+        return None
+    try:
+        n = int(round(float(lots)))
+    except (TypeError, ValueError):
+        return None
+    n = max(0, n)
+    rows = sorted(table, key=lambda r: r.get("min", 0))
+    for row in rows:
+        if row.get("min", 0) <= n <= row.get("max", 0):
+            return {"code": row.get("code"), "label": row.get("label"),
+                    "hours": row.get("hours"), "lots": n, "over": False}
+    top = rows[-1]
+    return {"code": top.get("code"), "label": top.get("label"),
+            "hours": top.get("hours"), "lots": n, "over": n > top.get("max", 0)}
+
+
 def quality_team(form, config, name=""):
     """5항 '책임과 권한' 에 적을 담당 팀 — 점안제·주사제·안연고·안구이식제는 AQA팀,
     그 밖의 제품은 SQA팀입니다.
@@ -1435,6 +1460,12 @@ def build(input_dir=None, files=None, today=None, config=None, period=None):
             # 담당자는 마스터에 적힌 값이 먼저고, 없으면 제형별 담당표에서 가져옵니다.
             "owner_source": "master" if meta.get("owner") else ("form" if owner else ""),
             "lots": meta.get("lots"),
+            # 공수(시간): 연간 계획서의 Lot 수가 있으면 그것, 없으면 성적서에서 센 배치 수
+            "effort": effort_of(
+                meta.get("lots") if meta.get("lots") is not None
+                else (len({row.get("batch_no") for row in batch_rows if row.get("batch_no")})
+                      if batch_rows else None),
+                config),
             # 그 Lot 수가 품목 합계면 화면에서 별표를 답니다 — 계획서가 건별로 나누지
             # 않은 경우입니다(제품 마스터 비고의 '품목 합계' 또는 프로그램이 갈라낸 건).
             "lots_shared": bool(meta.get("lots_shared")
@@ -1507,6 +1538,7 @@ def build(input_dir=None, files=None, today=None, config=None, period=None):
         "auto_items": list(config.get("auto_items") or []),
         "common_files": common_item_files,
         "dosage_forms": config.get("dosage_forms", {}),
+        "effort_table": config.get("effort_table", {}),
         "products": products,
         "quality": quality,
         # 화면의 '품질 이슈 경향' 은 Cpk 1 미만 제품을 제형별로 봅니다.

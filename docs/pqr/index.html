@@ -719,6 +719,18 @@ button.link:hover{text-decoration:underline}
 .matrix td .mini{padding:3px 8px;font-size:11.5px;margin-top:6px}
 .matrix td .prog{min-width:110px}
 
+/* 공수 산출 */
+.effort-body{display:grid;grid-template-columns:minmax(220px,.8fr) minmax(0,2.2fr);gap:20px;align-items:start}
+@media (max-width:1100px){.effort-body{grid-template-columns:1fr}}
+.ef-total{display:flex;flex-direction:column;gap:6px;padding:14px 16px;border:1px solid var(--line);border-radius:12px;background:var(--surface-2)}
+.ef-big{font-size:34px;font-weight:700;letter-spacing:-.03em;line-height:1.05;color:var(--ink)}
+.ef-big small{font-size:14px;font-weight:500;color:var(--ink-2);margin-left:4px}
+.ef-sub{font-size:13px;color:var(--ink-2)} .ef-sub b{font-size:16px;color:var(--ink)}
+.ef-note{font-size:11.5px;line-height:1.5;margin-top:4px}
+.ef-tables{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:16px}
+.ef-table{font-size:12.5px} .ef-table thead th{padding:7px 10px} .ef-table tbody td{padding:7px 10px}
+.ef-sum td{background:var(--surface-2);border-top:1px solid var(--line-2)}
+
 /* 차트 */
 .serieslegend{gap:14px;font-size:12px}
 .chartsvg .grid{stroke:var(--line)}
@@ -894,6 +906,30 @@ button.link:hover{text-decoration:underline}
 
       <!-- ============ 제품별 현황 ============ -->
       <section class="view" id="v-products" hidden>
+        <!-- 공수 산출 — 공수표(생산 Lot 구간 → 시간)로 지금 목록의 총 공수를 냅니다 (담당자 2026-09-16) -->
+        <div class="card" id="effort-card" hidden>
+          <div class="card-head"><h2>공수 산출</h2><span class="pill">공수표 · 생산 Lot 구간</span>
+            <span class="muted" id="ef-count" style="font-size:12px"></span></div>
+          <div class="card-body effort-body">
+            <div class="ef-total">
+              <div class="ef-big"><span class="num" id="ef-total">0</span><small>시간</small></div>
+              <div class="ef-sub">= <b class="num" id="ef-days">0</b> 인일 <span class="muted">(하루 <span id="ef-perday">8</span>시간 기준)</span></div>
+              <div class="ef-note muted">위 필터(공장·제형·담당자·검색)를 걸면 그 제품들만 합칩니다. Lot 수는 연간 계획서 값, 없으면 성적서에서 센 배치 수입니다.</div>
+            </div>
+            <div class="ef-tables">
+              <div>
+                <div class="sec-title">구간별</div>
+                <table class="compact ef-table"><thead><tr><th>구분</th><th>구간</th><th style="text-align:right">시간/건</th><th style="text-align:right">제품 수</th><th style="text-align:right">합계(h)</th></tr></thead>
+                <tbody id="ef-bucket"></tbody></table>
+              </div>
+              <div>
+                <div class="sec-title">담당자별</div>
+                <table class="compact ef-table"><thead><tr><th>담당자</th><th style="text-align:right">제품 수</th><th style="text-align:right">합계(h)</th><th style="text-align:right">인일</th></tr></thead>
+                <tbody id="ef-owner"></tbody></table>
+              </div>
+            </div>
+          </div>
+        </div>
         <div class="card">
           <div class="card-head"><h2>제품별 PQR 현황</h2><span class="pill" id="p-count">0건</span></div>
           <div class="filters" id="p-filters">
@@ -1331,6 +1367,19 @@ const SAMPLE_ITEMS = [
 const SAMPLE_COMMON_ITEMS = ["6","8.1.1","8.1.2","8.1.3","10.1","10.2","10.3-5"];
 const SAMPLE_AUTO_ITEMS = ["3"];
 
+/* 공수표 — PQR 한 건의 시간을 생산 Lot 수 구간으로 정합니다 (담당자 2026-09-16).
+   pqr/data/config.json 의 effort_table 과 같은 값입니다. */
+const SAMPLE_EFFORT_TABLE = {
+  "hours_per_day": 8,
+  "rows": [
+    {"code": "7-1", "label": "PQR(61 ~ 100Lot)", "min": 61, "max": 100, "hours": 32},
+    {"code": "7-2", "label": "PQR(31 ~ 60Lot)",  "min": 31, "max": 60,  "hours": 12},
+    {"code": "7-3", "label": "PQR(10 ~ 30Lot)",  "min": 10, "max": 30,  "hours": 6},
+    {"code": "7-4", "label": "PQR(10Lot 미만)",   "min": 1,  "max": 9,   "hours": 4.5},
+    {"code": "7-5", "label": "PQR(생산 X)",       "min": 0,  "max": 0,   "hours": 3}
+  ]
+};
+
 /* 화면 모양을 보여 주기 위한 보기 — 실제로는 '공통' 폴더에 있는 파일 이름이 그대로 나옵니다. */
 const SAMPLE_COMMON_FILES = {
   "6": ["6. 제조내역 ERP.xlsx"],
@@ -1421,6 +1470,7 @@ function sampleSource(){
     common_items: SAMPLE_COMMON_ITEMS,
     auto_items: SAMPLE_AUTO_ITEMS,
     common_files: SAMPLE_COMMON_FILES,
+    effort_table: SAMPLE_EFFORT_TABLE,
     trend: SAMPLE_TREND,
     leadtime: SAMPLE_LEADTIME,
     sample: true,
@@ -1435,6 +1485,18 @@ function sampleSource(){
     })),
   };
 }
+
+/* PQR 한 건의 공수 — build.effort_of 와 같은 규칙. Lot 수를 모르면 null. */
+function effortOf(lots){
+  const rows = ((EFFORT && EFFORT.rows) || []).slice().sort((a,b)=>(a.min||0)-(b.min||0));
+  if (lots == null || !rows.length) return null;
+  const n = Math.max(0, Math.round(+lots || 0));
+  for (const r of rows) if ((r.min||0) <= n && n <= (r.max||0))
+    return { code:r.code, label:r.label, hours:r.hours, lots:n, over:false };
+  const top = rows[rows.length-1];
+  return { code:top.code, label:top.label, hours:top.hours, lots:n, over:n > (top.max||0) };
+}
+function fmtHours(h){ return (Math.round(h*10)/10).toLocaleString("ko-KR"); }
 
 /* 수집률의 분모 — 올릴 자료가 없는 항목(프로그램이 대신 확인하는 3항, 공양식 0항)은 뺍니다.
    전체 항목 수로 나누면 다 모아도 100% 가 되지 않습니다. */
@@ -1451,6 +1513,7 @@ function adopt(source){
   COMMON_ITEMS = new Set(source.common_items || []);   // 한 번 올리면 모든 제품에 걸리는 자료
   AUTO_ITEMS = new Set(source.auto_items || []);       // 프로그램이 대신 확인 — 올릴 것이 없다
   COMMON_FILES = source.common_files || {};
+  EFFORT = source.effort_table || SAMPLE_EFFORT_TABLE;
   TREND = source.trend;
   LEADTIME = source.leadtime || [];
   TODAY = parse(source.today);
@@ -1475,6 +1538,8 @@ function adopt(source){
       late: !done && dday != null && dday < 0,
       reasons: p.reasons || (p.reason ? [p.reason] : []),
       missing_datasets: p.missing_datasets || [],
+      // 공수: build 가 정해 준 값이 없으면(샘플·옛 data.js) 같은 규칙으로 여기서 정한다
+      effort: p.effort || effortOf(p.lots != null ? p.lots : p.batches),
     });
   });
   OPEN = DATA.filter(d=>!d.done);
@@ -2383,10 +2448,11 @@ function renderProducts(rows, mode){
   let list = rows.filter(m.pred).filter(FILTERS[state.filter]);
   if (m.sort) list = list.slice().sort(m.sort); else list = list.slice().sort((a,b)=>a.dueD-b.dueD);
   $("#p-count").textContent = list.length + "건";
-  $("#p-head").innerHTML = `<th>코드</th><th>제품명</th><th>제형</th><th>그룹</th><th>담당자</th><th>생산 Lot</th>`
+  $("#p-head").innerHTML = `<th>코드</th><th>제품명</th><th>제형</th><th>그룹</th><th>담당자</th><th>생산 Lot</th><th title="공수표의 Lot 구간으로 정한 시간">공수</th>`
     + (withIssues ? `<th>일탈</th><th>OOS/OOT</th><th>변경</th><th>불만</th>` : "")
     + `<th>자료 수집</th><th>단계</th><th>마감일</th>`;
-  const span = withIssues ? 13 : 9;
+  const span = withIssues ? 14 : 10;
+  renderEffort(list, mode);
   $("#p-body").innerHTML = list.map(d=>`
     <tr>
       <td>${codeCell(d)}</td>
@@ -2395,6 +2461,7 @@ function renderProducts(rows, mode){
       <td class="muted">${esc(d.group || d.site || "—")}</td>
       <td>${esc(d.owner || "—")}</td>
       ${lotCell(d)}
+      ${effortCell(d)}
       ${withIssues ? metricCell(d, d.dev, "deviations")
                    + metricCell(d, d.oos, "deviations")
                    + metricCell(d, d.chg, "changes")
@@ -2403,6 +2470,48 @@ function renderProducts(rows, mode){
       <td>${stageTag(d)}</td>
       <td class="mono">${d.due} ${d.done?"":`<span style="margin-left:6px">${ddayCell(d)}</span>`}</td>
     </tr>`).join("") || `<tr><td colspan="${span}" class="muted" style="padding:22px">조건에 맞는 PQR이 없습니다.</td></tr>`;
+}
+
+function effortCell(d){
+  const e = d.effort;
+  if (!e) return `<td class="num muted" title="생산 Lot 수를 몰라 공수를 정하지 못했습니다">—</td>`;
+  const tip = `${e.code} ${e.label} · ${fmtHours(e.hours)}시간` + (e.over ? ` · 공수표 범위(${e.lots} Lot)를 넘어 맨 위 구간을 적용` : "");
+  return `<td class="num" title="${esc(tip)}">${fmtHours(e.hours)}<span class="muted">h</span>${e.over ? `<span class="muted" title="공수표 범위 초과">*</span>` : ""}</td>`;
+}
+
+/* 공수 산출 — 지금 목록(필터 적용)의 제품을 공수표 구간별·담당자별로 모아 합계를 냅니다
+   (담당자 2026-09-16: "총 352개 제품이 작성되어야 해 … 공수표에 맞게 공수 시간을 산출해줘"). */
+function renderEffort(list, mode){
+  const card = $("#effort-card");
+  if (!card) return;
+  const rows = (EFFORT.rows || []).slice().sort((a,b)=>(b.min||0)-(a.min||0));
+  const perDay = EFFORT.hours_per_day || 8;
+  const known = list.filter(d=>d.effort), unknown = list.length - known.length;
+  const total = known.reduce((a,d)=>a+(+d.effort.hours||0), 0);
+  card.hidden = mode === "issues";
+  $("#ef-total").textContent = fmtHours(total);
+  $("#ef-days").textContent = fmtHours(total/perDay);
+  $("#ef-count").textContent = `${list.length}건` + (unknown ? ` · Lot 수 미상 ${unknown}건 제외` : "");
+  $("#ef-perday").textContent = perDay;
+  const byCode = {};
+  known.forEach(d=>{ const k=d.effort.code; byCode[k] = byCode[k] || {n:0,h:0,over:0}; byCode[k].n++; byCode[k].h += +d.effort.hours||0; if (d.effort.over) byCode[k].over++; });
+  $("#ef-bucket").innerHTML = rows.map(r=>{
+    const b = byCode[r.code] || {n:0,h:0,over:0};
+    return `<tr><td class="mono muted">${esc(r.code)}</td><td>${esc(r.label)}</td>
+      <td class="num" style="text-align:right">${fmtHours(r.hours)}</td>
+      <td class="num" style="text-align:right">${b.n}${b.over ? `<span class="muted" title="공수표 범위 초과 ${b.over}건">*</span>` : ""}</td>
+      <td class="num" style="text-align:right;font-weight:600">${fmtHours(b.h)}</td></tr>`;
+  }).join("") + `<tr class="ef-sum"><td></td><td>합계</td><td></td>
+      <td class="num" style="text-align:right">${known.length}</td>
+      <td class="num" style="text-align:right;font-weight:700">${fmtHours(total)}</td></tr>`;
+  const byOwner = {};
+  known.forEach(d=>{ const k=d.owner||"미지정"; byOwner[k] = byOwner[k] || {n:0,h:0}; byOwner[k].n++; byOwner[k].h += +d.effort.hours||0; });
+  const owners = Object.entries(byOwner).sort((a,b)=>b[1].h-a[1].h);
+  $("#ef-owner").innerHTML = owners.map(([k,v])=>`<tr><td>${esc(k)}</td>
+      <td class="num" style="text-align:right">${v.n}</td>
+      <td class="num" style="text-align:right;font-weight:600">${fmtHours(v.h)}</td>
+      <td class="num muted" style="text-align:right">${fmtHours(v.h/perDay)}</td></tr>`).join("")
+    || `<tr><td colspan="4" class="muted">담당자 정보가 없습니다.</td></tr>`;
 }
 
 /* 표의 열 머리는 a·b·c… 로 짧게 쓰고, 어느 항인지는 위 목록에서 봅니다.
@@ -2579,6 +2688,7 @@ function uploadConfig(){ return (SOURCE && SOURCE.upload) || {}; }
 const modal = $("#upload-modal");
 let uploadTarget = null;     // {code, item}
 let COMMON_ITEMS = new Set(), AUTO_ITEMS = new Set(), COMMON_FILES = {};
+let EFFORT = {};             // 공수표 — 생산 Lot 구간 → 시간
 let pickedFiles = [];        // 항목 하나에 여러 파일을 올릴 수 있다
 
 function datasetsForItem(itemKey){

@@ -343,7 +343,7 @@ class Workspace(object):
         # 그렇게 꺼져 있었습니다(2026-09-15). 없는 키는 건너뛰되, 목록에는 남겨 둡니다.
         keys = ("generated_at", "today", "period", "stages", "items", "products",
                 "trend", "leadtime", "sources", "narrative",
-                "common_items", "auto_items", "common_files", "dosage_forms")
+                "common_items", "auto_items", "common_files", "dosage_forms", "effort_table")
         payload = {key: data[key] for key in keys if key in data}
         errors = [i for i in data.get("issues", []) if i["level"] == "error"]
         payload["issue_count"] = len(errors)
