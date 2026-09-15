@@ -100,6 +100,26 @@ class 적격성_평가기간(unittest.TestCase):
         got = [("PQ26-5-DAE5012-R", "2026.04.27")]
         self.assertEqual(R._within(got, "20251231"), got)
 
+    def test_해마다_기준일이_옮겨_간다(self):
+        """담당자 2026-09-15 확정: 2026년도 PQR 은 2025.12.31 까지, 2027년 PQR 은 2026.12.31 까지.
+
+        기준일은 평가 기간 끝(period['to'])에서 오므로 연도가 박혀 있지 않다 — 같은 자료라도
+        기준일만 바뀌면 고르는 문서가 달라져야 한다.
+        """
+        got = [("PQ25-5-DAE5012-R", "2025.04.28"), ("PQ26-5-DAE5012-R", "2026.04.27")]
+        self.assertEqual(R._within(got, "20251231"), [("PQ25-5-DAE5012-R", "2025.04.28")])   # 2026년도 PQR
+        self.assertEqual(R._within(got, "20261231"), got)                                     # 2027년 PQR — 둘 다 듦
+        latest = lambda g: max(g, key=lambda x: x[1])
+        self.assertEqual(latest(R._within(got, "20261231")), ("PQ26-5-DAE5012-R", "2026.04.27"))
+
+    def test_기준일은_평가기간_끝에서_온다(self):
+        """`fill` 이 period['to'] 를 'YYYYMMDD' 로 바꿔 넘긴다 — 연도를 박아 두지 않았다."""
+        import re as _re
+        for period, want in (({"to": "2025-12-31"}, "20251231"), ({"to": "2026-12-31"}, "20261231"),
+                             ({"to": ""}, None), ({}, None)):
+            got = _re.sub(r"\D", "", str((period or {}).get("to") or ""))[:8] or None
+            self.assertEqual(got, want)
+
     def test_IOQ_짝도_기간을_본다(self):
         entry = {"IQ": [("IOQ23-TS-X-R", "2023.01.01"), ("IOQ26-TS-X-R", "2026.02.01")],
                  "OQ": [("IOQ23-TS-X-R", "2023.01.01"), ("IOQ26-TS-X-R", "2026.02.01")]}
