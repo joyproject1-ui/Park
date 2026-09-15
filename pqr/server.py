@@ -414,15 +414,6 @@ class Workspace(object):
                 handle.write(payload)
         return {"saved": base, "folder": os.path.abspath(folder)}
 
-    COMMON_FOLDER = "공통"
-
-    def common_folder(self, create=False):
-        """제품이 아니라 모두에게 걸리는 자료를 두는 폴더."""
-        folder = os.path.join(self.input_dir, self.COMMON_FOLDER)
-        if create and not os.path.isdir(folder):
-            os.makedirs(folder, exist_ok=True)
-        return folder
-
     def save_common_file(self, filename, payload):
         """공통 자료를 '공통' 폴더에 원본 이름 그대로 둡니다.
 
@@ -474,13 +465,19 @@ class Workspace(object):
         os.makedirs(path, exist_ok=True)
         return path
 
-    def common_folder(self):
+    def common_folder(self, create=False):
+        """제품이 아니라 모두에게 걸리는 자료를 두는 폴더 ('공통').
+
+        '공통' 말고 다른 이름(common · shared …)으로 이미 만들어 두었으면 그것을 씁니다.
+        목록을 보여 줄 뿐일 때는 없는 폴더를 만들지 않습니다 — create=True 일 때만 만듭니다.
+        """
         for name in build_module.COMMON_FOLDERS:
             path = os.path.join(self.input_dir, name)
             if os.path.isdir(path):
                 return path
         path = os.path.join(self.input_dir, build_module.COMMON_FOLDERS[0])
-        os.makedirs(path, exist_ok=True)
+        if create:
+            os.makedirs(path, exist_ok=True)
         return path
 
     def target_path(self, dataset, code, filename):
@@ -488,7 +485,8 @@ class Workspace(object):
         spec = self.config["dataset_files"].get(dataset)
         if spec is None:
             raise UploadError("알 수 없는 자료 종류입니다: %s" % dataset)
-        folder = self.common_folder() if spec["scope"] == "common" else self.product_folder(code)
+        folder = (self.common_folder(create=True) if spec["scope"] == "common"
+                  else self.product_folder(code))
         base = safe_filename(filename)
         stem, suffix = os.path.splitext(base)
         # 파일 이름으로 종류를 알아보므로, 인식용 낱말이 없으면 앞에 붙여 줍니다.
@@ -710,39 +708,69 @@ class Workspace(object):
                 "files": included, "skipped": skipped,
                 "size": os.path.getsize(target)}
 
-    def item_files(self, code, item_id):
-        """그 제품·그 평가항목에 올라와 있는 파일 목록입니다."""
-        folder = self.product_folder(code)
+    def _files_in(self, folder, item_id, common=False):
+        """한 폴더에서 그 항목의 파일만 골라 목록으로 만듭니다."""
+        if not folder or not os.path.isdir(folder):
+            return []
         matcher = build_module.item_matcher(self.data["items"])
         rows = []
         for name in sorted(os.listdir(folder)):
             path = os.path.join(folder, name)
             if not os.path.isfile(path) or name.startswith("~$") or name.startswith("."):
                 continue
-            if matcher(name) != item_id:
+            if item_id is not None and matcher(name) != item_id:
                 continue
             stat = os.stat(path)
             rows.append({"name": name, "size": stat.st_size,
+                         "item": matcher(name) or "",
+                         "common": bool(common),
                          "modified": _dt.datetime.fromtimestamp(stat.st_mtime)
                                      .strftime("%Y-%m-%d %H:%M")})
         return rows
 
+    def item_files(self, code, item_id):
+        """그 제품·그 평가항목에 올라와 있는 파일 목록입니다.
+
+        공통 폴더에 올린 자료도 이 항목의 자료로 세어 녹색불이 들어오므로, 목록에도
+        함께 보여 줍니다. 그러지 않으면 '올렸는데 목록은 비어 있다' 로 보입니다
+        (담당자 2026-09-15: "공통 자료 올리면 어떤 자료가 올라갔는지 파일명이 확인이 되지?").
+        """
+        rows = self._files_in(self.product_folder(code), item_id)
+        names = {row["name"] for row in rows}
+        for row in self._files_in(self.common_folder(), item_id, common=True):
+            if row["name"] not in names:
+                rows.append(row)
+        return rows
+
+    def common_files(self):
+        """'공통' 폴더에 올라와 있는 자료 전부 — 어느 항목인지도 함께 알려 줍니다."""
+        return self._files_in(self.common_folder(), None, common=True)
+
     def delete_item_file(self, code, item_id, name):
-        """잘못 올린 파일을 지웁니다 — 그 항목의 파일만 지울 수 있습니다."""
+        """잘못 올린 파일을 지웁니다 — 그 항목의 파일만 지울 수 있습니다.
+
+        제품 폴더에 없으면 공통 폴더를 봅니다. 공통 자료를 지우면 모든 제품에서
+        사라지므로, 지운 것이 공통이었다는 사실을 함께 돌려줍니다.
+        """
         base = os.path.basename(name or "")
         if not base or base != name or _UNSAFE.search(base):
             raise UploadError("파일 이름이 올바르지 않습니다.")
         folder = self.product_folder(code)
         path = os.path.join(folder, base)
+        common = False
+        if not os.path.isfile(path):
+            folder = self.common_folder()
+            path = os.path.join(folder, base)
+            common = True
         if not os.path.isfile(path):
             raise UploadError("파일을 찾지 못했습니다: %s" % base)
         matcher = build_module.item_matcher(self.data["items"])
-        if matcher(base) != item_id:
+        if item_id and matcher(base) != item_id:
             raise UploadError("%s 항목의 파일이 아닙니다: %s" % (item_id, base))
         with self.lock:
             os.remove(path)
         self.rebuild()
-        return {"deleted": base, "folder": os.path.abspath(folder)}
+        return {"deleted": base, "folder": os.path.abspath(folder), "common": common}
 
     def save_bulk_file(self, code, filename, payload, rebuild=True):
         """'파일 한번에 올리기' — 원본 이름 그대로 제품 폴더에 저장합니다.
@@ -1090,6 +1118,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(200, self._handle_item_files())
             if path == "/api/item-delete":
                 return self._json(200, self._handle_item_delete())
+            if path == "/api/common-files":
+                return self._json(200, self._handle_common_files())
             if path == "/api/product-files":
                 return self._json(200, self._handle_product_files())
             if path == "/api/item-borrow":
@@ -1447,6 +1477,11 @@ class Handler(BaseHTTPRequestHandler):
         result["ok"] = True
         result["data"] = self.workspace.dashboard_payload()
         return result
+
+    def _handle_common_files(self):
+        """'공통' 폴더에 올라와 있는 자료 목록 — 무엇이 모든 제품에 걸려 있는지 봅니다."""
+        return {"ok": True, "files": self.workspace.common_files(),
+                "folder": os.path.abspath(self.workspace.common_folder())}
 
     def _handle_product_files(self):
         """다른 평가항목에 올라와 있는 파일 목록 — 같은 원본을 다시 올리지 않게 합니다."""

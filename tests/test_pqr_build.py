@@ -184,6 +184,21 @@ class ItemRuleTest(unittest.TestCase):
         self.assertEqual(sample, expected,
                          "SAMPLE_ITEMS 가 config 의 items 와 다릅니다 — 둘을 함께 고치세요")
 
+    def test_dashboard_sample_common_and_auto_match_config(self):
+        """공통 자료·자동 확인 항목도 내장 샘플과 config 가 같아야 합니다."""
+        import json
+        import re
+        page = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                            "docs", "pqr", "index.html")
+        with open(page, encoding="utf-8") as handle:
+            html = handle.read()
+        for name, key in (("SAMPLE_COMMON_ITEMS", "common_items"),
+                          ("SAMPLE_AUTO_ITEMS", "auto_items")):
+            block = re.search(r"const %s = (\[.*?\]);" % name, html, re.S)
+            self.assertIsNotNone(block, "index.html 에서 %s 를 찾지 못했습니다" % name)
+            self.assertEqual(json.loads(block.group(1)), list(self.config[key]),
+                             "%s 가 config 의 %s 와 다릅니다 — 둘을 함께 고치세요" % (name, key))
+
     def test_every_item_has_a_rule_and_every_counter_exists(self):
         numbers = [item[0] for item in self.config["items"]]
         self.assertEqual(len(numbers), len(set(numbers)), "항목 번호가 겹칩니다")

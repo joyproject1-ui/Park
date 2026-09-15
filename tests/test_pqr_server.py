@@ -499,6 +499,70 @@ class ItemFileListTest(ItemUploadTest):
         self.assertFalse(result.get("ok"))
 
 
+class 공통_자료_올리기(ItemFileListTest):
+    """'공통' 폴더에 한 번 올리면 모든 제품에 걸린다 (담당자 2026-09-14).
+
+    올린 뒤 무엇이 올라갔는지 파일명으로 확인할 수 있어야 한다
+    (담당자 2026-09-15: "공통 자료 올리면 어떤 자료가 올라갔는지 파일명이 확인이 되지?").
+    """
+
+    def upload_common(self, filename, payload=b"x" * 40):
+        import uuid
+        boundary = uuid.uuid4().hex
+        parts = [("--%s\r\nContent-Disposition: form-data; name=\"common\"\r\n\r\n1\r\n"
+                  % boundary).encode()]
+        parts.append(("--%s\r\nContent-Disposition: form-data; name=\"file\"; "
+                      "filename=\"%s\"\r\n\r\n" % (boundary, filename)).encode())
+        parts.append(payload + b"\r\n" + ("--%s--\r\n" % boundary).encode())
+        request = urllib.request.Request(
+            self.base + "/api/upload", data=b"".join(parts),
+            headers={"Content-Type": "multipart/form-data; boundary=" + boundary})
+        try:
+            with urllib.request.urlopen(request, timeout=30) as response:
+                return json.loads(response.read().decode("utf-8"))
+        except urllib.error.HTTPError as error:
+            return json.loads(error.read().decode("utf-8"))
+
+    def test_공통_폴더에_저장되고_항목을_알아본다(self):
+        result = self.upload_common("6. 제조내역.xlsx")
+        self.assertTrue(result.get("ok"), result.get("error"))
+        self.assertEqual(result["item"], "6")
+        self.assertTrue(os.path.isfile(os.path.join(self.dir, "공통", "6. 제조내역.xlsx")))
+
+    def test_모든_제품에_녹색불이_들어온다(self):
+        result = self.upload_common("6. 제조내역.xlsx")
+        ids = [item[0] for item in result["data"]["items"]]
+        index = ids.index("6")
+        for product in result["data"]["products"]:
+            self.assertEqual(product["checks"][index], "y", product["code"])
+
+    def test_어떤_파일이_올라갔는지_이름으로_확인한다(self):
+        """제품 폴더에는 없지만 공통 폴더에 있으므로, 항목 창 목록에 나와야 한다."""
+        self.upload_common("6. 제조내역.xlsx")
+        listing = self.call("/api/item-files", {"product": "HP-110", "item": "6"})
+        self.assertTrue(listing["ok"], listing.get("error"))
+        rows = {row["name"]: row for row in listing["files"]}
+        self.assertIn("6. 제조내역.xlsx", rows)
+        self.assertTrue(rows["6. 제조내역.xlsx"]["common"])
+
+    def test_공통_자료_목록을_따로_본다(self):
+        self.upload_common("6. 제조내역.xlsx")
+        self.upload_common("10.1 PV Validation Master File.xlsx")
+        listing = self.call("/api/common-files", {})
+        self.assertTrue(listing["ok"], listing.get("error"))
+        rows = {row["name"]: row["item"] for row in listing["files"]}
+        self.assertEqual(rows.get("6. 제조내역.xlsx"), "6")
+        self.assertEqual(rows.get("10.1 PV Validation Master File.xlsx"), "10.1")
+
+    def test_공통_자료도_지울_수_있다(self):
+        self.upload_common("6. 제조내역.xlsx")
+        result = self.call("/api/item-delete",
+                           {"product": "HP-110", "item": "6", "name": "6. 제조내역.xlsx"})
+        self.assertTrue(result.get("ok"), result.get("error"))
+        self.assertTrue(result["common"])
+        self.assertFalse(os.path.isfile(os.path.join(self.dir, "공통", "6. 제조내역.xlsx")))
+
+
 class 다른항목_파일_쓰기(ItemFileListTest):
     """같은 원본이 여러 항에 필요할 때 다시 올리지 않고 골라 쓴다 (담당자 2026-09-14)."""
 
