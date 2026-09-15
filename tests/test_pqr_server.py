@@ -499,6 +499,35 @@ class ItemFileListTest(ItemUploadTest):
         self.assertFalse(result.get("ok"))
 
 
+class 화면에_내려보내는_값(ServerTest):
+    """화면이 읽는 값을 payload 에서 빠뜨리면 그 기능만 조용히 꺼집니다.
+
+    실제로 common_items · auto_items · common_files 가 빠져 있어, 공통 자료로 올려도
+    화면에 '공통 자료' 표시가 붙지 않았습니다 (2026-09-15). build 가 만든 값과
+    서버가 내려보내는 값이 어긋나지 않는지 확인합니다.
+    """
+
+    def payload(self):
+        request = urllib.request.Request(
+            self.base + "/api/rebuild", data=b"{}",
+            headers={"Content-Type": "application/json"})
+        with urllib.request.urlopen(request, timeout=60) as response:
+            return json.loads(response.read().decode("utf-8"))["data"]
+
+    def test_화면이_읽는_값이_모두_들어_있다(self):
+        data = self.payload()
+        for key in ("items", "products", "stages", "trend", "leadtime",
+                    "common_items", "auto_items", "common_files", "dosage_forms"):
+            self.assertIn(key, data, "화면이 읽는 %s 가 payload 에 없습니다" % key)
+
+    def test_공통_항목과_자동_항목은_config_와_같다(self):
+        from pqr import build
+        config = build.load_config()
+        data = self.payload()
+        self.assertEqual(data["common_items"], list(config["common_items"]))
+        self.assertEqual(data["auto_items"], list(config["auto_items"]))
+
+
 class 공통_자료_올리기(ItemFileListTest):
     """'공통' 폴더에 한 번 올리면 모든 제품에 걸린다 (담당자 2026-09-14).
 

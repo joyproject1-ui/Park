@@ -317,6 +317,11 @@ td.wrap{white-space:normal;min-width:220px}
 .common-row .no{font-family:"IBM Plex Mono",monospace;font-size:11px;color:var(--accent);
   background:var(--accent-soft);border-radius:5px;padding:1px 5px;flex:none}
 .common-row .no.unknown{color:var(--warn);background:var(--surface-3)}
+.common-row .no.setting{color:var(--ink-3);background:var(--surface-3)}
+.common-row.warn{border-color:var(--warn-line,var(--warn))}
+.common-note{font-size:12px;border-radius:8px;padding:8px 10px;background:var(--surface-3);
+  color:var(--ink-2);border:1px solid var(--line);word-break:break-all}
+.common-note.bad{border-color:var(--bad);color:var(--bad)}
 .pill.auto{background:var(--surface-3);color:var(--ink-2)}
 .legend{display:flex;gap:16px;flex-wrap:wrap;align-items:center;font-size:12px;color:var(--ink-2)}
 .legend .k{display:inline-flex;align-items:center;gap:6px}
@@ -767,6 +772,7 @@ tbody tr:hover{background:var(--accent-soft)}
                 <span class="muted" id="common-path"></span>
               </div>
               <div class="common-list" id="common-list"></div>
+              <div class="common-note" id="common-note" hidden></div>
             </div>
           </div>
           <div class="tablewrap">
@@ -1086,7 +1092,7 @@ const SAMPLE_STAGES = ["자료 수집","보고서 작성"];
 
 /* 평가항목 — PQR 보고서 항 번호(3 · 8.1.1 · 9.2.4 …) */
 const SAMPLE_ITEMS = [
-  ["3","허가증","EDMS"],
+  ["3","허가증","식약처 site"],
   ["6","제조내역","ERP"],
   ["7","수율현황표","개인 작성"],
   ["8.1.1","원료 공급업체 List",""],
@@ -2832,8 +2838,16 @@ async function uploadCommon(files){
     } catch (error) { failed.push(`${file.name} — ${error.message}`); }
   }
   if (last && last.data){ adopt(last.data); render(); renderSourceNote(); }
-  renderCommonFiles();
+  await renderCommonFiles();
   const items = done.map(p=>p.item).filter(Boolean);
+  // 알림은 곧 사라집니다 — 까닭은 공통 자료 칸에 남겨 두어야 다시 볼 수 있습니다.
+  commonNote(failed.length
+    ? `올리지 못한 파일 ${failed.length}개 — ${failed.join(" / ")}`
+    : (unnamed.length
+        ? `올렸지만 항 번호가 없어 어느 항목인지 모르는 파일: ${unnamed.join(", ")}`
+          + ` · 이름 앞에 항 번호를 붙여 다시 올리세요 (예: 6. 제조내역.xlsx)`
+        : `방금 공통 자료 ${done.length}개를 올렸습니다.`),
+    failed.length > 0);
   showToast(`📦 공통 자료 ${done.length}개를 올렸습니다`
     + (items.length ? `<br>모든 제품에 적용된 항목: <b>${esc([...new Set(items)].join(", "))}</b>` : "")
     + (unnamed.length ? `<br>항 번호가 없어 어느 항목인지 모르는 파일: ${esc(unnamed.join(", "))}`
@@ -2843,12 +2857,28 @@ async function uploadCommon(files){
 /* '공통' 폴더에 무엇이 올라가 있는지 파일명으로 보여 줍니다
    (담당자 2026-09-15: "공통 자료 올리면 어떤 자료가 올라갔는지 파일명이 확인이 되지?").
    올린 뒤 이름이 보이지 않으면 들어갔는지 알 수 없어 같은 파일을 또 올리게 됩니다. */
-function commonRow(name, item){
-  const label = (ITEMS.find(row=>row[0]===item) || [])[1] || "";
-  return `<div class="common-row">
-    <span class="no${item ? "" : " unknown"}">${item ? esc(item) : "?"}</span>
-    <span class="nm" title="${esc(label)}">${esc(name)}</span>
+function commonRow(row){
+  const item = row.item || "";
+  const label = (ITEMS.find(r=>r[0]===item) || [])[1] || "";
+  // 식약처 열쇠·주소 파일은 PQR 자료가 아니라 설정입니다 — '어느 항목인지 모름' 이 아닙니다.
+  if (row.setting) return `<div class="common-row">
+    <span class="no setting">설정</span>
+    <span class="nm" title="식약처 API 설정 파일 — 평가항목 자료가 아닙니다">${esc(row.name)}</span>
   </div>`;
+  return `<div class="common-row${item ? "" : " warn"}">
+    <span class="no${item ? "" : " unknown"}">${item ? esc(item) : "?"}</span>
+    <span class="nm" title="${esc(label || "이름 앞에 항 번호가 없어 어느 항목인지 모릅니다")}"
+      >${esc(row.name)}${item ? "" : ` <b>— 이름 앞에 항 번호를 붙이세요</b>`}</span>
+  </div>`;
+}
+
+/* 올리기 결과를 칸에 남깁니다 — 알림과 달리 사라지지 않습니다. */
+function commonNote(text, bad){
+  const note = $("#common-note");
+  if (!note) return;
+  note.hidden = !text;
+  note.className = "common-note" + (bad ? " bad" : "");
+  note.textContent = text || "";
 }
 
 async function renderCommonFiles(){
@@ -2861,7 +2891,7 @@ async function renderCommonFiles(){
         headers:{ "Content-Type":"application/json" }, body: "{}" });
       const payload = await response.json();
       if (!payload.ok) throw new Error(payload.error || "목록을 불러오지 못했습니다");
-      rows = (payload.files || []).map(f=>({ name:f.name, item:f.item }));
+      rows = (payload.files || []).map(f=>({ name:f.name, item:f.item, setting:f.setting }));
       where.textContent = payload.folder || "";
     } catch (error) {
       box.hidden = false; where.textContent = "";
@@ -2878,7 +2908,7 @@ async function renderCommonFiles(){
   rows.sort((a,b)=>a.name.localeCompare(b.name, "ko"));
   box.hidden = !rows.length && !uploadEnabled();
   list.innerHTML = rows.length
-    ? rows.map(r=>commonRow(r.name, r.item)).join("")
+    ? rows.map(commonRow).join("")
     : `<div class="muted">아직 올린 공통 자료가 없습니다. 위 '공통 자료 올리기 +' 로 올리세요.</div>`;
 }
 

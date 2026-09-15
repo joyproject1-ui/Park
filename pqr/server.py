@@ -339,9 +339,12 @@ class Workspace(object):
 
     def dashboard_payload(self):
         data = self.data
-        payload = {key: data[key] for key in
-                   ("generated_at", "today", "period", "stages", "items", "products",
-                    "trend", "leadtime", "sources", "narrative")}
+        # 화면이 쓰는 값을 빠뜨리면 그 기능만 조용히 꺼집니다 — 공통 자료 표시가 실제로
+        # 그렇게 꺼져 있었습니다(2026-09-15). 없는 키는 건너뛰되, 목록에는 남겨 둡니다.
+        keys = ("generated_at", "today", "period", "stages", "items", "products",
+                "trend", "leadtime", "sources", "narrative",
+                "common_items", "auto_items", "common_files", "dosage_forms")
+        payload = {key: data[key] for key in keys if key in data}
         errors = [i for i in data.get("issues", []) if i["level"] == "error"]
         payload["issue_count"] = len(errors)
         # 숫자만 보내면 담당자가 무엇이 잘못됐는지 알 수 없다 — 눌러서 볼 수 있게 목록도 보낸다
@@ -708,6 +711,10 @@ class Workspace(object):
                 "files": included, "skipped": skipped,
                 "size": os.path.getsize(target)}
 
+    # '공통' 폴더에는 PQR 자료 말고 식약처 API 설정 파일도 들어갑니다. 자료가 아니므로
+    # 항 번호가 없는 것이 당연하고, 목록에서 '어느 항목인지 모름' 으로 보이면 안 됩니다.
+    SETTING_FILES = ("식약처-허가정보-키.txt", "식약처-행정처분-주소.txt")
+
     def _files_in(self, folder, item_id, common=False):
         """한 폴더에서 그 항목의 파일만 골라 목록으로 만듭니다."""
         if not folder or not os.path.isdir(folder):
@@ -724,6 +731,7 @@ class Workspace(object):
             rows.append({"name": name, "size": stat.st_size,
                          "item": matcher(name) or "",
                          "common": bool(common),
+                         "setting": name in self.SETTING_FILES,
                          "modified": _dt.datetime.fromtimestamp(stat.st_mtime)
                                      .strftime("%Y-%m-%d %H:%M")})
         return rows
