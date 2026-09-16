@@ -203,7 +203,17 @@ class 설정_파일_찾기(unittest.TestCase):
         self.assertTrue(all("MdcinExaathrService04" in b for b in bases), bases)
         self.assertIn(path, notes[0])
 
-    def test_제품_폴더에_둔_것도_찾는다(self):
+    def test_이름을_줄여_적은_것도_찾는다(self):
+        with open(os.path.join(self.root, "공통", "식약처-행정처분.txt"), "w", encoding="utf-8") as h:
+            h.write("https://apis.data.go.kr/1471000/MdcinExaathrService04\n")
+        with open(os.path.join(self.root, "공통", "식약처-허가정보 키.txt"), "w", encoding="utf-8") as h:
+            h.write("일반 인증키\n44fc1234\n")
+        self.assertTrue(mfds.penalty_base(self.product))
+        self.assertEqual(mfds.api_key(self.product), "44fc1234")
+        # 허가정보 주소 파일 자리에 열쇠 파일이 잡히면 안 된다
+        self.assertEqual(mfds.setting_files(self.product, mfds.LICENSE_URL_FILE), [])
+
+
         with open(os.path.join(self.product, mfds.PENALTY_URL_FILE), "w", encoding="utf-8") as h:
             h.write("https://apis.data.go.kr/1471000/MdcinExaathrService04\n")
         self.assertTrue(mfds.penalty_base(self.product))

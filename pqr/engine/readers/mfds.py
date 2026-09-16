@@ -129,6 +129,14 @@ def _read_text(path):
     return raw.decode("utf-8", "replace")
 
 
+# 이름을 조금 다르게 적은 설정 파일도 받는다 — 담당자 PC 2026-09-16: 편집기 탭에 '식약처-행정처분…'
+# 만 보였고, 파일 이름이 정확히 무엇인지 알 수 없었다. 열쇠 파일과 주소 파일은 서로 섞이지 않게 한다.
+SETTING_TOKENS = {"식약처-행정처분-주소.txt": ("행정처분",),
+                  "식약처-허가정보-키.txt": ("허가정보", "키"),
+                  "식약처-허가정보-주소.txt": ("허가정보", "주소")}
+SETTING_NOT = {"식약처-허가정보-키.txt": ("주소",), "식약처-허가정보-주소.txt": ("키",)}
+
+
 def setting_files(folder, name):
     """제품 폴더·그 위 폴더·'공통' 폴더에서 설정 파일(열쇠·주소)을 찾는다 — 있는 경로들.
 
@@ -144,8 +152,9 @@ def setting_files(folder, name):
             path = os.path.join(root, sub) if sub else root
             if os.path.isdir(path) and path not in roots:
                 roots.append(path)
-    exact, loose = [], []
+    exact, loose, alike = [], [], []
     low = name.lower()
+    tokens = SETTING_TOKENS.get(name, ())
     for root in roots:
         try:
             names = sorted(os.listdir(root))
@@ -159,7 +168,11 @@ def setting_files(folder, name):
                 exact.append(full)
             elif entry.lower().endswith(low):
                 loose.append(full)
-    return exact + loose
+            elif (tokens and entry.lower().endswith(".txt")
+                  and all(token in entry for token in tokens)
+                  and not any(token in entry for token in SETTING_NOT.get(name, ()))):
+                alike.append(full)                 # '식약처-행정처분.txt' 처럼 이름을 줄여 적은 것
+    return exact + loose + alike
 
 
 def setting_text(folder, name):
