@@ -573,3 +573,38 @@ class 주소_후보(unittest.TestCase):
         with self.assertRaises(ValueError):
             mfds.fetch("올로원스점안액", "열쇠", base="http://one/getX", opener=opener)
         self.assertEqual(len(calls), 1)
+
+
+class 열쇠_파일_네_줄(unittest.TestCase):
+    """담당자 PC 2026-09-16: 열쇠 파일에 'End Point / 주소 / 일반 인증키 / 열쇠' 네 줄 — 전에는 파일
+    전체가 열쇠로 나가 HTTP 400 이 났다."""
+
+    TEXT = "End Point\nhttps://apis.data.go.kr/1471000/DrugPrdtPrmsnInfoService07\n일반 인증키\n44fc898b467e5c2c4002db03c23a7a5836d31328c645865f451faa6790f768cc\n"
+
+    def test_열쇠_줄만_고른다(self):
+        self.assertEqual(mfds.extract_key(self.TEXT), "44fc898b467e5c2c4002db03c23a7a5836d31328c645865f451faa6790f768cc")
+
+    def test_열쇠만_있는_파일도_그대로(self):
+        self.assertEqual(mfds.extract_key("AbC%2Bxyz%3D%3D\n"), "AbC%2Bxyz%3D%3D")
+        self.assertEqual(mfds.extract_key("인증키: AbCdefghijklmnopqrstu=="), "AbCdefghijklmnopqrstu==")
+
+    def test_주소만_있으면_열쇠_없음(self):
+        self.assertEqual(mfds.extract_key("https://apis.data.go.kr/1471000/X\n"), "")
+
+    def test_End_Point_에_조회_이름을_붙인다(self):
+        got = mfds.with_operation("https://apis.data.go.kr/1471000/DrugPrdtPrmsnInfoService07")
+        self.assertEqual(got[0], "https://apis.data.go.kr/1471000/DrugPrdtPrmsnInfoService07/getDrugPrdtPrmsnDtlInq06")
+        self.assertIn("https://apis.data.go.kr/1471000/DrugPrdtPrmsnInfoService07/getDrugPrdtPrmsnDtlInq07", got)
+        self.assertEqual(mfds.with_operation(mfds.BASE), [mfds.BASE])
+
+    def test_열쇠_파일에서_열쇠와_주소를_함께_읽는다(self):
+        import os, tempfile
+        mfds._LICENSE_WORKING = ""
+        d = tempfile.mkdtemp(); os.makedirs(os.path.join(d, "공통"))
+        with open(os.path.join(d, "공통", mfds.KEY_FILE), "w", encoding="utf-8") as h:
+            h.write(self.TEXT)
+        folder = os.path.join(d, "제품")
+        self.assertEqual(mfds.api_key(folder), "44fc898b467e5c2c4002db03c23a7a5836d31328c645865f451faa6790f768cc")
+        bases = mfds.license_bases(folder)
+        self.assertEqual(bases[0], "https://apis.data.go.kr/1471000/DrugPrdtPrmsnInfoService07/getDrugPrdtPrmsnDtlInq06")
+        self.assertIn(mfds.BASE, bases)                    # 기본 후보도 뒤에 남는다

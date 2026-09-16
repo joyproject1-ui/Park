@@ -85,19 +85,46 @@ def _looks_like_url(text):
     return bool(normalize_url(text))
 
 
+KEY_LABELS = ("인증키", "서비스키", "service key", "servicekey", "end point", "endpoint", "주소", "key")
+
+
+def extract_key(text):
+    """열쇠 파일 글에서 열쇠만 — 없으면 빈 글.
+
+    담당자 PC 2026-09-16: 파일에 'End Point / https://…Service07 / 일반 인증키 / 44fc…' 네 줄을
+    넣어 두었다. 전에는 파일 전체를 열쇠로 보내 포털이 HTTP 400 을 돌려줬다. 이름표 줄과 주소
+    줄은 빼고, 열쇠처럼 생긴 줄(빈칸 없이 길고 글자·숫자·+/=% 뿐)을 고른다. 여럿이면 가장 긴 것.
+    """
+    best = ""
+    for line in str(text or "").replace("\ufeff", "").splitlines():
+        got = line.strip().strip('"').strip("'")
+        if not got or "://" in got or normalize_url(got):
+            continue
+        if ":" in got and not re.search(r"%[0-9A-Fa-f]{2}", got):
+            got = got.split(":", 1)[1].strip()        # '인증키: 44fc…' 꼴
+        low = got.lower()
+        if not got or any(low == w or low == w.replace(" ", "") for w in KEY_LABELS):
+            continue                                  # '인증키' 같은 이름표만 있는 줄
+        if re.search(r"\s", got):
+            continue                                  # 'End Point' · '일반 인증키' — 빈칸이 든 줄은 열쇠가 아니다
+        if len(got) > len(best):
+            best = got
+    return best
+
+
 def api_key(folder=None):
     """서비스 키 — 없으면 None."""
-    got = (os.environ.get("MFDS_API_KEY") or "").strip()
+    got = extract_key(os.environ.get("MFDS_API_KEY") or "")
     if got:
         return got
     for root in [folder, os.path.dirname(os.path.abspath(folder))] if folder else []:
         for path in (os.path.join(root or "", KEY_FILE), os.path.join(root or "", "공통", KEY_FILE)):
             try:
                 with open(path, encoding="utf-8-sig") as handle:
-                    got = handle.read().strip()
+                    got = extract_key(handle.read())
             except OSError:
                 continue
-            if got and not _looks_like_url(got):
+            if got:
                 return got
     return None
 
@@ -189,21 +216,49 @@ def service_error(raw):
 _LICENSE_WORKING = ""       # 이번 실행에서 통한 허가정보 주소
 
 
+def with_operation(url):
+    """서비스 주소(End Point)만 적혀 있으면 조회 이름을 붙인 후보들 — 이미 붙어 있으면 그대로.
+
+    포털의 End Point 는 `…/DrugPrdtPrmsnInfoService07` 까지고 실제 부르는 주소는 그 뒤에
+    `/getDrugPrdtPrmsnDtlInq06` 이 붙는다. 판 번호 N 이면 조회 이름은 대개 N-1 (06→Inq05, 07→Inq06).
+    확실치 않으니 N-1 · N · 05 를 차례로 둔다.
+    """
+    url = (url or "").rstrip("/")
+    if not url or re.search(r"/get[A-Za-z]+\d*$", url):
+        return [url] if url else []
+    m = re.search(r"Service(\d+)$", url)
+    if not m:
+        return [url]
+    n = int(m.group(1))
+    names = []
+    for k in (n - 1, n, 5):
+        one = "%s/getDrugPrdtPrmsnDtlInq%02d" % (url, k)
+        if one not in names:
+            names.append(one)
+    return names
+
+
 def license_bases(folder=None):
-    """허가정보 서비스 주소 후보 — 담당자가 넣어 둔 것이 있으면 그것만, 아니면 기본 후보들."""
+    """허가정보 서비스 주소 후보 — 담당자가 넣어 둔 것이 있으면 그것(들)부터, 아니면 기본 후보들."""
     got = (os.environ.get("MFDS_LICENSE_URL") or "").strip()
     if got and normalize_url(got):
-        return [normalize_url(got)]
+        return with_operation(normalize_url(got))
     for root in [folder, os.path.dirname(os.path.abspath(folder))] if folder else []:
-        for path in (os.path.join(root or "", LICENSE_URL_FILE),
-                     os.path.join(root or "", "공통", LICENSE_URL_FILE)):
-            try:
-                with open(path, encoding="utf-8-sig") as handle:
-                    got = normalize_url(handle.read())
-            except OSError:
-                continue
-            if got:
-                return [got]
+        # 주소 파일이 있으면 그것, 없으면 열쇠 파일에 함께 적힌 End Point 를 쓴다
+        for name in (LICENSE_URL_FILE, KEY_FILE):
+            for path in (os.path.join(root or "", name), os.path.join(root or "", "공통", name)):
+                try:
+                    with open(path, encoding="utf-8-sig") as handle:
+                        got = normalize_url(handle.read())
+                except OSError:
+                    continue
+                if got:
+                    mine = with_operation(got)
+                    # 주소 파일에 적은 것은 그것만 — 열쇠 파일의 End Point 에서 얻은 것은 기본 후보를 뒤에 둔다
+                    rest = [] if name == LICENSE_URL_FILE else [b for b in LICENSE_BASES if b not in mine]
+                    if _LICENSE_WORKING and _LICENSE_WORKING in mine + rest:
+                        return [_LICENSE_WORKING] + [b for b in mine + rest if b != _LICENSE_WORKING]
+                    return mine + rest
     if _LICENSE_WORKING:
         return [_LICENSE_WORKING] + [b for b in LICENSE_BASES if b != _LICENSE_WORKING]
     return list(LICENSE_BASES)
