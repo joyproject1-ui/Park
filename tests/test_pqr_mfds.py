@@ -608,3 +608,21 @@ class 열쇠_파일_네_줄(unittest.TestCase):
         bases = mfds.license_bases(folder)
         self.assertEqual(bases[0], "https://apis.data.go.kr/1471000/DrugPrdtPrmsnInfoService07/getDrugPrdtPrmsnDtlInq06")
         self.assertIn(mfds.BASE, bases)                    # 기본 후보도 뒤에 남는다
+
+
+class 행정처분_End_Point(unittest.TestCase):
+    def test_조회_이름이_없으면_아는_이름들을_붙인다(self):
+        got = mfds.penalty_with_operation("https://apis.data.go.kr/1471000/MdcinPrmisnAdmDsposInfoService")
+        self.assertEqual(got[0], "https://apis.data.go.kr/1471000/MdcinPrmisnAdmDsposInfoService/getMdcinPrmisnAdmDsposInq")
+        self.assertTrue(len(got) >= 2)
+
+    def test_이미_붙어_있으면_그것만(self):
+        self.assertEqual(mfds.penalty_with_operation("http://x/S/getAdmDsposInq"), ["http://x/S/getAdmDsposInq"])
+
+    def test_주소_파일의_End_Point_도_그렇게(self):
+        import os, tempfile
+        d = tempfile.mkdtemp(); os.makedirs(os.path.join(d, "공통"))
+        with open(os.path.join(d, "공통", mfds.PENALTY_URL_FILE), "w", encoding="utf-8") as h:
+            h.write("End Point\nhttps://apis.data.go.kr/1471000/MdcinPrmisnAdmDsposInfoService\n")
+        got = mfds.penalty_base(os.path.join(d, "제품"))
+        self.assertTrue(got[0].startswith("https://apis.data.go.kr/1471000/MdcinPrmisnAdmDsposInfoService/get"))

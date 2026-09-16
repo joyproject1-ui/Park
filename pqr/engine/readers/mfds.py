@@ -441,6 +441,23 @@ def forget_base():
     _WORKING_BASE = ""
 
 
+def penalty_with_operation(url):
+    """행정처분 End Point 만 적혀 있으면(조회 이름 /get… 이 없으면) 아는 조회 이름들을 붙인 후보 —
+    담당자 PC 2026-09-16: 열쇠 파일처럼 포털 화면의 End Point 만 붙여 넣는 것이 자연스럽다.
+    이미 조회 이름이 붙어 있으면 그것만."""
+    url = (url or "").rstrip("/")
+    if not url:
+        return []
+    if re.search(r"/get[A-Za-z]+\d*$", url) or "data.go.kr" not in url.lower():
+        return [url]                               # 조회 이름이 있거나 포털 밖 주소면 그대로
+    ops = []
+    for base in PENALTY_BASES:
+        op = base.rsplit("/", 1)[-1]
+        if op not in ops:
+            ops.append(op)
+    return ["%s/%s" % (url, op) for op in ops]
+
+
 def penalty_base(folder=None):
     """행정처분 서비스 주소 — 담당자가 넣어 둔 것이 있으면 그것을 먼저 쓴다."""
     got = (os.environ.get("MFDS_PENALTY_URL") or "").strip()
@@ -457,7 +474,7 @@ def penalty_base(folder=None):
                 continue
             url = normalize_url(raw_text)
             if url:
-                return [url]
+                return penalty_with_operation(url)
             if got.strip() in AUTO_WORDS:          # '자동' 이라고 적으면 후보를 두드린다
                 return list(PENALTY_BASES)
             if got:                                # 주소 자리에 열쇠를 넣은 것 — 못 쓴다
