@@ -556,8 +556,12 @@ class Workspace(object):
         labels = {row[0]: row[1] for row in self.data["items"]}
         if item_id not in labels:
             raise UploadError("평가항목을 찾지 못했습니다: %s" % item_id)
-        folder = self.product_folder(code)
         base = safe_filename(filename, ALLOWED_ITEM_SUFFIXES) or "자료"
+        # 식약처 열쇠·주소 파일은 제품이 아니라 모두에게 걸리는 설정이다 — 어느 제품 칸에서
+        # 올렸든 '공통' 폴더에 이름 그대로 둔다 (담당자 PC 2026-09-16).
+        if base in self.SETTING_FILES:
+            return self.save_common_file(base, payload)
+        folder = self.product_folder(code)
         # 회사 원본은 이미 항 번호로 시작하는 일이 많습니다. 그럴 때는 이름을 그대로 둡니다 —
         # 앞에 번호를 또 붙이면 '8.1.1 … - 8.1.1 …' 처럼 됩니다.
         target = os.path.join(folder, self.item_filename(item_id, base, labels))
@@ -576,6 +580,10 @@ class Workspace(object):
         앞에 번호를 또 붙이면 '8.1.1 … - 8.1.1 …' 처럼 됩니다.
         """
         labels = labels or {row[0]: row[1] for row in self.data["items"]}
+        # 열쇠·주소 같은 설정 파일은 이름 그대로 둔다 — 항 번호를 앞에 붙이면 엔진이 그 이름으로
+        # 찾지 못한다 (담당자 PC 2026-09-16: 3항 칸에서 올린 행정처분 주소 파일이 '3 허가증 - …' 이 됨).
+        if base in self.SETTING_FILES:
+            return base
         matcher = build_module.item_matcher(self.data["items"])
         if matcher(base) == item_id:
             return base

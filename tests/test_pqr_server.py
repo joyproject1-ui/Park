@@ -581,6 +581,16 @@ class 공통_자료_올리기(ItemFileListTest):
         for product in result["data"]["products"]:
             self.assertEqual(product["checks"][index], "y", product["code"])
 
+    def test_식약처_주소_파일은_어느_칸에서_올려도_공통_폴더에_이름_그대로(self):
+        """3항 칸에서 올린 행정처분 주소 파일이 '3 허가증 - …' 으로 제품 폴더에 저장되어
+        엔진이 그 이름으로 찾지 못했다 (담당자 PC 2026-09-16: 주소를 넣었는데 "건너뜁니다")."""
+        result = self.upload_item("HP-110", "3", "식약처-행정처분-주소.txt",
+                                  b"https://apis.data.go.kr/1471000/MdcinExaathrService04\n")
+        self.assertTrue(result.get("ok"), result.get("error"))
+        self.assertTrue(os.path.isfile(os.path.join(self.dir, "공통", "식약처-행정처분-주소.txt")))
+        self.assertFalse(any("행정처분" in name for name
+                             in os.listdir(os.path.join(self.dir, self.folder))))
+
     def test_공통_아닌_항목은_그대로_제품_폴더로_간다(self):
         result = self.upload_item("HP-110", "13", "안정성 결과표.xlsx")
         self.assertTrue(result.get("ok"), result.get("error"))

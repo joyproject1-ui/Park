@@ -177,6 +177,61 @@ class 행정처분(unittest.TestCase):
         self.assertEqual(mfds.penalties_for(rows, "올로원스점안액"), [])
 
 
+class 설정_파일_찾기(unittest.TestCase):
+    """담당자 PC 2026-09-16: 행정처분 주소 파일을 넣었는데도 "건너뜁니다" 가 계속 나왔다.
+    항목 칸에서 올려 이름 앞에 항 번호가 붙었거나, 메모장이 ANSI 로 저장했거나 — 어느 쪽이든
+    찾아 읽고, 못 찾으면 어디를 봤는지 적어 준다."""
+
+    def setUp(self):
+        self.root = tempfile.mkdtemp()
+        self.product = os.path.join(self.root, "QC1-5059 올로원스점안액")
+        os.makedirs(os.path.join(self.root, "공통"))
+        os.makedirs(self.product)
+        self.old = os.environ.pop("MFDS_PENALTY_URL", None)
+
+    def tearDown(self):
+        if self.old is not None:
+            os.environ["MFDS_PENALTY_URL"] = self.old
+
+    def test_항_번호가_붙은_이름도_찾는다(self):
+        path = os.path.join(self.root, "공통", "3 허가증 - " + mfds.PENALTY_URL_FILE)
+        with open(path, "w", encoding="utf-8") as h:
+            h.write("End Point\nhttps://apis.data.go.kr/1471000/MdcinExaathrService04\n일반 인증키\n44fc\n")
+        notes = []
+        bases = mfds.penalty_base(self.product, notes=notes)
+        self.assertTrue(bases)
+        self.assertTrue(all("MdcinExaathrService04" in b for b in bases), bases)
+        self.assertIn(path, notes[0])
+
+    def test_제품_폴더에_둔_것도_찾는다(self):
+        with open(os.path.join(self.product, mfds.PENALTY_URL_FILE), "w", encoding="utf-8") as h:
+            h.write("https://apis.data.go.kr/1471000/MdcinExaathrService04\n")
+        self.assertTrue(mfds.penalty_base(self.product))
+
+    def test_ANSI_로_저장한_파일도_읽는다(self):
+        with open(os.path.join(self.root, "공통", mfds.PENALTY_URL_FILE), "wb") as h:
+            h.write("End Point\r\nhttps://apis.data.go.kr/1471000/MdcinExaathrService04\r\n일반 인증키\r\n44fc\r\n".encode("cp949"))
+        self.assertTrue(mfds.penalty_base(self.product))
+        with open(os.path.join(self.root, "공통", mfds.KEY_FILE), "wb") as h:
+            h.write("일반 인증키\r\n44fc1234\r\n".encode("cp949"))
+        self.assertEqual(mfds.api_key(self.product), "44fc1234")
+
+    def test_없으면_어디를_봤는지_적는다(self):
+        notes = []
+        self.assertEqual(mfds.penalty_base(self.product, notes=notes), [])
+        self.assertEqual(len(notes), 1)
+        self.assertIn("주소 파일이 없음", notes[0])
+        self.assertIn(os.path.join(self.root, "공통", mfds.PENALTY_URL_FILE), notes[0])
+
+    def test_주소_아닌_글이면_첫_줄을_적는다(self):
+        with open(os.path.join(self.root, "공통", mfds.PENALTY_URL_FILE), "w", encoding="utf-8") as h:
+            h.write("44fc1234abcd\n")
+        notes = []
+        self.assertEqual(mfds.penalty_base(self.product, notes=notes), [])
+        self.assertIn("주소로 보이는 줄이 없음", notes[0])
+        self.assertIn("44fc1234abcd", notes[0])
+
+
 class 주소와_열쇠_가리기(unittest.TestCase):
     """파일 두 개가 나란히 있어 서로 바꿔 넣기 쉽다 (담당자 2026-09-14: "둘다 키주소는 동일하네")."""
 
@@ -303,7 +358,7 @@ class 행정처분_노랑표시(unittest.TestCase):
                 칸3[이름] = cells[2]
         old = (mfds.api_key, mfds.fetch_penalties, mfds.penalty_base)
         mfds.api_key = lambda folder=None: "열쇠"
-        mfds.penalty_base = lambda folder=None: ["http://example.test"]
+        mfds.penalty_base = lambda folder=None, **kw: ["http://example.test"]
         mfds.fetch_penalties = lambda name, key, bases=None, **kw: (
             [{k: mfds._penalty_value(one, k) for k in mfds.PENALTY_FIELDS} for one in items],
             "http://example.test")

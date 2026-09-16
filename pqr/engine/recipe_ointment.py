@@ -1578,15 +1578,19 @@ def _check_penalty(name, entp, folder, issues, log, cells3=None, ledger=None):
     key = mfds.api_key(folder)
     if not key:
         return 0                                   # 열쇠가 없으면 허가정보 쪽에서 이미 알렸다
-    bases = mfds.penalty_base(folder)
+    notes = []
+    bases = mfds.penalty_base(folder, notes=notes)
     if not bases:
-        _ledger(ledger, LEDGER_PENALTY, "못 읽음", "주소 파일이 없어 확인하지 않음 — 공통/%s" % mfds.PENALTY_URL_FILE)
+        why = " / ".join(notes) or "주소 파일이 없음"
+        _ledger(ledger, LEDGER_PENALTY, "못 읽음", "확인하지 않음 — %s" % why)
         # 주소 파일이 없거나, 있어도 주소가 아니다(열쇠를 넣어 둔 것이 가장 흔하다).
         # 어느 쪽이든 부르지 않고 넘어간다 — 아닌 주소를 기다리느라 시간을 버리지 않는다.
-        log("3항 6번: 행정처분 확인을 건너뜁니다 — 공통/%s 에 포털의 '요청 주소'"
-            "(http:// 로 시작하는 줄)를 넣으면 다음부터 자동으로 확인합니다. 주소를 모르면 "
+        # 까닭(어느 파일을 읽었는지·어디를 찾아봤는지)을 그대로 남긴다 — 담당자 PC 2026-09-16:
+        # 주소 파일을 넣었는데도 이 줄이 계속 나와, 한 줄만으로는 원인을 알 수 없었다.
+        log("3항 6번: 행정처분 확인을 건너뜁니다 — %s. 공통/%s 에 포털의 End Point 또는 "
+            "'요청 주소'(https:// 로 시작하는 줄)를 넣으면 다음부터 자동으로 확인합니다. 주소를 모르면 "
             "그 파일에 '자동' 이라고만 적어도 됩니다. 인증키는 %s 것을 씁니다"
-            % (mfds.PENALTY_URL_FILE, mfds.KEY_FILE))
+            % (why, mfds.PENALTY_URL_FILE, mfds.KEY_FILE))
         return 0
     try:
         rows, base = mfds.fetch_penalties(name, key, bases)

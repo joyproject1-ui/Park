@@ -112,20 +112,74 @@ def extract_key(text):
     return best
 
 
+def _read_text(path):
+    """설정 파일을 읽는다 — 메모장이 ANSI(cp949)·UTF-16 으로 저장했어도 읽는다. 없으면 None."""
+    try:
+        with open(path, "rb") as handle:
+            raw = handle.read()
+    except OSError:
+        return None
+    if raw.startswith((b"\xff\xfe", b"\xfe\xff")):
+        return raw.decode("utf-16", "replace")
+    for encoding in ("utf-8-sig", "cp949"):
+        try:
+            return raw.decode(encoding)
+        except UnicodeDecodeError:
+            continue
+    return raw.decode("utf-8", "replace")
+
+
+def setting_files(folder, name):
+    """제품 폴더·그 위 폴더·'공통' 폴더에서 설정 파일(열쇠·주소)을 찾는다 — 있는 경로들.
+
+    이름이 꼭 같은 것을 먼저, 다음으로 그 이름으로 끝나는 것('3 허가증 - 식약처-행정처분-주소.txt'
+    처럼 항목 칸에서 올려 앞에 항 번호가 붙은 것)도 받는다 — 담당자 PC 2026-09-16: 주소 파일을
+    넣었는데 "건너뜁니다" 가 계속 나왔다.
+    """
+    if not folder:
+        return []
+    roots = []
+    for root in (folder, os.path.dirname(os.path.abspath(folder))):
+        for sub in ("", "공통"):
+            path = os.path.join(root, sub) if sub else root
+            if os.path.isdir(path) and path not in roots:
+                roots.append(path)
+    exact, loose = [], []
+    low = name.lower()
+    for root in roots:
+        try:
+            names = sorted(os.listdir(root))
+        except OSError:
+            continue
+        for entry in names:
+            full = os.path.join(root, entry)
+            if not os.path.isfile(full):
+                continue
+            if entry == name:
+                exact.append(full)
+            elif entry.lower().endswith(low):
+                loose.append(full)
+    return exact + loose
+
+
+def setting_text(folder, name):
+    """설정 파일의 글 — (경로, 글). 없으면 (None, None)."""
+    for path in setting_files(folder, name):
+        text = _read_text(path)
+        if text is not None:
+            return path, text
+    return None, None
+
+
 def api_key(folder=None):
     """서비스 키 — 없으면 None."""
     got = extract_key(os.environ.get("MFDS_API_KEY") or "")
     if got:
         return got
-    for root in [folder, os.path.dirname(os.path.abspath(folder))] if folder else []:
-        for path in (os.path.join(root or "", KEY_FILE), os.path.join(root or "", "공통", KEY_FILE)):
-            try:
-                with open(path, encoding="utf-8-sig") as handle:
-                    got = extract_key(handle.read())
-            except OSError:
-                continue
-            if got:
-                return got
+    for path in setting_files(folder, KEY_FILE):
+        got = extract_key(_read_text(path) or "")
+        if got:
+            return got
     return None
 
 
@@ -243,22 +297,17 @@ def license_bases(folder=None):
     got = (os.environ.get("MFDS_LICENSE_URL") or "").strip()
     if got and normalize_url(got):
         return with_operation(normalize_url(got))
-    for root in [folder, os.path.dirname(os.path.abspath(folder))] if folder else []:
-        # 주소 파일이 있으면 그것, 없으면 열쇠 파일에 함께 적힌 End Point 를 쓴다
-        for name in (LICENSE_URL_FILE, KEY_FILE):
-            for path in (os.path.join(root or "", name), os.path.join(root or "", "공통", name)):
-                try:
-                    with open(path, encoding="utf-8-sig") as handle:
-                        got = normalize_url(handle.read())
-                except OSError:
-                    continue
-                if got:
-                    mine = with_operation(got)
-                    # 주소 파일에 적은 것은 그것만 — 열쇠 파일의 End Point 에서 얻은 것은 기본 후보를 뒤에 둔다
-                    rest = [] if name == LICENSE_URL_FILE else [b for b in LICENSE_BASES if b not in mine]
-                    if _LICENSE_WORKING and _LICENSE_WORKING in mine + rest:
-                        return [_LICENSE_WORKING] + [b for b in mine + rest if b != _LICENSE_WORKING]
-                    return mine + rest
+    # 주소 파일이 있으면 그것, 없으면 열쇠 파일에 함께 적힌 End Point 를 쓴다
+    for name in (LICENSE_URL_FILE, KEY_FILE):
+        for path in setting_files(folder, name):
+            got = normalize_url(_read_text(path) or "")
+            if got:
+                mine = with_operation(got)
+                # 주소 파일에 적은 것은 그것만 — 열쇠 파일의 End Point 에서 얻은 것은 기본 후보를 뒤에 둔다
+                rest = [] if name == LICENSE_URL_FILE else [b for b in LICENSE_BASES if b not in mine]
+                if _LICENSE_WORKING and _LICENSE_WORKING in mine + rest:
+                    return [_LICENSE_WORKING] + [b for b in mine + rest if b != _LICENSE_WORKING]
+                return mine + rest
     if _LICENSE_WORKING:
         return [_LICENSE_WORKING] + [b for b in LICENSE_BASES if b != _LICENSE_WORKING]
     return list(LICENSE_BASES)
@@ -470,27 +519,41 @@ def penalty_with_operation(url):
     return ["%s/%s" % (url, op) for op in ops]
 
 
-def penalty_base(folder=None):
-    """행정처분 서비스 주소 — 담당자가 넣어 둔 것이 있으면 그것을 먼저 쓴다."""
+def penalty_base(folder=None, notes=None):
+    """행정처분 서비스 주소 — 담당자가 넣어 둔 것이 있으면 그것을 먼저 쓴다.
+
+    notes 목록을 주면 왜 그렇게 정했는지(어느 파일을 읽었는지, 없으면 어디를 봤는지)를 적어
+    준다 — "건너뜁니다" 한 줄로는 담당자도 제작자도 무엇이 잘못됐는지 알 수 없었다
+    (담당자 PC 2026-09-16).
+    """
+    notes = notes if notes is not None else []
     got = (os.environ.get("MFDS_PENALTY_URL") or "").strip()
     if got:
+        notes.append("MFDS_PENALTY_URL 환경 변수를 씀")
         return [got] if _looks_like_url(got) else []
-    for root in [folder, os.path.dirname(os.path.abspath(folder))] if folder else []:
-        for path in (os.path.join(root or "", PENALTY_URL_FILE),
-                     os.path.join(root or "", "공통", PENALTY_URL_FILE)):
-            try:
-                with open(path, encoding="utf-8-sig") as handle:
-                    raw_text = handle.read()
-                    got = raw_text.strip().split("?")[0].strip()
-            except OSError:
-                continue
-            url = normalize_url(raw_text)
-            if url:
-                return penalty_with_operation(url)
-            if got.strip() in AUTO_WORDS:          # '자동' 이라고 적으면 후보를 두드린다
-                return list(PENALTY_BASES)
-            if got:                                # 주소 자리에 열쇠를 넣은 것 — 못 쓴다
-                return []
+    for path in setting_files(folder, PENALTY_URL_FILE):
+        raw_text = _read_text(path)
+        if raw_text is None:
+            continue
+        got = raw_text.strip().split("?")[0].strip()
+        url = normalize_url(raw_text)
+        if url:
+            notes.append("주소 파일 %s → %s" % (path, url))
+            return penalty_with_operation(url)
+        if got.strip() in AUTO_WORDS:          # '자동' 이라고 적으면 후보를 두드린다
+            notes.append("주소 파일 %s 에 '자동' → 아는 후보를 두드림" % path)
+            return list(PENALTY_BASES)
+        if got:                                # 주소 자리에 열쇠를 넣은 것 — 못 쓴다
+            first = " ".join(raw_text.strip().splitlines()[0].split())[:40]
+            notes.append("주소 파일 %s 을 읽었지만 주소로 보이는 줄이 없음 (첫 줄: %s…)" % (path, first))
+            return []
+        notes.append("주소 파일 %s 이 비어 있음" % path)
+        return []
+    looked = []
+    for root in ([folder, os.path.dirname(os.path.abspath(folder))] if folder else []):
+        for sub in ("", "공통"):
+            looked.append(os.path.join(root, sub, PENALTY_URL_FILE) if sub else os.path.join(root, PENALTY_URL_FILE))
+    notes.append("주소 파일이 없음 — 찾아본 곳: " + " · ".join(looked))
     return []                                      # 주소 파일이 없으면 건너뛴다
 
 
