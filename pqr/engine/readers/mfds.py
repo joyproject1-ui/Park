@@ -17,6 +17,17 @@ import os
 import re
 
 BASE = "http://apis.data.go.kr/1471000/DrugPrdtPrmsnInfoService06/getDrugPrdtPrmsnDtlInq05"
+# 포털이 http 주소를 막거나 서비스 판이 바뀌면 HTTP 400/404 가 난다 (담당자 PC 2026-09-16:
+# "식약처 허가정보를 받지 못했습니다 — HTTP Error 400: Bad Request"). 담당자가 포털의
+# '요청 주소' 를 `공통/식약처-허가정보-주소.txt` 에 넣으면 그것을 먼저 쓰고, 없으면 아래를
+# 차례로 두드려 통한 것을 기억한다.
+LICENSE_URL_FILE = "식약처-허가정보-주소.txt"
+LICENSE_BASES = (
+    BASE,
+    BASE.replace("http://", "https://", 1),
+    "https://apis.data.go.kr/1471000/DrugPrdtPrmsnInfoService07/getDrugPrdtPrmsnDtlInq06",
+    "http://apis.data.go.kr/1471000/DrugPrdtPrmsnInfoService05/getDrugPrdtPrmsnDtlInq04",
+)
 KEY_FILE = "식약처-허가정보-키.txt"
 TIMEOUT = 20
 PROBE_TIMEOUT = 6          # 주소 후보를 두드릴 때는 짧게 기다린다 — 아닌 주소에 20초씩 매달리지 않는다
@@ -43,6 +54,27 @@ FIELDS = {
 }
 
 
+def normalize_url(text):
+    """파일에 적힌 글에서 요청 주소를 꺼낸다 — 없으면 빈 글.
+
+    · `http://`·`https://` 로 시작하면 그대로. `apis.data.go.kr/…` 처럼 앞을 떼고 적었으면
+      `http://` 를 붙인다 (담당자 PC 2026-09-16: 주소를 넣었는데 "http:// 로 시작하는 줄" 이
+      없다고 나왔다).
+    · 포털의 샘플 주소(`…?serviceKey=…&…`)를 통째로 붙여 넣었으면 `?` 뒤는 뗀다.
+    · 줄이 여럿이면 주소로 보이는 첫 줄을 쓴다 — 열쇠 줄과 섞여 있어도 된다.
+    """
+    for line in str(text or "").replace("\ufeff", "").splitlines():
+        got = line.strip().strip('"').strip("'")
+        if not got:
+            continue
+        low = got.lower()
+        if low.startswith(("http://", "https://")):
+            return got.split("?")[0].strip()
+        if re.match(r"^(apis?|www)\.data\.go\.kr/", low) or low.startswith("data.go.kr/"):
+            return ("http://" + got).split("?")[0].strip()
+    return ""
+
+
 def _looks_like_url(text):
     """주소인지 열쇠인지 가린다.
 
@@ -50,7 +82,7 @@ def _looks_like_url(text):
     동일하네". 인증키는 계정당 하나라 두 서비스가 같은 키를 쓰지만, 행정처분 파일에는
     키가 아니라 요청 주소가 들어가야 한다.
     """
-    return str(text or "").strip().lower().startswith(("http://", "https://"))
+    return bool(normalize_url(text))
 
 
 def api_key(folder=None):
@@ -154,19 +186,76 @@ def service_error(raw):
     return " · ".join(out)
 
 
-def fetch(name, key, base=None, timeout=TIMEOUT, opener=None):
-    """제품명으로 허가정보를 받아 [{항목: 값}] — 못 받으면 []."""
+_LICENSE_WORKING = ""       # 이번 실행에서 통한 허가정보 주소
+
+
+def license_bases(folder=None):
+    """허가정보 서비스 주소 후보 — 담당자가 넣어 둔 것이 있으면 그것만, 아니면 기본 후보들."""
+    got = (os.environ.get("MFDS_LICENSE_URL") or "").strip()
+    if got and normalize_url(got):
+        return [normalize_url(got)]
+    for root in [folder, os.path.dirname(os.path.abspath(folder))] if folder else []:
+        for path in (os.path.join(root or "", LICENSE_URL_FILE),
+                     os.path.join(root or "", "공통", LICENSE_URL_FILE)):
+            try:
+                with open(path, encoding="utf-8-sig") as handle:
+                    got = normalize_url(handle.read())
+            except OSError:
+                continue
+            if got:
+                return [got]
+    if _LICENSE_WORKING:
+        return [_LICENSE_WORKING] + [b for b in LICENSE_BASES if b != _LICENSE_WORKING]
+    return list(LICENSE_BASES)
+
+
+def _http_error_text(error):
+    """HTTPError 를 담당자가 읽을 말로 — 포털이 본문에 준 까닭까지."""
+    body = ""
+    try:
+        body = error.read().decode("utf-8", "replace")
+    except Exception:
+        pass
+    why = service_error(body) if body else ""
+    return "HTTP %s %s%s" % (getattr(error, "code", "?"), getattr(error, "reason", ""),
+                             (" — " + why) if why else "")
+
+
+def fetch(name, key, base=None, timeout=TIMEOUT, opener=None, folder=None):
+    """제품명으로 허가정보를 받아 [{항목: 값}] — 못 받으면 [].
+
+    주소 후보를 차례로 두드린다 — 4xx 면 다음 후보로, 통한 주소는 기억한다. 모두 안 되면
+    마지막 오류를 포털 본문의 까닭과 함께 올린다.
+    """
+    import urllib.error
     import urllib.parse
     import urllib.request
+    global _LICENSE_WORKING
     key = plain_key(key)
     if not name or not key:
         return []
     query = urllib.parse.urlencode({
         "serviceKey": key, "item_name": name, "type": "json",
         "pageNo": "1", "numOfRows": str(MAX_ROWS)})
-    url = "%s?%s" % (base or BASE, query)
     get = opener or (lambda u, t: urllib.request.urlopen(u, timeout=t).read())
-    raw = get(url, timeout)
+    bases = [base] if base else license_bases(folder)
+    raw, last = None, None
+    for candidate in bases:
+        url = "%s?%s" % (candidate, query)
+        try:
+            raw = get(url, timeout if len(bases) == 1 else min(timeout, PROBE_TIMEOUT * 2))
+            _LICENSE_WORKING = candidate
+            break
+        except urllib.error.HTTPError as error:
+            last = ValueError("%s (주소 %s)" % (_http_error_text(error), candidate.split("?")[0]))
+            if error.code in (400, 404, 405):
+                continue                     # 주소 문제 — 다음 후보
+            raise last
+        except Exception as error:
+            last = error
+            continue
+    if raw is None:
+        raise last or ValueError("허가정보 주소에 닿지 못했습니다")
     if isinstance(raw, bytes):
         raw = raw.decode("utf-8", "replace")
     try:
@@ -307,11 +396,13 @@ def penalty_base(folder=None):
                      os.path.join(root or "", "공통", PENALTY_URL_FILE)):
             try:
                 with open(path, encoding="utf-8-sig") as handle:
-                    got = handle.read().strip().split("?")[0].strip()
+                    raw_text = handle.read()
+                    got = raw_text.strip().split("?")[0].strip()
             except OSError:
                 continue
-            if got and _looks_like_url(got):
-                return [got]
+            url = normalize_url(raw_text)
+            if url:
+                return [url]
             if got.strip() in AUTO_WORDS:          # '자동' 이라고 적으면 후보를 두드린다
                 return list(PENALTY_BASES)
             if got:                                # 주소 자리에 열쇠를 넣은 것 — 못 쓴다

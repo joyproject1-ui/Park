@@ -1515,9 +1515,10 @@ def _check_license(section3, name, folder, issues, log, cells3=None, ledger=None
         _ledger(ledger, LEDGER_LICENSE, "못 읽음", "서비스 키가 없어 대조하지 않음 — 공통/%s" % mfds.KEY_FILE)
         return 0
     try:
-        rows = mfds.fetch(name, key)
+        rows = mfds.fetch(name, key, folder=folder)
     except Exception as error:
-        log("3항: 식약처 허가정보를 받지 못했습니다 — %s" % error)
+        log("3항: 식약처 허가정보를 받지 못했습니다 — %s. 포털의 '요청 주소' 를 공통/%s 에 넣으면 "
+            "그 주소로 부릅니다" % (error, mfds.LICENSE_URL_FILE))
         _ledger(ledger, LEDGER_LICENSE, "안 읽음", "접속했지만 받지 못함 — %s" % error)
         return 0
     info = mfds.pick(rows, name)

@@ -443,7 +443,7 @@ class 판독_대장에_남김(unittest.TestCase):
         from pqr.engine.readers import mfds
         saved = (mfds.api_key, mfds.fetch, mfds.pick, mfds.compare)
         mfds.api_key = lambda folder: key
-        mfds.fetch = fetch or (lambda name, k: [{"제품명": name, "허가일자": "20111130"}])
+        mfds.fetch = fetch or (lambda name, k, **kw: [{"제품명": name, "허가일자": "20111130"}])
         mfds.pick = pick or (lambda rows, name: rows[0] if rows else None)
         mfds.compare = lambda s3, info: []
         ledger = []
@@ -467,7 +467,7 @@ class 판독_대장에_남김(unittest.TestCase):
         self.assertIn("서비스 키", got[0][3])
 
     def test_받지_못하면_안_읽음(self):
-        def 터짐(name, k): raise RuntimeError("연결 실패")
+        def 터짐(name, k, **kw): raise RuntimeError("연결 실패")
         got = self._run("열쇠", fetch=터짐)
         self.assertEqual(got[0][2], "안 읽음")
         self.assertIn("연결 실패", got[0][3])
@@ -497,3 +497,79 @@ class 삼항_제품명_확인(unittest.TestCase):
     def test_제품명_줄이_없으면_빈_글(self):
         from pqr.engine.recipe_ointment import section3_mismatch
         self.assertEqual(section3_mismatch({"허가번호": "제 99 호"}, "올로원스점안액"), "")
+
+
+class 주소_읽기(unittest.TestCase):
+    """담당자 PC 2026-09-16: 주소를 넣었는데 "http:// 로 시작하는 줄" 이 없다고 나왔다 — 앞을 뗀 주소,
+    샘플 주소(?serviceKey=…), 열쇠 줄과 섞인 파일도 읽는다."""
+
+    def test_앞을_뗀_주소(self):
+        self.assertEqual(mfds.normalize_url("apis.data.go.kr/1471000/X/getX"), "http://apis.data.go.kr/1471000/X/getX")
+
+    def test_샘플_주소는_물음표_뒤를_뗀다(self):
+        self.assertEqual(mfds.normalize_url("https://apis.data.go.kr/1471000/X/getX?serviceKey=abc&type=json"),
+                         "https://apis.data.go.kr/1471000/X/getX")
+
+    def test_열쇠_줄과_섞여_있어도_주소_줄을_찾는다(self):
+        text = "인증키\nAbC%2Bxyz==\nhttp://apis.data.go.kr/1471000/X/getX\n"
+        self.assertEqual(mfds.normalize_url(text), "http://apis.data.go.kr/1471000/X/getX")
+
+    def test_열쇠만_있으면_주소가_아니다(self):
+        self.assertEqual(mfds.normalize_url("AbC%2Bxyz=="), "")
+        self.assertFalse(mfds._looks_like_url("AbC%2Bxyz=="))
+
+    def test_행정처분_주소_파일도_같은_규칙(self):
+        import os, tempfile
+        d = tempfile.mkdtemp(); os.makedirs(os.path.join(d, "공통"))
+        with open(os.path.join(d, "공통", mfds.PENALTY_URL_FILE), "w", encoding="utf-8") as h:
+            h.write("apis.data.go.kr/1471000/P/getP?serviceKey=k\n")
+        self.assertEqual(mfds.penalty_base(os.path.join(d, "제품")), ["http://apis.data.go.kr/1471000/P/getP"])
+
+    def test_허가정보_주소_파일이_있으면_그것만_쓴다(self):
+        import os, tempfile
+        d = tempfile.mkdtemp(); os.makedirs(os.path.join(d, "공통"))
+        with open(os.path.join(d, "공통", mfds.LICENSE_URL_FILE), "w", encoding="utf-8") as h:
+            h.write("https://apis.data.go.kr/1471000/L/getL\n")
+        self.assertEqual(mfds.license_bases(os.path.join(d, "제품")), ["https://apis.data.go.kr/1471000/L/getL"])
+        self.assertEqual(mfds.license_bases(None)[0], mfds.BASE if not mfds._LICENSE_WORKING else mfds._LICENSE_WORKING)
+
+
+class 주소_후보(unittest.TestCase):
+    """HTTP 400/404 면 다음 주소 후보로 넘어가고, 통한 주소를 기억한다. 모두 안 되면 포털 본문의 까닭을 올린다."""
+
+    def setUp(self):
+        mfds._LICENSE_WORKING = ""
+
+    def _http_error(self, code, body=b""):
+        import urllib.error, io as _io
+        return urllib.error.HTTPError("http://x", code, "Bad Request" if code == 400 else "Not Found", {}, _io.BytesIO(body))
+
+    def test_400이면_다음_후보로(self):
+        calls = []
+        def opener(url, t):
+            calls.append(url.split("?")[0])
+            if len(calls) == 1:
+                raise self._http_error(400)
+            return _응답([올로원스])
+        got = mfds.fetch("올로원스점안액", "열쇠", opener=opener)
+        self.assertEqual(len(got), 1)
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(mfds._LICENSE_WORKING, calls[1])
+        # 다음에는 통한 주소부터
+        self.assertEqual(mfds.license_bases(None)[0], calls[1])
+
+    def test_모두_안_되면_포털_까닭을_올린다(self):
+        def opener(url, t):
+            raise self._http_error(400, b"<OpenAPI_ServiceResponse><cmmMsgHeader><returnAuthMsg>NO_OPENAPI_SERVICE_ERROR</returnAuthMsg></cmmMsgHeader></OpenAPI_ServiceResponse>")
+        with self.assertRaises(ValueError) as got:
+            mfds.fetch("올로원스점안액", "열쇠", opener=opener)
+        self.assertIn("HTTP 400", str(got.exception))
+        self.assertIn("주소가 맞지 않습니다", str(got.exception))
+
+    def test_주소를_지정하면_그것만_부른다(self):
+        calls = []
+        def opener(url, t):
+            calls.append(url); raise self._http_error(404)
+        with self.assertRaises(ValueError):
+            mfds.fetch("올로원스점안액", "열쇠", base="http://one/getX", opener=opener)
+        self.assertEqual(len(calls), 1)
