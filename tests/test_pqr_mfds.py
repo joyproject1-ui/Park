@@ -626,3 +626,22 @@ class 행정처분_End_Point(unittest.TestCase):
             h.write("End Point\nhttps://apis.data.go.kr/1471000/MdcinPrmisnAdmDsposInfoService\n")
         got = mfds.penalty_base(os.path.join(d, "제품"))
         self.assertTrue(got[0].startswith("https://apis.data.go.kr/1471000/MdcinPrmisnAdmDsposInfoService/get"))
+
+
+class 의약품_행정처분_정보_서비스(unittest.TestCase):
+    """담당자 PC 2026-09-16: End Point https://apis.data.go.kr/1471000/MdcinExaathrService04."""
+
+    def test_판_번호에_맞는_조회_이름부터(self):
+        got = mfds.penalty_with_operation("https://apis.data.go.kr/1471000/MdcinExaathrService04")
+        self.assertEqual(got[0], "https://apis.data.go.kr/1471000/MdcinExaathrService04/getMdcinExaathrList03")
+        self.assertIn("https://apis.data.go.kr/1471000/MdcinExaathrService04/getMdcinExaathrList04", got)
+        self.assertIn("https://apis.data.go.kr/1471000/MdcinExaathrService04/getMdcinExaathrList", got)
+
+    def test_그_서비스의_응답_항목을_읽는다(self):
+        item = {"ENTP_NAME": "한림제약(주)", "ITEM_NAME": "올로원스점안액", "ADM_DISPS_NAME": "판매업무정지 1개월",
+                "LAST_SETTLE_DATE": "20240101", "EXPOSE_CONT": "표시기재 위반", "BEF_APPLY_LAW": "약사법 제56조",
+                "DISPS_TERM_DATE": "2024.02.01~2024.02.29"}
+        self.assertEqual(mfds._penalty_value(item, "처분내용"), "판매업무정지 1개월")
+        self.assertEqual(mfds._penalty_value(item, "처분일자"), "20240101")
+        self.assertEqual(mfds._penalty_value(item, "위반내용"), "표시기재 위반")
+        self.assertEqual(mfds._penalty_value(item, "처분기간"), "2024.02.01~2024.02.29")

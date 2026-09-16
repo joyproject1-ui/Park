@@ -414,14 +414,17 @@ PENALTY_BASES = (
     "http://apis.data.go.kr/1471000/AdmDsposInfoService/getAdmDsposInq",
     "http://apis.data.go.kr/1471000/DrugAdmDsposInfoService/getDrugAdmDsposInq",
 )
+# 담당자 PC 2026-09-16: 승인된 서비스는 '식품의약품안전처_의약품 행정처분 정보' —
+# End Point https://apis.data.go.kr/1471000/MdcinExaathrService04 (참고문서 IROS_50). 그 응답 항목
+# (ADM_DISPS_NAME · LAST_SETTLE_DATE · EXPOSE_CONT · BEF_APPLY_LAW · DISPS_TERM_DATE)을 앞에 둔다.
 PENALTY_FIELDS = {
     "업체명": ("ENTP_NAME", "entpName", "BSSH_NM", "bsshNm", "COMPANY_NAME"),
-    "제품명": ("PRDUCT", "ITEM_NAME", "itemName", "PRDLST_NM", "prdlstNm", "PRODUCT_NAME"),
-    "처분일자": ("DISPOS_DATE", "disposDate", "ADM_DISPOS_DE", "DSPS_DT", "PROCESS_DATE"),
-    "처분내용": ("DISPOS_CONT", "disposCont", "ADM_DISPOS_CN", "DSPS_CN", "PROCESS_CONTENT"),
-    "처분기간": ("DISPOS_PERIOD", "disposPeriod", "DSPS_PD"),
-    "근거법령": ("VIOLATION_LAW", "violationLaw", "LAW_NM", "BASIS_LAW"),
-    "위반내용": ("VIOLATION_CONT", "violationCont", "VILT_CN"),
+    "제품명": ("ITEM_NAME", "PRDUCT", "itemName", "PRDLST_NM", "prdlstNm", "PRODUCT_NAME"),
+    "처분일자": ("LAST_SETTLE_DATE", "DISPOS_DATE", "disposDate", "ADM_DISPOS_DE", "DSPS_DT", "PROCESS_DATE"),
+    "처분내용": ("ADM_DISPS_NAME", "DISPOS_CONT", "disposCont", "ADM_DISPOS_CN", "DSPS_CN", "PROCESS_CONTENT"),
+    "처분기간": ("DISPS_TERM_DATE", "DISPOS_PERIOD", "disposPeriod", "DSPS_PD"),
+    "근거법령": ("BEF_APPLY_LAW", "VIOLATION_LAW", "violationLaw", "LAW_NM", "BASIS_LAW"),
+    "위반내용": ("EXPOSE_CONT", "VIOLATION_CONT", "violationCont", "VILT_CN"),
 }
 
 
@@ -451,6 +454,15 @@ def penalty_with_operation(url):
     if re.search(r"/get[A-Za-z]+\d*$", url) or "data.go.kr" not in url.lower():
         return [url]                               # 조회 이름이 있거나 포털 밖 주소면 그대로
     ops = []
+    # 'MdcinExaathrService04' 처럼 판 번호가 붙은 서비스는 조회 이름도 번호가 붙는다 —
+    # 허가정보처럼 N-1 이 흔하고(06→05), 번호 없는 옛 꼴도 있어 차례로 둔다.
+    m = re.search(r"/([A-Za-z]+?)(?:Info)?Service(\d+)$", url)
+    if m:
+        stem, n = m.group(1), int(m.group(2))
+        for k in (n - 1, n, None, n - 2, n + 1):
+            if k is not None and k < 1:
+                continue
+            ops.append("get%sList%s" % (stem, ("%02d" % k) if k is not None else ""))
     for base in PENALTY_BASES:
         op = base.rsplit("/", 1)[-1]
         if op not in ops:
