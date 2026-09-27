@@ -975,7 +975,8 @@ class BulkZipTest(BulkUploadTest):
                              "필요 자료/디겐타 TEST/메모.txt"])
         result = self.upload_bulk("HP-110", "필요 자료.zip", payload=payload)
         self.assertTrue(result["ok"], result.get("error"))
-        self.assertEqual(result["items"], ["3", "7", "9.2.1"])
+        # 9.2 는 화면에서 칸 하나다(patch20, 2026-09-27) — 9.2.1 폴더도 9.2 칸으로 모인다
+        self.assertEqual(result["items"], ["3", "7", "9.2"])
         self.assertEqual(result["unmatched"], ["메모.txt"])
         self.assertIn("3. 허가증.pdf", result["by_item"]["3"])
         folder = os.path.join(self.dir, self.folder)
@@ -986,7 +987,8 @@ class BulkZipTest(BulkUploadTest):
         checks = dict(zip(ids, product["checks"]))
         self.assertEqual(checks["3"], "a")   # 3항은 API 자동 확인
         self.assertEqual(checks["7"], "y")
-        self.assertEqual(checks["9.2.1"], "y")
+        # 점안제는 9.2.1~9.2.4 네 세부 항을 기대하므로 9.2.1 만 오면 '진행 중'
+        self.assertEqual(checks["9.2"], "p")
 
     def test_번호_없는_파일_하나도_알려_준다(self):
         result = self.upload_bulk("HP-110", "메모.pdf")
