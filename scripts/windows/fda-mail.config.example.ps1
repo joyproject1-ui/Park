@@ -1,4 +1,4 @@
-# FDA 경고장 메일 설정.
+﻿# FDA 경고장 메일 설정.
 # 이 파일을 복사해 같은 폴더에 fda-mail.config.ps1 로 저장하고 값을 채우세요.
 # fda-mail.config.ps1 은 .gitignore 에 있어 저장소에 올라가지 않습니다.
 

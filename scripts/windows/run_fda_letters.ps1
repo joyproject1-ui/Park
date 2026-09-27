@@ -1,4 +1,4 @@
-<#
+﻿<#
 FDA Warning Letter 수집·발송 — Windows 작업 스케줄러용 실행 스크립트.
 
     .\run_fda_letters.ps1 -DryRun        메일 없이 결과만 확인
