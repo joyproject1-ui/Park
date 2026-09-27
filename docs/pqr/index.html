@@ -676,6 +676,12 @@ tbody tr:hover{background:var(--surface-2)}
 .btn.ghost:hover{background:var(--surface-3)}
 /* 수율현황표 분석 — 표 안에 들어가는 작은 단추와 프로필 입력칸 */
 .btn.sm{padding:3px 9px;font-size:11.5px;border-radius:7px;margin-top:4px}
+/* 올리기 창의 세부 항 고르개 (9.2.1 · 9.2.2 …) */
+.up-subs .subrow{display:flex;flex-wrap:wrap;gap:6px}
+.up-subs .chip{font-size:12px;padding:4px 10px;border-radius:999px;border:1px solid var(--line-2);
+  background:var(--surface-2);color:var(--ink-2);cursor:pointer}
+.up-subs .chip:hover{background:var(--surface-3);color:var(--ink)}
+.up-subs .chip.on{background:var(--accent-soft);border-color:var(--accent);color:var(--accent);font-weight:600}
 #yp-form label{display:flex;flex-direction:column;gap:3px;font-size:12px;color:var(--ink-2)}
 #yp-form input{border:1px solid var(--line-2);border-radius:8px;padding:6px 9px;font-size:13px;
   background:var(--surface);color:var(--ink);min-width:0}
@@ -1232,6 +1238,8 @@ button.link:hover{text-decoration:underline}
   </div>
   <div class="modal-body">
     <div class="up-note" id="up-desc"></div>
+    <!-- 9.2 처럼 공정에 따라 세부 항 수가 다른 항목 — 어느 공정인지 여기서 고릅니다 -->
+    <div class="up-subs" id="up-subs" hidden></div>
     <label class="field" id="up-dataset-field">
       <span>자료 종류</span>
       <select id="up-dataset"></select>
@@ -1387,10 +1395,7 @@ const SAMPLE_ITEMS = [
   ["8.1.3","원료·자재 공급업체 List","2개 파일"],
   ["8.2.1","주원료 시험성적","ERP"],
   ["8.2.2","1차 자재 시험성적","ERP"],
-  ["9.2.1","조제 완료 후(IPC)","ERP"],
-  ["9.2.2","조제 완료 후(바이오버든)","ERP"],
-  ["9.2.3","충전 완료 후","ERP"],
-  ["9.2.4","포장 완료 후","LIMS · 연동 없음"],
+  ["9.2","공정관리 시험성적","ERP · LIMS · 공정별 세부 항"],
   ["10.1","PV Validation Master File",""],
   ["10.2","제조설비 적격성 마스터","IQ·OQ 는 구버전 파일"],
   ["10.3-5","제조지원 설비 마스터","공조·용수·가스"],
@@ -2610,8 +2615,12 @@ function renderMatrix(rows){
       : (COMMON_ITEMS.has(it[0]) ? "<br><b>공통 자료</b> — 한 번 올리면 모든 제품에 적용됩니다" : "")
         + (uploadEnabled() ? "<br><b>눌러서 자료 올리기</b>"
                            : "<br>자료를 올리려면 <b>python -m pqr serve</b> 로 실행하세요");
+    const rows = subsOf(d.code, it[0]);
+    const subs = rows.length
+      ? `<br>` + rows.map(r=>`${r.ok ? "✓" : "·"} ${esc(r.id)}${r.name ? " " + esc(r.name) : ""}`).join("<br>")
+      : "";
     bindTip(n, `<b>(${itemLetter(+i)}) ${esc(it[0])}. ${esc(it[1])}</b><br>${esc(d.name)}`
-      + `<br>${label[d.checks[+i]] || d.checks[+i]}${hint}`);
+      + `<br>${label[d.checks[+i]] || d.checks[+i]}${subs}${hint}`);
   });
 }
 
@@ -2922,7 +2931,21 @@ function uploadEnabled(){ return !!(SOURCE && SOURCE.upload && SOURCE.upload.ena
 function uploadConfig(){ return (SOURCE && SOURCE.upload) || {}; }
 
 const modal = $("#upload-modal");
-let uploadTarget = null;     // {code, item}
+let uploadTarget = null;     // {code, item, sub}
+
+/* 9.2 처럼 공정에 따라 세부 항 수가 달라지는 항목 — 칸은 하나, 안에서 세부를 다룹니다.
+   담당자 2026-09-27: "팀마다 9.2항 상세 항이 달라 타팀은 공정에 따라 9.2.6항까지 값이 기재되는데". */
+function subsOf(code, itemKey){
+  const product = DATA.find(d=>d.code===code) || {};
+  const rows = (product.subs || {})[itemKey];
+  return Array.isArray(rows) ? rows : [];
+}
+function subSummary(code, itemKey){
+  const rows = subsOf(code, itemKey);
+  if (!rows.length) return "";
+  const done = rows.filter(r=>r.ok).length;
+  return `${done}/${rows.length}`;
+}
 let COMMON_ITEMS = new Set(), AUTO_ITEMS = new Set(), COMMON_FILES = {};
 let EFFORT = {};             // 공수표 — 생산 Lot 구간 → 시간
 let pickedFiles = [];        // 항목 하나에 여러 파일을 올릴 수 있다
@@ -2940,11 +2963,15 @@ function openUpload(code, itemKey){
   const product = DATA.find(d=>d.code===code);
   const item = ITEMS.find(row=>row[0]===itemKey);
   if (!product || !item) return;
-  uploadTarget = { code, item: itemKey };
+  const subs = subsOf(code, itemKey);
+  // 처음에는 아직 안 올린 세부 항을 고른 채로 엽니다 — 담당자가 고를 것을 하나 줄입니다.
+  const firstMissing = (subs.find(r=>!r.ok) || subs[0] || {}).id || "";
+  uploadTarget = { code, item: itemKey, sub: firstMissing };
   pickedFiles = [];
 
   $("#up-product").textContent = `${product.code} · ${product.name}`;
   $("#up-title").textContent = `${item[0]}. ${item[1]}`;
+  renderSubPicker();
   renderItemFiles();
   $("#up-filename").textContent = "";
   $("#up-result").textContent = "";
@@ -2978,6 +3005,33 @@ function openUpload(code, itemKey){
   scrim.classList.add("open");
   modal.classList.add("open");
   $("#up-drop").focus();
+}
+
+/* 세부 항 고르개 — 9.2 처럼 공정별 세부 항이 있는 항목에서만 뜹니다.
+   어느 공정의 성적서인지 골라야 파일 이름이 '9.2.3 충전 완료 후 - …' 로 남습니다. */
+function renderSubPicker(){
+  const box = $("#up-subs");
+  if (!box || !uploadTarget) return;
+  const rows = subsOf(uploadTarget.code, uploadTarget.item);
+  if (!rows.length && !uploadTarget.sub){ box.hidden = true; box.innerHTML = ""; return; }
+  box.hidden = false;
+  box.innerHTML = `<div class="muted" style="margin-bottom:5px">어느 공정의 자료인가요?
+      <span class="muted">— 고른 번호로 저장됩니다. 목록에 없으면 '직접 적기' 로 번호를 적으세요.</span></div>
+    <div class="subrow">`
+    + rows.map(r=>`<button class="chip${r.id===uploadTarget.sub?" on":""}" data-sub="${esc(r.id)}"
+        title="${r.ok ? "이미 올린 자료가 있습니다" : "아직 없습니다"}">${esc(r.id)}${
+          r.name ? " " + esc(r.name) : ""}${r.ok ? " ✓" : ""}</button>`).join("")
+    + `<button class="chip" data-sub-free="1">직접 적기</button></div>`;
+  box.querySelectorAll("[data-sub]").forEach(n=>n.addEventListener("click", ()=>{
+    uploadTarget.sub = n.dataset.sub; renderSubPicker(); updatePathHint();
+  }));
+  const free = box.querySelector("[data-sub-free]");
+  if (free) free.addEventListener("click", ()=>{
+    const got = prompt("세부 항 번호를 적으세요 (예: 9.2.6)", uploadTarget.sub || uploadTarget.item + ".");
+    if (got && /^\d+(\.\d+)+$/.test(got.trim())){
+      uploadTarget.sub = got.trim(); renderSubPicker(); updatePathHint();
+    }
+  });
 }
 
 /* 항목의 현재 자료 상태 — 업로드 뒤에도 최신 값을 보여줍니다. */
@@ -3017,7 +3071,15 @@ function updatePathHint(){
   const dot = name.lastIndexOf(".");
   const stem = dot > 0 ? name.slice(0, dot) : name;
   const suffix = dot > 0 ? name.slice(dot) : "";
-  const saved = alreadyNumbered ? name : `${item[0]} ${item[1]} - ${stem}${suffix}`;
+  const sub = uploadTarget.sub || "";
+  const subName = (subsOf(uploadTarget.code, uploadTarget.item)
+                   .find(r=>r.id===sub) || {}).name || "";
+  const numbered = sub
+    ? new RegExp("^\\s*" + sub.replace(/\./g, "\\.") + "(\\D|$)").test(name.trim())
+    : alreadyNumbered;
+  const saved = numbered ? name
+    : (sub ? `${[sub, subName].filter(Boolean).join(" ")} - ${stem}${suffix}`
+           : `${item[0]} ${item[1]} - ${stem}${suffix}`);
   $("#up-path").textContent = `저장 위치:  ${folder}/${saved}`
     + (common ? "   — 한 번 올리면 모든 제품에 적용됩니다" : "")
     + (pickedFiles.length > 1 ? `  (외 ${pickedFiles.length - 1}개도 같은 규칙으로 저장됩니다)` : "");
@@ -3107,6 +3169,7 @@ async function submitUpload(){
     form.append("product", uploadTarget.code);
     // 항 번호로 저장합니다 — 공통 자료 항목이면 서버가 '공통' 폴더로 보냅니다
     form.append("item", uploadTarget.item);
+    if (uploadTarget.sub) form.append("sub", uploadTarget.sub);   // 9.2.3 처럼 공정별 세부 항
     form.append("file", file, file.name);
     try {
       const response = await fetch("api/upload", { method:"POST", body: form });
@@ -3134,6 +3197,7 @@ async function submitUpload(){
   if (errors.length) result.className = "up-result bad";
   $("#up-filename").textContent = ""; pickedFiles = [];
   button.textContent = "올리기"; button.disabled = true;
+  renderSubPicker();
   renderItemFiles();
 }
 

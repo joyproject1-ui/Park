@@ -882,7 +882,77 @@ def final_report_time(folder, matcher=None):
     return datetime.datetime.fromtimestamp(os.path.getmtime(found)).strftime("%Y-%m-%d %H:%M")
 
 
-def _checks(context, config, meta=None):
+SUB_TOKEN = re.compile(r"^\s*(\d+(?:\.\d+)+)")
+
+
+def item_subs(config, item_id, form_group=""):
+    """그 항목의 세부 항 기대 목록 — [(번호, 이름)]. 정해 두지 않았으면 빈 목록.
+
+    담당자 2026-09-27: "팀마다 9.2항 상세 항이 달라 타팀은 공정에 따라 9.2.6항까지 값이
+    기재되는데 어떻게하면 좋을까?" → 화면의 칸은 9.2 하나로 두고, 세부 항은 제형 군마다
+    다른 이 목록으로 다룬다. 목록이 비어 있으면 파일이 곧 목록이다.
+    """
+    table = (config.get("item_subs") or {}).get(item_id)
+    if not isinstance(table, dict):
+        return []
+    rows = table.get(form_group)
+    if rows is None:
+        rows = table.get("_기본") or []
+    out = []
+    for row in rows or []:
+        if isinstance(row, (list, tuple)) and len(row) >= 2:
+            out.append((str(row[0]).strip(), str(row[1]).strip()))
+    return out
+
+
+def sub_label(config, item_id, sub_id):
+    """세부 항 번호의 이름 — 어느 제형 목록에든 있으면 그 이름을 쓴다."""
+    table = (config.get("item_subs") or {}).get(item_id)
+    if not isinstance(table, dict):
+        return ""
+    for rows in table.values():
+        for row in rows or []:
+            if isinstance(row, (list, tuple)) and len(row) >= 2 and str(row[0]).strip() == str(sub_id).strip():
+                return str(row[1]).strip()
+    return ""
+
+
+def sub_numbers(names):
+    """파일 이름들에서 세부 항 번호만 뽑는다 — '9.2.5 충전 …pdf' → '9.2.5'."""
+    got = []
+    for name in names or []:
+        found = SUB_TOKEN.match(str(name or ""))
+        if found and found.group(1) not in got:
+            got.append(found.group(1))
+    return got
+
+
+def sub_status(config, item_id, form_group, names):
+    """세부 항 상태 — [{"id", "name", "ok"}] 와 판정('y'·'p'·'n').
+
+    기대 목록이 있으면 그 목록이 다 차야 완료다. 목록이 없으면(아직 정하지 않은 제형)
+    올라온 파일이 곧 목록이고, 하나라도 있으면 완료로 본다.
+    """
+    seen = sub_numbers(names)
+    want = item_subs(config, item_id, form_group)
+    rows = [{"id": number, "name": label, "ok": number in seen} for number, label in want]
+    known = {number for number, _label in want}
+    for number in seen:                       # 목록에 없는 번호도 올라왔으면 보여 준다
+        if number not in known:
+            rows.append({"id": number, "name": "", "ok": True})
+    # 세부로 나누지 않고 항 번호 그대로 한 파일에 담아 올린 경우('9.2 공정관리 …pdf')는
+    # 그 하나로 그 항을 갈음한다 — 나눠 올리라고 막을 까닭이 없다.
+    if item_id in seen:
+        return rows, "y"
+    if not want:
+        return rows, ("y" if seen else "n")
+    done = sum(1 for row in rows if row["ok"] and row["id"] in known)
+    if done >= len(want):
+        return rows, "y"
+    return rows, ("p" if seen else "n")
+
+
+def _checks(context, config, meta=None, form_group=""):
     """평가항목별 자료 상태를 config 의 item_rules 로 판정합니다.
 
     항목 목록이 회사 문서 번호(3 · 8.1.1 · 9.2.4 …)로 바뀔 수 있으므로 규칙을 코드에
@@ -912,6 +982,13 @@ def _checks(context, config, meta=None):
         # 항 번호가 붙은 파일이 폴더에 있으면 그 항목의 자료는 온 것입니다.
         # 표로 못 읽는 파일(PDF·스캔)이어도 수집 자체는 됐다고 보여 줍니다.
         has_file = number in item_files
+        # 세부 항이 있는 항목(9.2)에 파일이 올라와 있으면 **세부가 다 차야** 완료다 —
+        # 칸은 하나지만 안은 여럿이다(담당자 2026-09-27: 팀마다 9.2 세부 항 수가 다르다).
+        # 파일이 아직 하나도 없으면 예전처럼 대장(datasets)으로 판정한다.
+        if has_file and (config.get("item_subs") or {}).get(number):
+            _rows, state = sub_status(config, number, form_group, item_files.get(number) or [])
+            states.append(state)
+            continue
         if fields:
             filled = sum(1 for name in fields if str(meta.get(name) or "").strip())
             if has_file or filled == len(fields):
@@ -1400,7 +1477,11 @@ def build(input_dir=None, files=None, today=None, config=None, period=None):
                                 and item["state"] in ("기한 초과", "갱신 임박")),
         }
 
-        checks = _checks(context, config, meta)
+        # 제형 군은 9.2 세부 항 판정과 담당자·팀 결정에 함께 쓴다. 아래에서 정해지는 name
+        # 보다 앞서 필요하므로 마스터의 제품명(없으면 코드)으로 가른다 — 제형 칸이 있으면
+        # 이름은 보지도 않는다.
+        group = form_group(meta.get("form", ""), config, meta.get("product_name") or code)
+        checks = _checks(context, config, meta, group)
         reasons = _reasons(context, checks, config)
         required = _required_checks(checks, config)
         collected = required.count("y")
@@ -1428,8 +1509,7 @@ def build(input_dir=None, files=None, today=None, config=None, period=None):
         cpk_low = [test for test in tests if test.get("cpk") is not None
                    and test["cpk"] < config["thresholds"].get("cpk_sufficient",
                                                               metrics.CPK_SUFFICIENT)]
-        owner = meta.get("owner") or (config.get("owners_by_form") or {}).get(
-            form_group(meta.get("form", ""), config, name), "")
+        owner = meta.get("owner") or (config.get("owners_by_form") or {}).get(group, "")
         products.append({
             "code": code,
             "name": name,
@@ -1485,6 +1565,11 @@ def build(input_dir=None, files=None, today=None, config=None, period=None):
             "chg": len(change_rows) + len(license_rows),
             "cmp": len(complaint_rows),
             "checks": checks,
+            # 9.2 처럼 세부 항이 있는 항목은 칸 하나 안에서 세부를 보여 준다
+            "subs": {number: sub_status(config, number, group,
+                                        (item_files_by_product.get(code, {}) or {}).get(number) or [])[0]
+                     for number in (config.get("item_subs") or {})
+                     if not number.startswith("_")},
             "collected": collected,
             # 수집률의 분모 — 공양식(0항)이나 프로그램이 대신 확인하는 항목은 뺀 개수입니다.
             # 화면에서 '남은 항목' 을 셀 때도 전체 항목 수가 아니라 이 수를 써야 합니다.

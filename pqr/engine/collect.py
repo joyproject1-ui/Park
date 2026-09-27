@@ -71,6 +71,18 @@ class ProductData(object):
 _MATCHER = None
 
 
+_SUB_ITEMS = None
+
+
+def _sub_items():
+    """세부 항을 따로 두는 항목 번호들 — config 의 item_subs 가 정한다."""
+    global _SUB_ITEMS
+    if _SUB_ITEMS is None:
+        table = build_module.load_config().get("item_subs") or {}
+        _SUB_ITEMS = {k for k in table if not k.startswith("_")}
+    return _SUB_ITEMS
+
+
 def _item_of(name):
     """파일 이름 → 평가항목 번호. 프로그램의 항목 규칙(item_matcher)을 그대로 쓴다 —
     '10.3, 10.4, 10.5 제조지원 …' 이 '10.3-5' 로 잡히는 것까지 같아야 한다."""
@@ -79,6 +91,14 @@ def _item_of(name):
         _MATCHER = build_module.item_matcher(build_module.load_config()["items"])
     item = _MATCHER(name)
     if item:
+        # 세부 항이 있는 항목(9.2)은 **세부 번호 그대로** 돌려준다. 화면의 칸은 9.2 하나지만
+        # 보고서는 어느 공정인지(9.2.1 조제 · 9.2.3 충전 · 9.2.6 …) 알아야 표를 채운다
+        # (담당자 2026-09-27: 팀마다 9.2 세부 항 수가 다르다).
+        if item in _sub_items():
+            deeper = ITEM_RE.match(name)
+            token = deeper.group(1) if deeper else ""
+            if token.startswith(item + ".") and token != item:
+                return token
         return item
     m = ITEM_RE.match(name)
     if m:

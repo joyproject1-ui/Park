@@ -91,7 +91,10 @@ class 퀴노비드_0910(unittest.TestCase):
         from pqr import build as B
         m = B.item_matcher(B.load_config()["items"])
         self.assertEqual(m("8.2.2.1 P12060 -1차 자재 ERP.xls"), "8.2.2")
-        self.assertEqual(m("9.2.1.1 x.pdf"), "9.2.1")
+        # 9.2 는 공정에 따라 세부 항 수가 달라 화면의 칸이 하나다(2026-09-27) — 9.2.x 는
+        # 모두 9.2 칸으로 들어가고, 어느 공정인지는 파일 이름이 지킨다.
+        self.assertEqual(m("9.2.1.1 x.pdf"), "9.2")
+        self.assertEqual(m("9.2.6 선별 완료 후.pdf"), "9.2")
         self.assertIsNone(m("3M필름.pdf"))
 
     def test_판독_시험항목_이름_맞춤(self):

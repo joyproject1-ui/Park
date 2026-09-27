@@ -542,7 +542,7 @@ class Workspace(object):
                 best, best_score = name, score
         return best
 
-    def save_item_file(self, code, item_id, filename, payload):
+    def save_item_file(self, code, item_id, filename, payload, sub=""):
         """평가항목 자료를 제품 폴더에 '항 번호로 시작하는 이름' 으로 저장합니다.
 
         담당자가 올리는 것은 표준 대장이 아니라 회사 원본(공급업체 List · 성적서 PDF …)
@@ -564,7 +564,10 @@ class Workspace(object):
         folder = self.product_folder(code)
         # 회사 원본은 이미 항 번호로 시작하는 일이 많습니다. 그럴 때는 이름을 그대로 둡니다 —
         # 앞에 번호를 또 붙이면 '8.1.1 … - 8.1.1 …' 처럼 됩니다.
-        target = os.path.join(folder, self.item_filename(item_id, base, labels))
+        # 세부 항(9.2.3 …)으로 올렸으면 그 번호로 저장합니다 — 칸은 9.2 하나지만 파일은
+        # 세부 번호로 남아야 보고서와 화면이 어느 공정인지 압니다 (담당자 2026-09-27).
+        name = self.sub_filename(sub, base) if sub else self.item_filename(item_id, base, labels)
+        target = os.path.join(folder, name)
         with self.lock:
             with open(target, "wb") as handle:
                 handle.write(payload)
@@ -572,6 +575,22 @@ class Workspace(object):
         return {"saved": os.path.relpath(target, self.input_dir),
                 "folder": os.path.abspath(folder),
                 "name": os.path.basename(target)}
+
+    def sub_filename(self, sub_id, base):
+        """세부 항으로 올린 파일 이름 — '9.2.3 충전 완료 후 - 원본.pdf'.
+
+        이름이 이미 그 세부 번호로 시작하면 그대로 둡니다(번호를 두 번 붙이지 않습니다).
+        """
+        sub_id = str(sub_id or "").strip()
+        if not sub_id:
+            return base
+        if re.match(r"^\s*%s(\D|$)" % re.escape(sub_id), base):
+            return base
+        label = build_module.sub_label(self.config, sub_id.rsplit(".", 1)[0], sub_id) \
+            or build_module.sub_label(self.config, ".".join(sub_id.split(".")[:2]), sub_id)
+        stem, suffix = os.path.splitext(base)
+        head = ("%s %s" % (sub_id, _UNSAFE.sub(" ", label).strip())).strip()
+        return "%s - %s%s" % (head, stem, suffix)
 
     def item_filename(self, item_id, base, labels=None):
         """그 항목에 저장될 파일 이름 — 화면의 '저장 위치' 안내와 같은 규칙입니다.
@@ -1735,7 +1754,8 @@ class Handler(BaseHTTPRequestHandler):
             else:
                 result = self.workspace.save_item_file(
                     code=fields.get("product") or "", item_id=item_id,
-                    filename=upload[0], payload=upload[1])
+                    filename=upload[0], payload=upload[1],
+                    sub=(fields.get("sub") or "").strip())
             result["ok"] = True
             result["data"] = self.workspace.dashboard_payload()
             return result
