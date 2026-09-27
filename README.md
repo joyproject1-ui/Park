@@ -118,6 +118,15 @@ FDA가 경고장 목록을 통상 **화요일(미 동부시간)** 에 갱신하�
 발송 이력은 `state/warning-letters-state.json` 에 남아 저장소에 커밋됩니다.
 같은 경고장을 다음 주에 다시 보내지 않기 위한 것이며, 무엇을 언제 알렸는지에 대한 기록도 됩니다.
 
+### Apps Script 판
+
+식약처 행정처분 메일이 개인 구글 계정에서 나가고 있다면, 같은 Apps Script 프로젝트에
+`scripts/appsscript/fdaWarningLetters.gs` 를 붙여 발송처를 하나로 모을 수 있습니다.
+MailApp 이 계정 권한으로 보내므로 **앱 비밀번호가 필요 없습니다.**
+설치 방법은 [`scripts/appsscript/README.md`](scripts/appsscript/README.md) 참조.
+
+> Actions 판과 Apps Script 판은 같은 일을 합니다. **둘 다 켜면 메일이 두 번 옵니다 — 하나만 쓰세요.**
+
 > 자동 분류는 키워드 판정입니다. 제형이나 지적의 경중을 단정하지 않으므로
 > 메일에 실린 원문 링크로 반드시 확인하세요.
 
