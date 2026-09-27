@@ -674,6 +674,13 @@ tbody tr:hover{background:var(--surface-2)}
 .btn:hover{background:var(--accent-2);border-color:var(--accent-2);filter:none} .btn:active{transform:translateY(1px)}
 .btn.ghost{background:var(--surface);border-color:var(--line-2);color:var(--ink-2)}
 .btn.ghost:hover{background:var(--surface-3)}
+/* 수율현황표 분석 — 표 안에 들어가는 작은 단추와 프로필 입력칸 */
+.btn.sm{padding:3px 9px;font-size:11.5px;border-radius:7px;margin-top:4px}
+#yp-form label{display:flex;flex-direction:column;gap:3px;font-size:12px;color:var(--ink-2)}
+#yp-form input{border:1px solid var(--line-2);border-radius:8px;padding:6px 9px;font-size:13px;
+  background:var(--surface);color:var(--ink);min-width:0}
+#v-yield select{border:1px solid var(--line-2);border-radius:8px;padding:4px 7px;font-size:12px;
+  background:var(--surface);color:var(--ink);max-width:230px}
 .link{display:inline-flex;align-items:center;gap:5px}
 button.link{background:none;border:0;padding:0;color:var(--accent);font:inherit;font-size:12.5px;font-weight:500;cursor:pointer}
 button.link:hover{text-decoration:underline}
@@ -815,6 +822,7 @@ button.link:hover{text-decoration:underline}
       <div class="nav-label"><span>분석</span><span class="nav-count" id="b-analysis">0</span></div>
       <button class="nav-item" data-view="lead"><i class="nav-ico" data-icon="clock"></i><span>지연 현황 · 리드타임</span><span class="badge hot" id="b-late">0</span></button>
       <button class="nav-item" data-view="trend"><i class="nav-ico" data-icon="trend"></i><span>품질 이슈 경향</span></button>
+      <button class="nav-item" data-view="yield"><i class="nav-ico" data-icon="grid"></i><span>수율현황표 분석</span><span class="badge" id="b-yield">0</span></button>
       <button class="nav-item" data-view="capa"><i class="nav-ico" data-icon="repeat"></i><span>Cpk 1 미만 검토보고서</span><span class="badge hot" id="b-cpk">0</span></button>
     </nav>
 
@@ -981,6 +989,40 @@ button.link:hover{text-decoration:underline}
             <table class="matrix">
               <thead><tr id="matrix-head"><th>코드</th><th>제품명</th></tr></thead>
               <tbody id="matrix-body"></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <!-- ============ 수율현황표 분석 ============ -->
+      <!-- 담당자 2026-09-27: 한 팀은 수율현황표를 직접 쓰는 것이 편하다 하고, 다른 팀은 기록서
+           스캔에서 AI 가 읽어 정리해 주기를 바랐다. 두 길을 다 둔다 — 직접 만든 표가 있으면
+           보고서는 늘 그것을 쓰고, 없을 때만 판독본을 쓴다. 쪽수는 제품마다가 아니라
+           수탁사 × 기록서 서식 × 판(Rev.) 프로필로 한 번만 적는다. -->
+      <section class="view" id="v-yield" hidden>
+        <div class="card">
+          <div class="card-head"><h2>기록서 서식 프로필</h2>
+            <span class="pill">수탁사 × 기록서 × 판(Rev.)</span>
+            <span class="spacer"></span>
+            <button class="link" id="yp-new" title="수율이 적힌 쪽수를 서식마다 한 번만 적어 둡니다">서식 프로필 만들기 +</button>
+          </div>
+          <div class="card-body" style="display:flex;flex-direction:column;gap:12px">
+            <div class="muted">수율이 적힌 <b>쪽 번호</b>를 수탁사·기록서 서식마다 한 번 적어 두면,
+              같은 서식을 쓰는 제품은 다시 적지 않아도 됩니다. 서식번호나 Rev. 가 바뀌면
+              <b>새 프로필</b>을 만드세요 — 옛 프로필은 지우지 마세요(지난 PQR 을 다시 만들 때 씁니다).</div>
+            <div id="yp-form" hidden></div>
+            <div id="yp-list"></div>
+            <div class="muted" id="yp-file"></div>
+          </div>
+        </div>
+        <div class="card">
+          <div class="card-head"><h2>제품별 수율 자료</h2><span class="pill">7. 수율현황표</span>
+            <span class="spacer"></span><span class="muted" id="yield-hint"></span></div>
+          <div class="tablewrap">
+            <table class="compact">
+              <thead><tr><th>코드</th><th>제품명</th><th>제형</th><th>담당자가 만든 표</th>
+                <th>기록서 스캔</th><th>서식 프로필</th><th>판독</th></tr></thead>
+              <tbody id="yield-body"></tbody>
             </table>
           </div>
         </div>
@@ -2573,6 +2615,200 @@ function renderMatrix(rows){
   });
 }
 
+/* ---- 수율현황표 분석 ---- */
+/* 담당자 2026-09-27: 직접 쓰는 팀과 "스캔에서 읽어 달라" 는 팀이 갈렸다. 둘 다 받는다.
+   쪽수는 제품마다가 아니라 수탁사 × 기록서 서식 × 판(Rev.) 프로필로 한 번만 적는다. */
+let YIELD = { profiles: [], assigned: {}, rows: [], file: "", loaded: false, busy: false };
+
+async function loadYield(){
+  if (!uploadEnabled()) return;
+  try {
+    const response = await fetch("api/yield-profiles", { method:"POST",
+      headers:{ "Content-Type":"application/json" }, body: "{}" });
+    const payload = await response.json();
+    if (payload && payload.ok){
+      YIELD = Object.assign(YIELD, payload, { loaded: true });
+    }
+  } catch (error) { /* 서버가 없으면 조용히 둔다 — 정적 미리보기 */ }
+}
+
+function yieldProfileLabel(one){
+  const bits = [one.maker, one.record].filter(Boolean).join(" · ");
+  const rev = [one.form_no, one.rev ? ("Rev." + one.rev) : ""].filter(Boolean).join(" ");
+  return (bits || one.id) + (rev ? ` (${rev})` : "");
+}
+
+function yieldPagesText(one){
+  const pages = one.pages || {};
+  const bits = Object.keys(pages).map(name =>
+    (name ? name + " " : "") + (pages[name] || []).join(","));
+  return bits.join(" · ");
+}
+
+function renderYieldProfiles(){
+  const box = $("#yp-list");
+  if (!box) return;
+  if (!uploadEnabled()){
+    box.innerHTML = `<div class="muted">이 화면은 정적 파일로 열려 있어 프로필을 저장할 수 없습니다.
+      <code>python -m pqr serve</code> 로 실행하세요.</div>`;
+    return;
+  }
+  const rows = YIELD.profiles || [];
+  box.innerHTML = rows.length
+    ? `<table class="compact"><thead><tr><th>프로필</th><th>수율 쪽</th><th>읽기 규칙</th>
+         <th>배정 제품</th><th>확인일</th></tr></thead><tbody>`
+      + rows.map(one=>{
+          const used = Object.keys(YIELD.assigned || {})
+            .filter(code => YIELD.assigned[code] === one.id).length;
+          return `<tr><td><b>${esc(yieldProfileLabel(one))}</b><br><span class="muted mono">${esc(one.id)}</span></td>
+            <td>${esc(yieldPagesText(one)) || "<span class='muted'>없음</span>"}</td>
+            <td>${esc(((one.rules||{}).note) || "")}</td>
+            <td>${used}품목</td><td>${esc(one.checked||"")}</td></tr>`;
+        }).join("") + `</tbody></table>`
+    : `<div class="muted">아직 만든 서식 프로필이 없습니다. 위 '서식 프로필 만들기 +' 를 누르세요.</div>`;
+  const file = $("#yp-file");
+  if (file) file.textContent = YIELD.file ? ("설정 파일: " + YIELD.file) : "";
+}
+
+function yieldFormHtml(){
+  return `<div class="common-box" style="display:flex;flex-direction:column;gap:8px">
+    <div class="common-head"><b>새 서식 프로필</b>
+      <span class="muted">— 같은 수탁사·같은 서식이면 한 번만 적으면 됩니다</span></div>
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:8px">
+      <label>수탁사<input id="yp-maker" placeholder="코오롱제약"></label>
+      <label>기록서<input id="yp-record" placeholder="정산기록서"></label>
+      <label>서식번호<input id="yp-form-no" placeholder="MBRM-00004"></label>
+      <label>판(Rev.)<input id="yp-rev" placeholder="4.0"></label>
+    </div>
+    <label>수율이 적힌 쪽
+      <input id="yp-pages" placeholder="조제 7, 충전 12, 포장 18-19  (PDF 를 열었을 때의 쪽 번호)"></label>
+    <label>읽기 규칙 (없으면 비워 두세요)
+      <input id="yp-note" placeholder="공정수율 행만 읽고 생산수율은 무시. 캡슐충전→충전"></label>
+    <div><button class="btn" id="yp-save">저장</button>
+      <button class="btn ghost" id="yp-cancel">취소</button></div>
+  </div>`;
+}
+
+async function saveYieldProfile(){
+  const get = id => (($("#"+id) || {}).value || "").trim();
+  const body = { profile: {
+    maker: get("yp-maker"), record: get("yp-record"),
+    form_no: get("yp-form-no"), rev: get("yp-rev"),
+    pages: get("yp-pages"), rules: { note: get("yp-note") } } };
+  if (!body.profile.pages){ showToast("수율이 적힌 쪽 번호를 적어 주세요 (예: 조제 7, 충전 12)."); return; }
+  try {
+    const response = await fetch("api/yield-profile", { method:"POST",
+      headers:{ "Content-Type":"application/json" }, body: JSON.stringify(body) });
+    const payload = await response.json();
+    if (!response.ok || !payload.ok) throw new Error(payload.error || "저장하지 못했습니다");
+    YIELD = Object.assign(YIELD, payload);
+    $("#yp-form").hidden = true;
+    renderYield();
+    showToast(`✅ 서식 프로필을 저장했습니다 — <b>${esc(payload.saved||"")}</b>`);
+  } catch (error) { showToast(`<b style="color:#b91c1c">저장하지 못했습니다</b><br>${esc(error.message)}`); }
+}
+
+async function assignYieldProfile(code, profileId){
+  try {
+    const response = await fetch("api/yield-profile", { method:"POST",
+      headers:{ "Content-Type":"application/json" },
+      body: JSON.stringify({ product: code, profile_id: profileId }) });
+    const payload = await response.json();
+    if (!response.ok || !payload.ok) throw new Error(payload.error || "배정하지 못했습니다");
+    YIELD = Object.assign(YIELD, payload);
+    renderYield();
+  } catch (error) { showToast(`<b style="color:#b91c1c">${esc(error.message)}</b>`); }
+}
+
+async function readYield(code, button){
+  const original = button.textContent;
+  button.textContent = "판독 중…"; button.disabled = true;
+  const watcher = watchProgress(code, button, "수율 판독");
+  try {
+    const response = await fetch("api/read-yield", { method:"POST",
+      headers:{ "Content-Type":"application/json" }, body: JSON.stringify({ product: code }) });
+    clearInterval(watcher);
+    const payload = await response.json();
+    if (payload.ok){
+      if (payload.rows) YIELD.rows = payload.rows;
+      if (payload.data){ adopt(payload.data); }
+      renderYield();
+      const notes = payload.notes || [];
+      showToast(`🔍 <b>수율을 읽었습니다</b> — ${esc(payload.how||"")}`
+        + `<br>${payload.lots} Lot · 📄 ${esc(payload.sheet_name||"")}`
+        + (payload.own_sheet
+            ? `<br><span class="muted">담당자가 만든 '${esc(payload.own_sheet)}' 가 있어 보고서는 그것을 씁니다 — 이 판독본은 참고용입니다.</span>`
+            : `<br><span class="muted">기록서와 대조해 확인한 뒤 쓰세요 — 보고서는 이 표를 씁니다.</span>`)
+        + (notes.length
+            ? `<hr><b>확인 필요 ${notes.length}건</b><ul>`
+              + notes.slice(0,6).map(n=>`<li>${esc(n)}</li>`).join("") + `</ul>`
+            : ``));
+    } else {
+      showToast(`<b style="color:#b91c1c">수율을 읽지 못했습니다</b><br>${esc(payload.why || payload.error || "")}`);
+    }
+  } catch (error) {
+    clearInterval(watcher);
+    showToast(`<b style="color:#b91c1c">수율을 읽지 못했습니다</b><br>${esc(error.message)}`);
+  } finally {
+    button.textContent = original; button.disabled = false;
+  }
+}
+
+function renderYield(){
+  if (uploadEnabled() && !YIELD.loaded && !YIELD.busy){
+    YIELD.busy = true;
+    loadYield().then(()=>{ YIELD.busy = false; renderYield(); });
+  }
+  renderYieldProfiles();
+  const body = $("#yield-body");
+  if (!body) return;
+  const hint = $("#yield-hint");
+  if (hint) hint.textContent = uploadEnabled()
+    ? "담당자가 만든 표가 있으면 보고서는 늘 그것을 씁니다"
+    : "python -m pqr serve 로 실행하면 이 자리에서 판독할 수 있습니다";
+  const rows = (YIELD.rows || []).filter(r=>{
+    if (state.q){
+      const q = state.q.toLowerCase();
+      if (!((r.code+r.name).toLowerCase().includes(q))) return false;
+    }
+    return state.form === "all" || r.form === state.form;
+  });
+  const badge = $("#b-yield");
+  if (badge) badge.textContent = String((YIELD.rows || []).filter(r=>!r.own && !r.read_at).length);
+  const options = (YIELD.profiles || []);
+  body.innerHTML = rows.length ? rows.map(r=>`
+    <tr>
+      <td class="mono">${esc(r.code)}</td>
+      <td>${esc(r.name)}</td>
+      <td>${esc(r.form||"")}</td>
+      <td>${r.own ? `<b>있음</b><br><span class="muted">${esc(r.own)}</span>`
+                  : `<span class="muted">없음</span>`}</td>
+      <td>${(r.scans||[]).length
+              ? `${(r.scans||[]).length}개<br><span class="muted">${esc((r.scans||[])[0])}</span>`
+              : `<span class="muted">없음</span>`}
+          ${uploadEnabled() ? `<br><button class="btn ghost sm" data-yupload="${esc(r.code)}">스캔 올리기</button>` : ``}</td>
+      <td>${uploadEnabled()
+            ? `<select data-yprofile="${esc(r.code)}">
+                 <option value="">— 고르세요 —</option>`
+              + options.map(o=>`<option value="${esc(o.id)}"${o.id===r.profile?" selected":""}>${esc(yieldProfileLabel(o))}</option>`).join("")
+              + `</select>`
+              + (r.pages && r.pages.length ? `<br><span class="muted">쪽 ${r.pages.join(", ")}</span>` : ``)
+            : esc(r.profile||"")}</td>
+      <td>${r.read_at
+              ? `판독됨 ✓ <span class="muted">${esc(r.read_at)}</span><br>${r.read_lots} Lot`
+                + (r.notes ? ` · <b style="color:#b45309">확인 필요 ${r.notes}건</b>` : ``)
+              : `<span class="muted">아직</span>`}
+          ${uploadEnabled() ? `<br><button class="btn sm" data-yread="${esc(r.code)}"${(r.scans||[]).length?"":" disabled title='기록서 스캔을 먼저 올리세요'"}>수율 판독 🔍</button>` : ``}</td>
+    </tr>`).join("")
+    : `<tr><td colspan="7" class="muted">수율 자료(기록서 스캔 또는 수율현황표)가 있는 제품이 없습니다.</td></tr>`;
+  body.querySelectorAll("[data-yread]").forEach(n=>
+    n.addEventListener("click", ()=>readYield(n.dataset.yread, n)));
+  body.querySelectorAll("[data-yupload]").forEach(n=>
+    n.addEventListener("click", ()=>openUpload(n.dataset.yupload, "7")));
+  body.querySelectorAll("[data-yprofile]").forEach(n=>
+    n.addEventListener("change", ()=>assignYieldProfile(n.dataset.yprofile, n.value)));
+}
+
 /* ---- 품질 이슈 경향 ---- */
 function topRoundedBar(x,y,w,h,r){
   r = Math.min(r, w/2, h);
@@ -3072,6 +3308,14 @@ $("#up-close").addEventListener("click", closeUpload);
 $("#up-cancel").addEventListener("click", closeUpload);
 $("#up-submit").addEventListener("click", submitUpload);
 $("#up-dataset").addEventListener("change", updatePathHint);
+if ($("#yp-new")) $("#yp-new").addEventListener("click", ()=>{
+  const box = $("#yp-form");
+  box.innerHTML = yieldFormHtml();
+  box.hidden = false;
+  $("#yp-save").addEventListener("click", saveYieldProfile);
+  $("#yp-cancel").addEventListener("click", ()=>{ box.hidden = true; });
+  $("#yp-maker").focus();
+});
 $("#up-file").addEventListener("change", e=>pickFiles(e.target.files));
 $("#ref-file").addEventListener("change", e=>uploadReference(Array.from(e.target.files)));
 $("#note-find").addEventListener("input", renderNotes);
@@ -3409,6 +3653,8 @@ const VIEWMAP = {
   schedule:{ sec:"v-products", mode:"schedule" },
   items:{ sec:"v-items", title:"평가항목 자료 수집", crumb:"PQR 보고서 항 번호별 원본 자료 수집 상태" },
   trend:{ sec:"v-trend", title:"품질 이슈 경향", crumb:"Cpk 1 미만 제품 — 최근 12개월 제형별 발생 추이" },
+  yield:{ sec:"v-yield", title:"수율현황표 분석",
+          crumb:"기록서 스캔에서 수율을 읽어 7항 수율현황표 초안을 만듭니다" },
   lead:{ sec:"v-lead", title:"지연 현황 · 리드타임", crumb:"단계별 소요일과 지연 사유" },
   upload:{ sec:"v-upload", title:"PQR 작성 시 참고 사항",
            crumb:"PQR 을 쓸 때 읽어 보는 문서 — 눌러서 바로 열립니다" },
@@ -3447,6 +3693,7 @@ function render(){
   else if (cfg.sec==="v-products"){ renderProducts(rows, cfg.mode); }
   else if (cfg.sec==="v-items"){ renderMatrix(rows); renderCommonFiles(); }
   else if (cfg.sec==="v-trend"){ renderTrend(); }
+  else if (cfg.sec==="v-yield"){ renderYield(); }
   else if (cfg.sec==="v-lead"){ renderLead(rows); }
   else if (cfg.sec==="v-upload"){ renderUpload(); loadNotes().then(renderNotes); }
   else if (cfg.sec==="v-todo"){ renderTodo(cfg.todo); }

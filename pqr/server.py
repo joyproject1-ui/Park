@@ -730,7 +730,8 @@ class Workspace(object):
 
     # '공통' 폴더에는 PQR 자료 말고 식약처 API 설정 파일도 들어갑니다. 자료가 아니므로
     # 항 번호가 없는 것이 당연하고, 목록에서 '어느 항목인지 모름' 으로 보이면 안 됩니다.
-    SETTING_FILES = ("식약처-허가정보-키.txt", "식약처-행정처분-주소.txt")
+    SETTING_FILES = ("식약처-허가정보-키.txt", "식약처-행정처분-주소.txt",
+                     "수율-기록서-서식.json")
 
     def _files_in(self, folder, item_id, common=False):
         """한 폴더에서 그 항목의 파일만 골라 목록으로 만듭니다."""
@@ -1133,6 +1134,12 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(200, self._handle_report())
             if path == "/api/read-stability":
                 return self._json(200, self._handle_read_stability())
+            if path == "/api/yield-profiles":
+                return self._json(200, self._handle_yield_profiles())
+            if path == "/api/yield-profile":
+                return self._json(200, self._handle_yield_profile_save())
+            if path == "/api/read-yield":
+                return self._json(200, self._handle_read_yield())
             if path == "/api/final":
                 return self._json(200, self._handle_final())
             if path == "/api/bundle":
@@ -1259,6 +1266,105 @@ class Handler(BaseHTTPRequestHandler):
             # "안정성 판독이 완료된 건지 아닌지 모르겠네").
             self.workspace.rebuild()
             got["data"] = self.workspace.dashboard_payload()
+        return got
+
+    # ---------------------------------------------------------------- 7항 수율 판독
+    def _yield_rows(self):
+        """제품마다 수율 자료가 어떤 상태인지 — '수율현황표 분석' 화면이 쓰는 목록입니다."""
+        from .engine import yield_profile as profile_mod, yield_read
+        data = profile_mod.load(self.workspace.input_dir)
+        rows = []
+        for product in self.workspace.data["products"]:
+            code = product["code"]
+            try:
+                folder = self.workspace.product_folder(code)
+            except UploadError:
+                continue
+            if not os.path.isdir(folder):
+                continue
+            mine = yield_read.own_sheet(folder)
+            read = yield_read.load_reading(folder)
+            scans = yield_read.scans(folder)
+            prof = profile_mod.for_product(data, code)
+            # 수율과 아무 상관이 없는 제품까지 늘어놓으면 목록이 300줄이 된다. 수율 자료가
+            # 있거나(표·스캔·판독) 이미 프로필을 배정해 둔 제품만 보여 준다.
+            if not (mine or read or scans or prof):
+                continue
+            rows.append({
+                "code": code, "name": product["name"],
+                "form": product.get("form_group") or product.get("form") or "",
+                "own": os.path.basename(mine) if mine else "",
+                "profile": (prof or {}).get("id", ""),
+                "pages": profile_mod.page_list(prof) if prof else [],
+                "scans": [os.path.basename(p) for p in scans],
+                "read_at": (read or {}).get("read_at", ""),
+                "read_lots": len((read or {}).get("lots") or []),
+                "notes": len((read or {}).get("notes") or []),
+            })
+        return rows
+
+    def _handle_yield_profiles(self):
+        """기록서 서식 프로필 목록과 제품별 수율 자료 상태."""
+        from .engine import yield_profile as profile_mod
+        data = profile_mod.load(self.workspace.input_dir)
+        return {"ok": True, "profiles": data.get("profiles") or [],
+                "assigned": data.get("products") or {},
+                "rows": self._yield_rows(),
+                "file": profile_mod.path_of(self.workspace.input_dir)}
+
+    def _handle_yield_profile_save(self):
+        """프로필을 만들거나 고치고, 제품에 배정합니다.
+
+        담당자 2026-09-27: "쪽수를 제품마다 받지 말고 수탁사 × 기록서 서식마다 한 번 받아
+        프로필로 저장 … 버전마다 관리하는 것으로 할께."
+        """
+        from .engine import yield_profile as profile_mod
+        body = self._read_json()
+        data = profile_mod.load(self.workspace.input_dir)
+        saved = None
+        if body.get("profile"):
+            one = dict(body["profile"])
+            if isinstance(one.get("pages"), str):
+                one["pages"] = profile_mod.parse_pages(one["pages"])
+            if not (one.get("pages") or {}):
+                raise UploadError("수율이 적힌 쪽 번호를 적어 주세요 (예: 조제 7, 충전 12).")
+            one["id"] = one.get("id") or profile_mod.make_id(
+                one.get("maker"), one.get("record"), one.get("form_no"), one.get("rev"))
+            saved = profile_mod.put(data, one)
+        if body.get("product"):
+            profile_mod.assign(data, body["product"],
+                               body.get("profile_id") or (saved or {}).get("id", ""))
+        profile_mod.save(self.workspace.input_dir, data)
+        return {"ok": True, "saved": (saved or {}).get("id", ""),
+                "profiles": data.get("profiles") or [],
+                "assigned": data.get("products") or {},
+                "rows": self._yield_rows()}
+
+    def _handle_read_yield(self):
+        """'수율 판독' 단추 — 기록서 스캔의 지정 쪽만 읽어 수율현황표 초안을 만듭니다."""
+        from .engine import yield_read
+        body = self._read_json()
+        code = str(body.get("product") or "").strip()
+        folder = self.workspace.product_folder(code)
+        steps = []
+        self.workspace.progress[code] = {"steps": steps, "started": time.time(), "running": True}
+        try:
+            # 6항 제조내역의 제조번호와 대조하려면 Lot 목록이 필요하다 — 화면 payload 의
+            # 'lots' 는 개수라서 쓸 수 없다. 대조는 자료를 읽는 쪽에서 따로 붙인다.
+            got = yield_read.make_reading(self.workspace.input_dir, folder, code,
+                                          log=steps.append)
+        except Exception as error:
+            steps.append("판독 실패: %s" % error)
+            got = {"ok": False, "why": str(error)}
+        finally:
+            self.workspace.progress[code]["running"] = False
+        got["folder"] = folder
+        got["sheet_name"] = os.path.basename(str(got.get("sheet") or ""))
+        got["log_file"] = os.path.basename(str(yield_read.save_log(folder, steps, got) or ""))
+        if got.get("ok"):
+            self.workspace.rebuild()
+            got["data"] = self.workspace.dashboard_payload()
+            got["rows"] = self._yield_rows()
         return got
 
     def _handle_report(self):

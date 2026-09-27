@@ -444,6 +444,102 @@ def read_change(path, folder=None, log=None):
         % (os.path.basename(path), out["title"] or "제목 못 읽음", len(out["actions"])))
     return out
 
+YIELD_PROMPT = """다음은 제조기록서(또는 정산기록서)에서 **수율이 적힌 쪽**만 뽑은 그림입니다.
+이 쪽들을 읽고 JSON 만 출력하세요.
+
+읽을 파일:
+%(files)s
+
+%(rules)s
+
+규칙
+· 보이는 대로만 적습니다 — 안 보이거나 흐리면 그 칸을 비우고 "unsure" 에 적습니다. 지어내지 않습니다.
+· "lot" 은 제조번호입니다. 한 쪽에 여러 제조번호가 있으면 각각 한 줄로 적습니다.
+· "values" 는 공정 이름과 수율(%%)입니다. 공정 이름은 기록서에 적힌 그대로 적습니다
+  (조제·충전·포장·타정·칭량·선별 …). 숫자는 %% 를 떼고 숫자만 적습니다.
+· 수율 행이 '공정수율' 과 '생산수율' 로 나뉘어 있으면 **공정수율**을 적고, 생산수율은
+  "production" 에 따로 적습니다.
+· "spec" 은 그 공정의 수율 기준(허용범위)입니다. 기록서에 없으면 비웁니다.
+· "page" 는 그 값을 본 그림 파일의 쪽 번호입니다(파일 이름 끝의 숫자).
+
+{"lots": [{"lot": "GVY601",
+           "values": {"조제": "99.85", "충전": "95.31", "포장": "99.99"},
+           "production": {"충전": "94.80"},
+           "page": {"조제": 7, "충전": 12, "포장": 18},
+           "unsure": ["포장"]}],
+ "specs": {"조제": "99.5±0.45%%", "충전": "98.0±3.0%%"}}
+"""
+
+
+def read_yield(paths, rules="", folder=None, log=None, timeout=600):
+    """수율이 적힌 쪽 그림을 이 PC 의 Claude Code 로 읽는다 → {"lots": [...], "specs": {...}}
+
+    담당자 2026-09-27: 기록서 스캔을 올리면 수율현황표를 채워 주기를 바람. 쪽은 서식
+    프로필이 정해 주므로 여기서는 받은 그림만 읽는다.
+    """
+    say = log or (lambda *a: None)
+    if not _exe():
+        raise RuntimeError("이 PC 에 Claude Code 가 없습니다")
+    paths = [os.path.abspath(p) for p in paths or []]
+    if not paths:
+        return {"lots": [], "specs": {}}
+    where = folder or os.path.dirname(paths[0])
+    prompt = YIELD_PROMPT % {"files": "\n".join(paths),
+                             "rules": ("이 기록서의 읽기 규칙:\n%s\n" % rules) if rules else ""}
+    got = _json_object(_ask(_exe(), prompt, where, None, paths))
+    out = _yield_clean(got)
+    say("    [7] 수율 쪽 %d장 — Claude Code 로 읽음: %d Lot"
+        % (len(paths), len(out["lots"])))
+    return out
+
+
+def _yield_clean(got):
+    """판독 결과를 손질한다 — 숫자로 바뀌지 않는 값은 버리고 unsure 로 남긴다."""
+    lots = []
+    for one in (got or {}).get("lots") or []:
+        if not isinstance(one, dict):
+            continue
+        lot = str(one.get("lot") or "").strip().upper()
+        if not lot:
+            continue
+        values, unsure = {}, [str(u).strip() for u in (one.get("unsure") or []) if str(u).strip()]
+        for name, value in (one.get("values") or {}).items():
+            name = " ".join(str(name or "").split())
+            num = _yield_number(value)
+            if name and num is not None:
+                values[name] = num
+            elif name:
+                unsure.append(name)
+        prod = {}
+        for name, value in (one.get("production") or {}).items():
+            num = _yield_number(value)
+            if num is not None:
+                prod[" ".join(str(name or "").split())] = num
+        pages = {}
+        for name, value in (one.get("page") or {}).items():
+            try:
+                pages[" ".join(str(name or "").split())] = int(value)
+            except (TypeError, ValueError):
+                continue
+        lots.append({"lot": lot, "values": values, "production": prod,
+                     "page": pages, "unsure": sorted(set(unsure))})
+    specs = {}
+    for name, value in ((got or {}).get("specs") or {}).items():
+        name = " ".join(str(name or "").split())
+        text = " ".join(str(value or "").split())
+        if name and text:
+            specs[name] = text
+    return {"lots": lots, "specs": specs}
+
+
+def _yield_number(value):
+    try:
+        num = float(str(value).replace("%", "").replace(",", "").strip())
+    except (TypeError, ValueError):
+        return None
+    return num if 0 < num <= 120 else None      # 수율은 0 초과 120 이하 — 그 밖은 잘못 읽은 값
+
+
 COA_PROMPT = """다음 시험성적서(스캔 PDF)를 읽고 JSON 만 출력하세요.
 
 읽을 파일:

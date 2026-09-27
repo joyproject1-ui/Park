@@ -372,6 +372,80 @@ COA_SCHEMA = {
 }
 
 
+YIELD_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "lots": {"type": "array", "items": {
+            "type": "object",
+            "properties": {
+                "lot": {"type": "string"},
+                "values": {"type": "object", "additionalProperties": {"type": "string"}},
+                "production": {"type": "object", "additionalProperties": {"type": "string"}},
+                "unsure": {"type": "array", "items": {"type": "string"}},
+            },
+            "required": ["lot", "values"], "additionalProperties": False}},
+        "specs": {"type": "object", "additionalProperties": {"type": "string"}},
+    },
+    "required": ["lots"], "additionalProperties": False,
+}
+
+YIELD_PROMPT = (
+    "이 그림은 제조기록서(또는 정산기록서)에서 수율이 적힌 쪽입니다. 제조번호별 공정 수율을 읽으세요.\n"
+    "· 보이는 대로만 적고 흐리면 그 공정 이름을 unsure 에 넣으세요 — 지어내지 마세요.\n"
+    "· 공정 이름은 기록서에 적힌 그대로(조제·충전·포장·타정·칭량·선별 …), 숫자는 % 를 떼고 적습니다.\n"
+    "· 수율 행이 '공정수율'과 '생산수율'로 나뉘면 공정수율을 values 에, 생산수율을 production 에 적습니다.\n"
+    "· specs 는 그 공정의 수율 기준(허용범위)입니다. 없으면 비웁니다."
+)
+
+
+def _yield_page(client, png_b64, rules=""):
+    text = YIELD_PROMPT + (("\n이 기록서의 읽기 규칙:\n" + rules) if rules else "")
+    body = dict(model=MODEL, max_tokens=8000,
+                output_config={"format": {"type": "json_schema", "schema": YIELD_SCHEMA}},
+                messages=[{"role": "user", "content": [
+                    {"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": png_b64}},
+                    {"type": "text", "text": text},
+                ]}])
+    try:
+        response = client.beta.messages.create(betas=["server-side-fallback-2026-07-01"],
+                                               fallbacks="default", **body)
+    except TypeError:
+        response = client.messages.create(**body)
+    if getattr(response, "stop_reason", "") == "refusal":
+        raise RuntimeError("판독 거부")
+    return json.loads(next(b.text for b in response.content if b.type == "text"))
+
+
+def read_yield(path, pages, rules="", log=None):
+    """수율이 적힌 쪽만 Claude(API 키)로 읽는다 → {"lots": [...], "specs": {...}}
+
+    pages 는 물리 쪽 번호 목록이다 — 서식 프로필이 정해 준다.
+    """
+    say = log or (lambda *a: None)
+    from .claude_cli import _yield_clean
+    client = _client()
+    lots, specs = {}, {}
+    for page_no in pages or []:
+        try:
+            got = _yield_page(client, _png(path, page_no), rules)
+        except Exception as error:
+            say("    [7] %s %d쪽 — 읽지 못했습니다: %s" % (os.path.basename(path), page_no, error))
+            continue
+        clean = _yield_clean(got)
+        specs.update(clean["specs"])
+        for one in clean["lots"]:
+            keep = lots.setdefault(one["lot"], {"lot": one["lot"], "values": {},
+                                                "production": {}, "page": {}, "unsure": []})
+            for name, value in one["values"].items():
+                keep["values"].setdefault(name, value)
+                keep["page"].setdefault(name, page_no)
+            keep["production"].update(one["production"])
+            keep["unsure"] = sorted(set(keep["unsure"]) | set(one["unsure"]))
+        say("    [7] %s %d쪽 — Claude(API 키)로 읽음: %d Lot"
+            % (os.path.basename(path), page_no, len(clean["lots"])))
+    return {"lots": list(lots.values()), "specs": specs}
+
+
 def _coa_page(client, png_b64):
     body = dict(model=MODEL, max_tokens=8000,
                 output_config={"format": {"type": "json_schema", "schema": COA_SCHEMA}},
