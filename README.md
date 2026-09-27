@@ -105,18 +105,35 @@ python -m gmpai letters --since 30 --no-state # 최근 30일, 발송 이력 무�
 | `GMPAI_MAIL_FROM` | 생략하면 `GMPAI_SMTP_USER` |
 | `GMPAI_SMTP_STARTTLS` | `0` 이면 465 SSL 로 접속 |
 
-### 자동 실행
+### 자동 실행 — 담당자 PC 작업 스케줄러 (기본)
 
-`.github/workflows/fda-warning-letters.yml` 이 **매주 수요일 09:00 KST**(수 00:00 UTC)에 돌립니다.
-FDA가 경고장 목록을 통상 **화요일(미 동부시간)** 에 갱신하기 때문입니다.
+식약처 행정처분 메일(`MFDS_Daily_Disposition_Mail`)이 도는 그 PC에 나란히 등록합니다.
+같은 계정, 같은 스케줄러에서 나가므로 발송처가 하나로 모입니다.
 
-저장소 Settings → Secrets and variables → Actions 에 `GMPAI_SMTP_USER`,
-`GMPAI_SMTP_PASSWORD`, `GMPAI_MAIL_TO` 를 등록하면 동작합니다. Actions 탭에서
-**Run workflow** 로 수동 실행할 수 있고, `dry_run = true` 로 두면 메일을 보내지 않고
-로그로만 결과를 확인합니다.
+```powershell
+# 1) 저장소를 받아 둔 폴더에서
+cd scripts\windows
+# 2) 설정 파일 만들기 — 앱 비밀번호와 수신자 세 줄만 채우면 됩니다
+Copy-Item fda-mail.config.example.ps1 fda-mail.config.ps1
+notepad fda-mail.config.ps1
+# 3) 메일 없이 시험
+.\run_fda_letters.ps1 -DryRun
+# 4) 매주 수요일 09:00 작업 등록
+.\install_task.ps1
+```
 
-발송 이력은 `state/warning-letters-state.json` 에 남아 저장소에 커밋됩니다.
-같은 경고장을 다음 주에 다시 보내지 않기 위한 것이며, 무엇을 언제 알렸는지에 대한 기록도 됩니다.
+`fda-mail.config.ps1` 은 `.gitignore` 에 있어 저장소에 올라가지 않습니다.
+실행 기록은 `logs\` 에 날짜별로 남고 30일 뒤 지워집니다. 발송 이력은 `downloads\warning-letters-state.json`.
+PC가 꺼져 있어 놓친 회차는 켜진 뒤 바로 실행됩니다(`StartWhenAvailable`).
+
+### 자동 실행 — GitHub Actions (예비)
+
+`.github/workflows/fda-warning-letters.yml` 은 같은 일을 GitHub 서버에서 합니다.
+PC 스케줄러와 겹치지 않도록 **자동 실행은 꺼 두었고** Actions 탭의 **Run workflow** 로만 돕니다.
+PC 대신 여기서 돌리려면 워크플로 파일의 `schedule:` 주석을 풀고, 저장소
+Settings → Secrets and variables → Actions 에 `GMPAI_SMTP_USER`, `GMPAI_SMTP_PASSWORD`,
+`GMPAI_MAIL_TO` 를 등록합니다. `dry_run = true` 로 실행하면 메일 없이 로그만 확인합니다.
+이 경로의 발송 이력은 `state/warning-letters-state.json` 에 커밋됩니다.
 
 ### Apps Script 판
 

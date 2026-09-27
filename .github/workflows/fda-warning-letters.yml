@@ -1,10 +1,11 @@
 name: FDA warning letters
 
-# FDA는 경고장 목록을 주 1회, 통상 화요일(미 동부시간)에 갱신합니다.
-# 수요일 00:00 UTC = 수요일 09:00 KST 에 돌려 그 주 게시분을 받습니다.
+# 정기 발송은 담당자 PC 의 작업 스케줄러(scripts/windows/)가 맡습니다.
+# 여기서는 수동 실행(Run workflow)만 남겨 두어 시험·비상용으로 씁니다.
+# PC 대신 여기서 자동 발송하려면 아래 두 줄의 주석을 풀면 됩니다 (수 00:00 UTC = 수 09:00 KST).
 on:
-  schedule:
-    - cron: "0 0 * * 3"
+  # schedule:
+  #   - cron: "0 0 * * 3"
   workflow_dispatch:
     inputs:
       since:

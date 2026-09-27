@@ -9,3 +9,7 @@ __pycache__/
 venv/
 *.egg-info/
 .pytest_cache/
+
+# 로컬 메일 설정과 실행 기록 — 비밀번호가 들어 있으므로 절대 커밋하지 않음
+scripts/windows/fda-mail.config.ps1
+logs/
