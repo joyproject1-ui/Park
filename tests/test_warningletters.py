@@ -18,6 +18,7 @@ from gmpai.warningletters import (
     load_state,
     new_letters,
     only_relevant,
+    parse_csv,
     parse_date,
     parse_datatables,
     parse_landing_html,
@@ -145,6 +146,24 @@ class ParseTests(unittest.TestCase):
         self.assertEqual(letter.posted_date, "2026-09-17")
         self.assertIn("Division of Pharmaceutical Quality", letter.office)
         self.assertEqual(letter.url, "https://www.fda.gov/inspections/warning-letters/acme-260910")
+
+    def test_csv_export_uses_header_labels(self):
+        text = (
+            "\ufeffPosted Date,Letter Issue Date,Company Name,Issuing Office,Subject,Link\n"
+            "09/17/2026,09/10/2026,Acme Ophthalmics,Division of Pharmaceutical Quality Operations II,"
+            "CGMP/Adulterated,https://www.fda.gov/inspections/warning-letters/acme-260910\n"
+        )
+        letters = parse_csv(text)
+        self.assertEqual(len(letters), 1)
+        self.assertEqual(letters[0].company, "Acme Ophthalmics")
+        self.assertEqual(letters[0].posted_date, "2026-09-17")
+        self.assertEqual(letters[0].letter_date, "2026-09-10")
+        self.assertEqual(letters[0].url, "https://www.fda.gov/inspections/warning-letters/acme-260910")
+        self.assertEqual(letters[0].source, "csv")
+
+    def test_csv_without_header_is_rejected(self):
+        with self.assertRaises(WarningLetterError):
+            parse_csv("")
 
     def test_datatables_rejects_non_json(self):
         with self.assertRaises(WarningLetterError):

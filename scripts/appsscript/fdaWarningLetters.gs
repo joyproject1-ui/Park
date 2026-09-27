@@ -24,8 +24,8 @@ var DEFAULTS = {
 var LANDING_PAGE =
   'https://www.fda.gov/inspections-compliance-enforcement-and-criminal-investigations' +
   '/compliance-actions-and-activities/warning-letters';
-var RSS_URL =
-  'https://www.fda.gov/about-fda/contact-fda/stay-informed/rss-feeds/warning-letters/rss.xml';
+// 경고장 목록 표의 공식 내보내기 주소 (표 위 'Export' 버튼과 같음). 경고장 전용 RSS 는 없습니다.
+var EXPORT_JSON_URL = LANDING_PAGE + '/datatables-data?_format=json';
 var DATATABLES_URL =
   'https://www.fda.gov/datatables/views/data.json' +
   '?total_count_needed=true&view_display_id=warning_letter_solr_block' +
@@ -136,10 +136,10 @@ function fetchText_(url) {
   return response.getContentText();
 }
 
-/** RSS → 목록 JSON 순으로 시도해 먼저 성공한 결과를 씁니다. */
+/** 공식 내보내기 JSON → 내부 목록 JSON 순으로 시도해 먼저 성공한 결과를 씁니다. */
 function collect_() {
   var sources = [
-    { name: 'rss', url: RSS_URL, parse: parseRss_ },
+    { name: 'export-json', url: EXPORT_JSON_URL, parse: parseDatatables_ },
     { name: 'datatables', url: DATATABLES_URL, parse: parseDatatables_ }
   ];
   var problems = [];

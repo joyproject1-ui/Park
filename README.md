@@ -144,6 +144,17 @@ MailApp 이 계정 권한으로 보내므로 **앱 비밀번호가 필요 없습
 
 > Actions 판과 Apps Script 판은 같은 일을 합니다. **둘 다 켜면 메일이 두 번 옵니다 — 하나만 쓰세요.**
 
+### 먼저 알아둘 것 — FDA 사이트가 프로그램 요청을 거부할 수 있음
+
+담당자 PC(2026-09-27)에서 확인한 결과, fda.gov 는 브라우저에는 정상 응답하지만 파이썬 등
+일반 HTTP 클라이언트에는 CDN(Akamai) 단에서 `404 Not found` 를 돌려주었습니다. 사이트 첫 페이지부터
+그렇습니다. 이 도구는 그 판정을 우회하려 하지 않습니다.
+
+그래서 **기본은 FDA 의 공식 이메일 구독**입니다. FDA 는 GovDelivery 로 "Weekly FDA Warning Letters"
+를 매주 보내 줍니다 (무료, https://public.govdelivery.com/accounts/USFDA/subscriber/new 에서
+Warning Letters 항목 선택). 이 도구는 프로그램 접근이 허용되는 환경(예: GitHub Actions)에서
+**선별·요약본**을 추가로 만들 때 쓰는 보조 수단입니다.
+
 > 자동 분류는 키워드 판정입니다. 제형이나 지적의 경중을 단정하지 않으므로
 > 메일에 실린 원문 링크로 반드시 확인하세요.
 

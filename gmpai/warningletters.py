@@ -26,8 +26,12 @@ LANDING_PAGE = (
     "/compliance-actions-and-activities/warning-letters"
 )
 
-RSS_URL = "https://www.fda.gov/about-fda/contact-fda/stay-informed/rss-feeds/warning-letters/rss.xml"
+# 경고장 목록 표의 공식 내보내기 주소. 표 위 'Export' 버튼이 쓰는 것과 같습니다.
+# (FDA 는 경고장 전용 RSS 를 제공하지 않습니다 — 2026-09 확인.)
+EXPORT_JSON_URL = LANDING_PAGE + "/datatables-data?_format=json"
+EXPORT_CSV_URL = LANDING_PAGE + "/datatables-data?_format=csv"
 
+# 목록 페이지가 표를 채울 때 부르는 내부 주소. 형식이 바뀔 수 있어 2순위로 둡니다.
 DATATABLES_URL = (
     "https://www.fda.gov/datatables/views/data.json"
     "?total_count_needed=true&view_display_id=warning_letter_solr_block"
@@ -208,13 +212,30 @@ def parse_datatables(json_text: str) -> list[WarningLetter]:
     rows = payload.get("data") if isinstance(payload, dict) else payload
     if not isinstance(rows, list):
         raise WarningLetterError("JSON에 data 배열이 없습니다")
+    return _rows_to_letters(rows, "datatables")
 
+
+def parse_csv(text: str) -> list[WarningLetter]:
+    """공식 내보내기의 CSV 형식. 열 이름은 JSON 과 같은 규칙으로 찾습니다."""
+    import csv
+    import io
+
+    reader = csv.DictReader(io.StringIO(text.lstrip("\ufeff")))
+    if not reader.fieldnames:
+        raise WarningLetterError("CSV 머리글이 없습니다")
+    return _rows_to_letters(list(reader), "csv")
+
+
+def _rows_to_letters(rows: "Iterable[dict]", source: str) -> list[WarningLetter]:
     letters: list[WarningLetter] = []
     for row in rows:
         if not isinstance(row, dict):
             continue
         raw_company = _find_raw(row, "company", "legal_name", "title")
         url = _extract_href(raw_company) or _extract_href(_find_raw(row, "link", "url"))
+        if not url:
+            plain = _find_raw(row, "link", "url", "href")
+            url = plain.strip() if plain.strip().startswith("http") else ""
         company = _pick(row, "company", "legal_name", "title")
         if not company:
             continue
@@ -226,7 +247,7 @@ def parse_datatables(json_text: str) -> list[WarningLetter]:
                 posted_date=parse_date(_pick(row, "change_date", "posted", "update")),
                 office=_pick(row, "issuing_office", "office"),
                 subject=_pick(row, "subject"),
-                source="datatables",
+                source=source,
             )
         )
     return letters
@@ -273,12 +294,14 @@ class Source:
 
 
 def default_sources(
-    rss_url: str = RSS_URL,
+    export_json_url: str = EXPORT_JSON_URL,
+    export_csv_url: str = EXPORT_CSV_URL,
     datatables_url: str = DATATABLES_URL,
     landing_page: str = LANDING_PAGE,
 ) -> list[Source]:
     return [
-        Source("rss", rss_url, parse_rss),
+        Source("export-json", export_json_url, parse_datatables),
+        Source("export-csv", export_csv_url, parse_csv),
         Source("datatables", datatables_url, parse_datatables),
         Source("html", landing_page, parse_landing_html),
     ]
