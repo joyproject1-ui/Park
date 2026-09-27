@@ -1,0 +1,83 @@
+name: FDA warning letters
+
+# FDA는 경고장 목록을 주 1회, 통상 화요일(미 동부시간)에 갱신합니다.
+# 수요일 00:00 UTC = 수요일 09:00 KST 에 돌려 그 주 게시분을 받습니다.
+on:
+  schedule:
+    - cron: "0 0 * * 3"
+  workflow_dispatch:
+    inputs:
+      since:
+        description: "최근 며칠 이내 건을 볼지"
+        required: false
+        default: "7"
+      sterile_only:
+        description: "무균·주사제·점안제 관련 건만 (true/false)"
+        required: false
+        default: "false"
+      dry_run:
+        description: "메일을 보내지 않고 로그로만 확인 (true/false)"
+        required: false
+        default: "false"
+
+concurrency:
+  group: fda-warning-letters
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  collect-and-mail:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Collect and send
+        env:
+          GMPAI_SMTP_HOST: ${{ secrets.GMPAI_SMTP_HOST || 'smtp.gmail.com' }}
+          GMPAI_SMTP_PORT: ${{ secrets.GMPAI_SMTP_PORT || '587' }}
+          GMPAI_SMTP_USER: ${{ secrets.GMPAI_SMTP_USER }}
+          GMPAI_SMTP_PASSWORD: ${{ secrets.GMPAI_SMTP_PASSWORD }}
+          GMPAI_MAIL_TO: ${{ secrets.GMPAI_MAIL_TO }}
+        run: |
+          set -o pipefail
+          ARGS="--since ${{ github.event.inputs.since || '7' }} --state state/warning-letters-state.json"
+          if [ "${{ github.event.inputs.sterile_only }}" = "true" ]; then
+            ARGS="$ARGS --sterile-only"
+          fi
+          if [ "${{ github.event.inputs.dry_run }}" = "true" ]; then
+            echo "::notice::dry-run — 메일을 보내지 않습니다"
+          else
+            ARGS="$ARGS --mail"
+          fi
+          mkdir -p state
+          python -m gmpai letters $ARGS --json state/last-run.json | tee run.log
+
+      - name: Summarise
+        if: always()
+        run: |
+          {
+            echo "### FDA Warning Letter 수집 결과"
+            echo '```'
+            tail -n 60 run.log 2>/dev/null || echo "(로그 없음)"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Record what was notified
+        if: success() && github.event.inputs.dry_run != 'true'
+        run: |
+          # 발송 이력을 저장소에 남겨 다음 주에 같은 건을 다시 보내지 않도록 합니다.
+          if git diff --quiet -- state/; then
+            echo "상태 변화 없음 — 커밋하지 않습니다."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add state/
+          git commit -m "chore: record notified FDA warning letters [skip ci]"
+          git push

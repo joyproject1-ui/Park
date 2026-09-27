@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import argparse
+import json
 import sys
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from .catalog import Catalog, CatalogError, load_catalog
@@ -19,6 +21,20 @@ from .downloader import (
 )
 from .fetcher import DEFAULT_RETRIES, DEFAULT_TIMEOUT, FetchError, fetch
 from .index import write_indexes
+from .mailer import MailConfig, MailError, build_message, render_text, send
+from .warningletters import (
+    STATE_NAME,
+    WarningLetterError,
+    collect,
+    enrich,
+    load_state,
+    new_letters,
+    only_relevant,
+    save_state,
+    sort_letters,
+    to_dicts,
+    within_days,
+)
 
 DEFAULT_OUT_DIR = "downloads"
 
@@ -69,6 +85,22 @@ def build_parser() -> argparse.ArgumentParser:
     _add_selection_args(p_index)
     p_index.add_argument("--markdown", default="INDEX.md", help="Markdown 목록 경로")
     p_index.add_argument("--html", default="docs/index.html", help="HTML 목록 경로")
+
+    p_letters = sub.add_parser("letters", help="FDA Warning Letter 신규 건 수집 후 메일 발송")
+    _add_network_args(p_letters)
+    p_letters.add_argument("--since", type=int, default=7, help="최근 며칠 이내 건만 (기본 7)")
+    p_letters.add_argument("--sterile-only", action="store_true", help="무균·주사제·점안제 관련 건만")
+    p_letters.add_argument("--all", dest="no_filter", action="store_true", help="키워드 선별 없이 전체")
+    p_letters.add_argument("--no-detail", action="store_true", help="본문을 열지 않음 (빠르지만 조항·키워드 없음)")
+    p_letters.add_argument("--state", help=f"중복 발송 방지 상태 파일 (기본 <out>/{STATE_NAME})")
+    p_letters.add_argument("-o", "--out", default=DEFAULT_OUT_DIR, help=f"상태 파일 디렉터리 (기본 {DEFAULT_OUT_DIR})")
+    p_letters.add_argument("--mail", action="store_true", help="메일 발송 (미지정 시 화면 출력만)")
+    p_letters.add_argument("--json", dest="json_path", help="결과를 JSON으로도 저장")
+    p_letters.add_argument(
+        "--no-state",
+        action="store_true",
+        help="상태 파일을 읽지도 쓰지도 않음 (이미 보낸 건도 다시 포함)",
+    )
 
     p_status = sub.add_parser("status", help="이미 내려받은 파일 상태 확인")
     p_status.add_argument("-o", "--out", default=DEFAULT_OUT_DIR, help=f"저장 디렉터리 (기본 {DEFAULT_OUT_DIR})")
@@ -185,6 +217,84 @@ def cmd_index(catalog: Catalog, args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_letters(catalog: Catalog, args: argparse.Namespace) -> int:
+    """FDA 경고장 목록 → 기간·키워드 선별 → 신규 건만 메일."""
+    del catalog  # 이 명령은 규정 카탈로그를 쓰지 않습니다.
+
+    def report_source(name: str, outcome: str, count: int) -> None:
+        suffix = f" ({count}건)" if count else ""
+        print(f"[{outcome}] 소스 {name}{suffix}")
+
+    try:
+        letters = collect(timeout=args.timeout, retries=args.retries, on_source=report_source)
+    except WarningLetterError as exc:
+        print(f"수집 실패: {exc}", file=sys.stderr)
+        print("FDA 사이트 접근이 막혀 있거나 목록 형식이 바뀐 경우입니다.", file=sys.stderr)
+        return 1
+
+    source = letters[0].source if letters else ""
+    since_date = (datetime.now(timezone.utc) - timedelta(days=args.since)).strftime("%Y-%m-%d")
+    letters = within_days(letters, args.since)
+    print(f"최근 {args.since}일({since_date} 이후) 해당: {len(letters)}건")
+    if not letters:
+        print("신규 경고장이 없습니다.")
+        return 0
+
+    if not args.no_detail:
+        print(f"본문 확인 중... ({len(letters)}건)")
+        letters = enrich(
+            letters,
+            timeout=args.timeout,
+            retries=1,
+            on_error=lambda l, e: print(f"      [본문 실패] {l.company}: {e}", file=sys.stderr),
+        )
+    else:
+        from .warningletters import classify
+
+        letters = [classify(l, f"{l.company} {l.subject}") for l in letters]
+
+    if not args.no_filter:
+        letters = only_relevant(letters, sterile_only=args.sterile_only)
+        print(f"관련 건 선별 후: {len(letters)}건")
+
+    state_path = Path(args.state) if args.state else Path(args.out) / STATE_NAME
+    state = {"seen": {}} if args.no_state else load_state(state_path)
+    fresh = sort_letters(letters if args.no_state else new_letters(letters, state))
+    already = len(letters) - len(fresh)
+    if already:
+        print(f"이미 발송한 건 제외: {already}건")
+
+    if not fresh:
+        print("새로 알릴 경고장이 없습니다.")
+        return 0
+
+    sterile = sum(1 for l in fresh if l.is_sterile_related)
+    print(f"\n신규 {len(fresh)}건 (무균 관련 {sterile}건)\n")
+    print(render_text(fresh, since_date))
+
+    if args.json_path:
+        target = Path(args.json_path)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(json.dumps(to_dicts(fresh), ensure_ascii=False, indent=2), encoding="utf-8")
+        print(f"JSON 저장: {target}")
+
+    if not args.mail:
+        print("(--mail 을 붙이면 메일로 발송합니다)")
+        return 0
+
+    try:
+        config = MailConfig.from_env()
+        send(build_message(fresh, config, since_date, source), config)
+    except MailError as exc:
+        print(f"메일 오류: {exc}", file=sys.stderr)
+        return 1
+    print(f"발송 완료 → {', '.join(config.recipients)}")
+
+    if not args.no_state:
+        print(f"상태 기록: {save_state(state_path, state, fresh)}")
+    return 0
+
+
 def cmd_status(catalog: Catalog, args: argparse.Namespace) -> int:
     out_dir = Path(args.out)
     manifest = load_manifest(out_dir)
@@ -221,6 +331,7 @@ def main(argv: list[str] | None = None) -> int:
         "download": cmd_download,
         "verify": cmd_verify,
         "index": cmd_index,
+        "letters": cmd_letters,
         "status": cmd_status,
     }
     try:

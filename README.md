@@ -38,6 +38,7 @@ python -m gmpai download \
 | `verify` | 등록된 링크가 아직 PDF를 반환하는지 점검 |
 | `index` | `INDEX.md` 와 `docs/index.html` 재생성 |
 | `status` | 이미 받은 파일과 해시 확인 |
+| `letters` | **FDA Warning Letter 신규 건 수집 → 선별 → 메일 발송** |
 
 공통 필터: `--id`(반복 가능) · `--authority` · `--category` · `--status`
 
@@ -67,6 +68,58 @@ python -m gmpai download \
 python -m gmpai download --force        # 분기별 개정 점검 용도
 python -m gmpai verify                  # 링크만 빠르게 점검
 ```
+
+## FDA Warning Letter 메일 (`letters`)
+
+식약처 행정처분 메일과 같은 형식으로 FDA 경고장을 받아보기 위한 명령입니다.
+
+```bash
+python -m gmpai letters                      # 최근 7일 신규 건을 화면에 출력
+python -m gmpai letters --sterile-only        # 무균·주사제·점안제 관련 건만
+python -m gmpai letters --mail                # 메일로 발송
+python -m gmpai letters --since 30 --no-state # 최근 30일, 발송 이력 무시하고 전부
+```
+
+동작 순서:
+
+1. **목록 수집** — RSS → 목록 JSON → 목록 HTML 순으로 시도해 **먼저 성공한 소스**를 씁니다.
+   FDA가 목록 제공 방식을 바꿔도 한 경로가 막히면 다음 경로로 넘어갑니다.
+2. **기간 선별** — `--since` 일 이내. 날짜를 읽지 못한 건은 버리지 않고 남깁니다.
+3. **본문 확인** — 경고장을 한 건씩 열어 키워드와 `21 CFR` 인용 조항을 뽑습니다
+   (`--no-detail` 로 생략 가능).
+4. **관련성 선별** — 무균 키워드(무균조작·점안제·미디어필·환경모니터링·기류시험 등)와
+   CGMP 키워드(데이터 완전성·OOS·세척밸리데이션 등)로 거릅니다. `--all` 이면 선별하지 않습니다.
+5. **중복 제거** — 이미 보낸 건은 상태 파일에 기록해 두고 다음 실행에서 제외합니다.
+6. **발송** — 무균 관련 건을 위로, 그 다음 최신순으로 정렬해 HTML 표로 보냅니다.
+
+### 메일 설정
+
+비밀번호를 저장소에 두지 않기 위해 전부 환경변수로 받습니다.
+
+| 환경변수 | 설명 |
+| --- | --- |
+| `GMPAI_SMTP_USER` | 보내는 계정 |
+| `GMPAI_SMTP_PASSWORD` | Gmail은 2단계 인증 후 발급한 **앱 비밀번호** (계정 비밀번호 아님) |
+| `GMPAI_MAIL_TO` | 수신자, 쉼표로 구분 |
+| `GMPAI_SMTP_HOST` / `GMPAI_SMTP_PORT` | 기본 `smtp.gmail.com` / `587` |
+| `GMPAI_MAIL_FROM` | 생략하면 `GMPAI_SMTP_USER` |
+| `GMPAI_SMTP_STARTTLS` | `0` 이면 465 SSL 로 접속 |
+
+### 자동 실행
+
+`.github/workflows/fda-warning-letters.yml` 이 **매주 수요일 09:00 KST**(수 00:00 UTC)에 돌립니다.
+FDA가 경고장 목록을 통상 **화요일(미 동부시간)** 에 갱신하기 때문입니다.
+
+저장소 Settings → Secrets and variables → Actions 에 `GMPAI_SMTP_USER`,
+`GMPAI_SMTP_PASSWORD`, `GMPAI_MAIL_TO` 를 등록하면 동작합니다. Actions 탭에서
+**Run workflow** 로 수동 실행할 수 있고, `dry_run = true` 로 두면 메일을 보내지 않고
+로그로만 결과를 확인합니다.
+
+발송 이력은 `state/warning-letters-state.json` 에 남아 저장소에 커밋됩니다.
+같은 경고장을 다음 주에 다시 보내지 않기 위한 것이며, 무엇을 언제 알렸는지에 대한 기록도 됩니다.
+
+> 자동 분류는 키워드 판정입니다. 제형이나 지적의 경중을 단정하지 않으므로
+> 메일에 실린 원문 링크로 반드시 확인하세요.
 
 ### 프록시 환경
 
@@ -135,8 +188,9 @@ python -m gmpai download
 python -m unittest discover -s tests -t .
 ```
 
-30건의 테스트가 로컬 모의 서버를 띄워 다운로드·재개정 감지·링크 탐색 폴백·HTML 오응답 차단까지
-네트워크 없이 검증합니다.
+57건의 테스트가 로컬 모의 서버를 띄워 다운로드·재개정 감지·링크 탐색 폴백·HTML 오응답 차단과
+경고장 파싱·소스 폴백·중복 제거·메일 생성까지 네트워크 없이 검증합니다. SMTP도 가짜 서버로 대체하므로
+테스트가 실제로 메일을 보내는 일은 없습니다.
 
 ## 라이선스와 저작권
 
