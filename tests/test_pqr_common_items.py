@@ -19,7 +19,8 @@ class 설정(unittest.TestCase):
     def test_6항_이름은_제조내역_ERP(self):
         items = {row[0]: row for row in build.load_config()["items"]}
         self.assertEqual(items["6"][1], "제조내역")
-        self.assertEqual(items["6"][2], "ERP")
+        # 담당자 2026-09-28: "6항 제조내역에 제조 및 포장 공기록서도 추가해줘" — 출처 표시에 공 기록서를 적는다
+        self.assertEqual(items["6"][2], "ERP · 제조·포장 공 기록서")
 
     def test_공통_항목_일곱_가지(self):
         config = build.load_config()

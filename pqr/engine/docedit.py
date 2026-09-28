@@ -52,11 +52,31 @@ def cell_paras(tc):
     return tc.findall(qn("w:p"))
 
 
+NUMBERED_HEAD = re.compile(r"^\s*1\)\s")
+NUMBERED_NEXT = re.compile(r"\s+(?=(?:[2-9]|1\d)\)\s)")
+
+
+def numbered_lines(text):
+    """'1) 육안으로 … 2) 이물이 …' 처럼 번호가 이어진 글은 **번호마다 한 줄**.
+
+    담당자 2026-09-28 나조린 1회용 9.2 이물검사: "앞으로는 항목마다 이렇게 한칸 내려서 적어줘".
+    '1) ' 로 시작하고 '2) ' 가 뒤따를 때만 나눈다 — 각주 표시 '1)' 하나뿐인 글은 그대로.
+    """
+    text = "" if text is None else str(text)
+    if "\n" in text or not NUMBERED_HEAD.match(text) or not NUMBERED_NEXT.search(text):
+        return [text]
+    return [part.strip() for part in NUMBERED_NEXT.split(text) if part.strip()]
+
+
 def set_cell(cell, *lines):
-    """셀 글자를 줄 단위로 바꾼다. 문단 수가 모자라면 첫 문단을 복제한다."""
+    """셀 글자를 줄 단위로 바꾼다. 문단 수가 모자라면 첫 문단을 복제한다.
+
+    한 줄로 준 글이 '1) … 2) …' 꼴이면 번호마다 한 줄로 나눈다(numbered_lines)."""
     tc = cell._tc
     paras = cell_paras(tc)
     lines = list(lines) or [""]
+    if len(lines) == 1:
+        lines = numbered_lines(lines[0])
     while len(paras) < len(lines):
         new = copy.deepcopy(paras[0])
         paras[-1].addnext(new)
@@ -209,6 +229,16 @@ def shade_cell(cell, fill="FFFF00"):
     return True
 
 
+SUMMARY_LABELS = ("최댓값", "최솟값", "최대값", "최소값", "평균", "공정능력지수", "cpk")
+
+
+def _summary_row(first):
+    """최댓값·최솟값·평균·Cpk 줄인가 — 수치가 아닌 열(성상·이물검사 …)은 셈하지 않으므로 사선이 맞고 노랑이 아니다
+    (담당자 2026-09-28: "수치가 아닌 것은 최댓값 최소값 등을 구할 필요가 없으니까 사선이 맞고, 별도의 노랑마크 표시는 필요없어")."""
+    key = re.sub(r"[\s\u00a0().]", "", first or "").lower()
+    return bool(key) and any(key.startswith(w) for w in SUMMARY_LABELS)
+
+
 def flag_empty_diag_cells(document, labels=MUST_FILL, color="FFFF00"):
     """값이 반드시 있어야 하는 칸에 그어진 사선을 노랑으로 짚는다 → 짚은 칸 이름 목록.
 
@@ -231,16 +261,22 @@ def flag_empty_diag_cells(document, labels=MUST_FILL, color="FFFF00"):
         rows = table.rows
         if not rows:
             continue
-        heads = [cell_text(c) for c in raw_cells(rows[0])]
+        # 열은 **그리드 열 번호**로 맞춘다 — 요약 행(최댓값·최솟값·평균·Cpk)은 첫 칸이 연번·Lot No. 두 열을
+        # 덮어, 자리로 세면 '성상' 칸이 'Lot No.' 열로 보여 노랑이 찍혔다(담당자 2026-09-28 나조린 1회용 9.2.1:
+        # "노랑마크가 표시되어 있는데 판독대장에 관련 내용이 없네"). 성상 같은 글 열의 요약 칸 사선은 맞는 사선이다.
+        width = grid_width(table)
+        heads = {gi: cell_text(c) for gi, c in grid_cells(rows[0], width).items()}
         for ri, row in enumerate(rows[1:], start=1):
-            cells = raw_cells(row)
-            first = cell_text(cells[0]) if cells else ""
-            for ci, cell in enumerate(cells):
+            cells = grid_cells(row, width)
+            first = cell_text(cells[0]) if cells.get(0) is not None else ""
+            if _summary_row(first):
+                continue          # 요약 행의 사선은 '수치가 아니라 셈하지 않음' — 맞는 사선이다(담당자 2026-09-28)
+            for gi, cell in cells.items():
                 if (cell_text(cell) or "").strip():
                     continue
                 if not has_diag(cell):
                     continue
-                head = heads[ci] if ci < len(heads) else ""
+                head = heads.get(gi, "")
                 name = head if _watched(head) else (first if _watched(first) else "")
                 if not name:
                     continue

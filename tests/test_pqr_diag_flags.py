@@ -81,6 +81,34 @@ class 해당_없을_수_없는_칸의_사선(unittest.TestCase):
         E.add_diag(E.raw_cells(table.rows[1])[1])
         self.assertEqual(E.flag_empty_diag_cells(document), [])
 
+    def test_요약_행의_병합_칸_때문에_열이_밀리지_않는다(self):
+        """9.2.1 요약 행(최댓값·최솟값·평균)은 첫 칸이 연번·Lot No. 두 열을 덮는다 — 자리로 세면 '성상' 요약 칸이
+        'Lot No.' 열로 보여 노랑이 찍혔다(담당자 2026-09-28 나조린 1회용). 글 열의 요약 칸 사선은 맞는 사선이다."""
+        document = docx.Document()
+        table = 표(document, [["연번", "Lot No.", "성상", "pH"],
+                              ["1", "LKY201", "무색 투명한 액", "6.44"],
+                              ["최댓값", "", "", "6.47"]])
+        row = table.rows[2]
+        E.raw_cells(row)[0].merge(E.raw_cells(row)[1])         # '최댓값' 이 두 열을 덮는다
+        E.add_diag(E.raw_cells(row)[1])                        # 성상 요약 칸 — 글이라 셈할 수 없어 사선
+        self.assertEqual(E.flag_empty_diag_cells(document), [])
+        # 자료 줄의 Lot No. 가 비어 사선이면 그것은 짚는다
+        E.add_diag(E.raw_cells(table.rows[1])[1])
+        E.set_cell(E.raw_cells(table.rows[1])[1], "")
+        self.assertEqual(E.flag_empty_diag_cells(document), [("Lot No.", 1)])
+
+    def test_요약_행은_어느_열이든_짚지_않는다(self):
+        """담당자 2026-09-28: "수치가 아닌 것은 최댓값 최소값 등을 구할 필요가 없으니까 사선이 맞고, 별도의 노랑마크 표시는 필요없어"."""
+        document = docx.Document()
+        table = 표(document, [["연번", "Lot No.", "기밀도", "이물검사"],
+                              ["1", "LKYD03", "메틸렌블루시액의 침투 없음", "1) 육안으로 관찰할 때 맑으며 2) 이물이 적음"],
+                              ["최댓값", "", "", ""], ["최솟값", "", "", ""], ["평균", "", "", ""],
+                              ["공정능력지수 (Cpk)", "", "", ""], ["Cpk 판정 결과", "", "", ""]])
+        for r in range(2, 7):
+            for c in (1, 2, 3):
+                E.add_diag(E.raw_cells(table.rows[r])[c])
+        self.assertEqual(E.flag_empty_diag_cells(document), [])
+
     def test_줄_이름으로도_알아본다(self):
         """세로로 선 표(왼쪽 칸이 항목 이름)도 같은 규칙."""
         document = docx.Document()

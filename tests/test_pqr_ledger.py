@@ -60,6 +60,22 @@ class 대장(unittest.TestCase):
             text = h.read()
         self.assertIn("★ [7] 7. 수율현황표.xlsx — 안 읽음", text)
         self.assertIn("요약:", text)
+        self.assertNotIn("노랑으로 둔 칸", text)
+
+    def test_노랑으로_둔_칸의_까닭도_대장_끝에(self):
+        """담당자 2026-09-28: "9.2.1에 노랑마크가 표시되어 있는데 메모장 PQR 자료 판독대장에 관련 내용이 없네"."""
+        data = C.ProductData()
+        data.ledger = [("7", "7. 수율현황표.xlsx", "읽음", "수율 Lot 3개")]
+        data.issues = [("6", "제조단위", "올해 공 기록서가 없어 전년도 결재본 값(300 L)을 옮겼습니다(노랑) — 확인하세요"),
+                       ("13", "", "시험 기간을 적지 못함")]
+        data.issues_for_ledger = data.issues + [("8.1.1", "RSN101", "공급업체 목록('실시간' 시트 3줄)에서 관리번호 RSN101 을(를) 찾지 못했습니다 — 노랑으로 두었으니 확인")]
+        path = C.write_ledger(self.folder, "QC1-0001", data)
+        with open(path, encoding="utf-8") as h:
+            text = h.read()
+        self.assertIn("노랑으로 둔 칸 — 까닭", text)
+        self.assertIn("[6] 제조단위 — 올해 공 기록서가 없어", text)
+        self.assertIn("[8.1.1] RSN101 — 공급업체 목록('실시간' 시트 3줄)", text)
+        self.assertNotIn("시험 기간을 적지 못함", text)               # 노랑과 상관없는 문의는 대장에 넣지 않는다
 
 
 if __name__ == "__main__":

@@ -156,18 +156,27 @@ def read(path):
 
 
 def merge(records):
-    """기록서 셋을 하나로 — 제조단위는 제조기록서, 포장단위는 포장기록서 것을 먼저 쓴다."""
+    """기록서 셋을 하나로 — **제조단위는 제조기록서, 포장단위는 포장기록서** 것을 쓴다.
+
+    담당자 2026-09-28: "6항 표 내용 작성할때 제조 기록서에서는 제조단위를 보고 기재하고, 포장 기록서에서는
+    포장단위를 보고 기록해줘". 그 기록서가 없거나 거기에 그 값이 없을 때만 다른 기록서(충전 → 포장 / 충전 → 조제)
+    의 값으로 물러서고, 어느 파일에서 읽었는지(batch_size_from · pack_unit_from)와 물러섰는지(fallback)를 남긴다.
+    """
     out = {"batch_size": "", "pack_unit": "", "yield_specs": {}, "materials": {"주원료": [], "부원료": [], "포장자재": []},
-           "files": [r["file"] for r in records]}
+           "files": [r["file"] for r in records], "batch_size_from": "", "pack_unit_from": "", "fallback": []}
     order = {"조제": 0, "충전": 1, "포장": 2}
     for r in sorted(records, key=lambda r: order.get(r["kind"], 9)):
         if r["batch_size"] and not out["batch_size"]:
-            out["batch_size"] = r["batch_size"]
+            out["batch_size"], out["batch_size_from"] = r["batch_size"], r["file"]
+            if r["kind"] != "조제":
+                out["fallback"].append("제조단위를 제조기록서가 아니라 %s기록서(%s)에서 읽음" % (r["kind"], r["file"]))
         if r["yield_spec"]:
             out["yield_specs"].setdefault(r["kind"], r["yield_spec"])
     for r in sorted(records, key=lambda r: -order.get(r["kind"], 9)):
         if r["pack_unit"] and not out["pack_unit"]:
-            out["pack_unit"] = r["pack_unit"]
+            out["pack_unit"], out["pack_unit_from"] = r["pack_unit"], r["file"]
+            if r["kind"] != "포장":
+                out["fallback"].append("포장단위를 포장기록서가 아니라 %s기록서(%s)에서 읽음" % (r["kind"], r["file"]))
     seen = set()
     for r in sorted(records, key=lambda r: order.get(r["kind"], 9)):
         for m in r["materials"]:

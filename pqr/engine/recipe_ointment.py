@@ -1570,6 +1570,74 @@ def _check_license(section3, name, folder, issues, log, cells3=None, ledger=None
 PENALTY_LABELS = ("허가 및 시판 후 준수", "시판 후 준수", "행정처분", "행정 처분")
 
 
+def approval_date(rec):
+    """공급업체 목록 한 줄의 **최종 평가 승인일** — 'YYYY.MM.DD', 없으면 빈 글.
+
+    담당자 2026-09-28 나조린점안액(1회용) 8.1.1: 목록에 평가승인일 2024.10.10 이 있는데 RSP107 완료일이
+    공란이었다 → "다음부터는 최종 평가 승인일을 기재해주도록 해줘". 열 이름을 '평가승인일' 한 글자 그대로
+    찾던 것을 '승인일' 이 든 열이면 어느 것이든(빈칸·줄바꿈이 섞여도) 받고, 여럿이면 가장 늦은 날짜를 쓴다.
+    '최초승인일' 은 다른 승인일이 하나도 없을 때만 쓴다.
+    """
+    def norm(v):
+        m = re.findall(r"\d+", str(v or ""))
+        if len(m) < 3 or len(m[0]) != 4:
+            return ""
+        try:
+            return "%s.%02d.%02d" % (m[0], int(m[1]), int(m[2]))
+        except ValueError:
+            return ""
+    best, first = "", ""
+    for key, value in (rec or {}).items():
+        flat = re.sub(r"\s+", "", str(key or ""))
+        if "승인일" not in flat and "평가일" not in flat:
+            continue
+        day = norm(value)
+        if not day:
+            continue
+        if "최초" in flat:
+            first = max(first, day)
+        else:
+            best = max(best, day)
+    return best or first
+
+
+def _company_key(v):
+    return re.sub(r"[^a-z0-9가-힣]", "", str(v or "").lower())
+
+
+def official_company(written, records):
+    """결재본에 적힌 제조원 이름을 공급업체 목록의 **정식 이름**으로 — 'Supriya Lifescience' → 'Supriya Lifescience Ltd'.
+
+    담당자 2026-09-28: "제조원도 Supriya Lifescience Ltd 인데 Supriya Lifescience 로 기재되어 있어 전체적으로
+    확인해서 기재해줘". 목록의 업체명이 적힌 이름으로 **시작**하면(법인 접미어 Ltd·GmbH·Co., Ltd. 가 빠진 것)
+    목록 이름을 돌려주고, 아예 다른 이름이면 적힌 것을 그대로 둔다(자재는 평가문서번호로 찾으므로 목록 이름과
+    결재본 표기가 다를 수 있다 — '린하르트 GmbH (Pausa)'). 여럿이 맞으면 가장 짧은 것.
+    """
+    mine = _company_key(written)
+    if not mine:
+        return written
+    best = ""
+    for rec in records or []:
+        name = re.split(r"\s*/\s*", str((rec or {}).get("공급업체명") or ""))[0].strip()
+        key = _company_key(name)
+        if key and key != mine and key.startswith(mine) and (not best or len(name) < len(best)):
+            best = name
+    return best or written
+
+
+def unlisted_note(code, doc, maker, records):
+    """공급업체 목록에서 관리번호를 찾지 못한 줄의 문의 글 — 어느 시트 몇 줄을 봤고 무엇으로 찾았는지.
+
+    담당자 2026-09-28: "실시간에서 RSN101은 확인되지 않아 그럼 노랑마크로 표시하고 설명해줘".
+    """
+    sheets = sorted({str(r.get("_sheet") or "") for r in records or [] if r.get("_sheet")})
+    where = "'%s' 시트 %d줄" % ("·".join(sheets) or "?", len(records or []))
+    keys = [k for k in ("평가문서번호 '%s'" % doc if doc else "", "제조원 '%s'" % maker if maker else "") if k]
+    return ("공급업체 목록(%s)에서 관리번호 %s 을(를) 찾지 못했습니다(%s로도 없음) — 제조원·평가문서번호·"
+            "완료일을 노랑으로 두었으니 목록에 그 줄이 있는지(박탈·삭제되었는지) 확인해 적으세요"
+            % (where, code, "·".join(keys) or "다른 열쇠"))
+
+
 def _penalty_cell(cells3):
     """3항 6번 '허가 및 시판 후 준수 사항의 이행 여부 검토' 의 내용 칸."""
     for 이름, 칸 in (cells3 or {}).items():
@@ -2038,13 +2106,15 @@ def fill(document, data, product, period, today=None, log=None):
     def _key(v):
         return re.sub(r"[^a-z0-9가-힣]", "", str(v or "").lower())
 
+    both81 = list(data.suppliers_raw or []) + list(data.suppliers_mat or [])
+
     def _supplier(code, docno="", vendor=""):
         """공급업체 목록에서 그 줄 — 원료코드 → 평가문서번호 → 업체명 차례로 짚는다.
 
         자재 목록에는 자재코드 칸이 없어(2026 Rev.26) 코드로는 못 찾는다. 전년도 결재본에서
         이어받은 평가문서번호(VAR-P-Linhardt 등)가 그 줄을 가리키는 열쇠가 된다.
         """
-        both = list(data.suppliers_raw) + list(data.suppliers_mat)
+        both = both81
         code, docno, vendor = (code or "").strip(), _key(docno), _key(vendor)
 
         def _var(v):
@@ -2065,8 +2135,8 @@ def fill(document, data, product, period, today=None, log=None):
                  (vendor in _key(r_.get("공급업체명")) or _key(r_.get("공급업체명")).startswith(vendor))]
         for k, test in enumerate(tests):
             got = [r_ for r_ in both if test(r_)]
-            if len(got) > 1:                      # 여럿이면 가장 최근에 평가한 줄
-                got = [max(got, key=lambda r_: _norm_date(r_.get("평가승인일")))]
+            if len(got) > 1:                      # 여럿이면 가장 최근에 평가한 줄(최종 평가 승인일)
+                got = [max(got, key=approval_date)]
             if got:
                 return got[0], (k == 0)           # 원료코드로 찾았는지
         return None, False
@@ -2083,7 +2153,7 @@ def fill(document, data, product, period, today=None, log=None):
         """'FUAN … CO., LTD / China' → 'FUAN … CO., LTD' (나라 이름은 뗀다)."""
         return re.split(r"\s*/\s*", str(text or ""))[0].strip()
 
-    upd81, grade_odd = 0, []
+    upd81, grade_odd, unlisted81 = 0, [], set()
     # 빈 공양식의 8.1.1·8.1.2(·8.1.3)는 관리번호 줄이 없다 — 전년도 결재본의 줄(관리번호·원/자재명·규격·제조원 …)을
     # 먼저 세우고, 아래에서 올린 공급업체 목록·공급망 마스터로 문서번호·완료일·업체를 갱신한다
     # (담당자 2026-09-06: "주원료명 모르면 작년 PQR 에서 가져오고 해당 항 첨부파일로 최신 정보를 가져오면 돼").
@@ -2158,13 +2228,37 @@ def fill(document, data, product, period, today=None, log=None):
                 take = lambda k: E.cell_text(cells[col[k]]).strip() if col[k] is not None and col[k] < len(cells) else ""
                 got, by_code = _supplier(take("code"), take("doc"), take("maker"))
                 if not got:
+                    if both81 and take("code"):
+                        # 목록에 없는 관리번호 — 조용히 지나치지 않는다. 제조원·평가문서·완료일 칸을 노랑으로
+                        # 두고 어느 시트를 봤는지 적는다 (담당자 2026-09-28: "실시간에서 RSN101은 확인되지
+                        # 않아 그럼 노랑마크로 표시하고 설명해줘").
+                        for k in ("maker", "doc", "day"):
+                            c = col.get(k)
+                            if c is not None and c < len(cells):
+                                if E.cell_text(cells[c]).strip():
+                                    E.highlight_cell(cells[c])
+                                else:
+                                    E.shade_cell(cells[c])
+                        why = unlisted_note(take("code"), take("doc"), take("maker"), both81)
+                        log("  %s %s: %s" % (prefix, take("code"), why))
+                        issues.append((prefix, take("code"), why))
+                    elif not both81 and take("code"):
+                        unlisted81.add(prefix)
                     continue
                 grade = str(got.get("평가등급") or "").strip().upper()
-                if by_code or not take("maker"):
+                목록이름 = _company(got.get("공급업체명"))
+                쓰인이름 = take("maker")
+                if by_code or not 쓰인이름:
                     # 자재는 코드가 아니라 평가문서번호로 찾으므로, 목록의 업체명이 결재본의
                     # 제조원 이름과 다를 수 있다(‘린하르트 GmbH (Pausa) Linhardt GmbH (Pausa)’).
                     # 코드로 정확히 찾았을 때만 덮어쓰고, 아니면 쓰여 있는 이름을 둔다.
-                    upd81 += _put(cells, col["maker"], _company(got.get("공급업체명")))
+                    if 쓰인이름 and _key(쓰인이름) != _key(목록이름):
+                        log("  %s %s: 제조원 '%s' → '%s' (공급업체 목록의 정식 이름)" % (prefix, take("code"), 쓰인이름, 목록이름))
+                    upd81 += _put(cells, col["maker"], 목록이름)
+                elif official_company(쓰인이름, [got]) != 쓰인이름:
+                    # 결재본 이름이 목록 이름의 앞부분뿐이면(Ltd·GmbH 가 빠짐) 목록의 정식 이름으로
+                    log("  %s %s: 제조원 '%s' → '%s' (공급업체 목록의 정식 이름)" % (prefix, take("code"), 쓰인이름, 목록이름))
+                    upd81 += _put(cells, col["maker"], 목록이름)
                 옛문서 = take("doc")
                 새문서 = (got.get("문서번호") or "").strip()
                 쓸문서 = 새문서
@@ -2192,7 +2286,17 @@ def fill(document, data, product, period, today=None, log=None):
                                        "'%s' → '%s' (%s). 어느 쪽이 맞는지 확인하세요"
                                        % (옛문서, 새문서, _company(got.get("공급업체명")))))
                 upd81 += _put(cells, col["doc"], 쓸문서)
-                upd81 += _put(cells, col["day"], _norm_date(got.get("평가승인일")))
+                승인일 = approval_date(got)
+                if 승인일:
+                    upd81 += _put(cells, col["day"], 승인일)
+                elif col["day"] is not None:
+                    # 왜 비었는지 남긴다 — 담당자 2026-09-28: 완료일이 공란인데 까닭을 알 수 없었다
+                    열들 = [k for k in got if "일" in str(k)]
+                    log("  %s %s: 공급업체 목록 줄(%s)에서 승인일을 읽지 못해 완료일을 비워 둠 — 날짜 열: %s"
+                        % (prefix, take("name") or take("code"), got.get("_sheet", "?"), ", ".join(열들) or "없음"))
+                    issues.append((prefix, take("name") or take("code"),
+                                   "완료일을 채우지 못했습니다 — 공급업체 목록 줄에서 승인일 값을 읽지 못함. "
+                                   "목록의 평가승인일 칸을 확인하세요"))
                 if grade in ("A", "B"):
                     upd81 += _put(cells, col["result"], "적합")
                 elif grade:
@@ -2215,17 +2319,41 @@ def fill(document, data, product, period, today=None, log=None):
             cells = E.raw_cells(row)
             if len(cells) <= col["code"]:
                 continue
-            chain = data.api_chain.get(E.cell_text(cells[col["code"]]).strip())
+            code812 = E.cell_text(cells[col["code"]]).strip()
+            chain = data.api_chain.get(code812)
             if not chain:
+                if code812 and data.api_chain:
+                    # 마스터파일에 없는 관리번호 — 제조업체·공급 업체 칸을 노랑으로 두고 설명한다(8.1.1 과 같은 규칙,
+                    # 담당자 2026-09-28: "8.1.2 … 마스터파일도 정확히 내용이 업데이트 안됐어 동일한 원인이야")
+                    for k in ("maker", "supply", "other"):
+                        c = col.get(k)
+                        if c is not None and c < len(cells):
+                            if E.cell_text(cells[c]).strip():
+                                E.highlight_cell(cells[c])
+                            else:
+                                E.shade_cell(cells[c])
+                    sheet = next((v.get("_sheet") for v in data.api_chain.values() if v.get("_sheet")), "?")
+                    why = ("주성분 공급망 마스터파일('%s' 시트, 원료코드 %d개)에서 관리번호 %s 을(를) 찾지 못했습니다 — "
+                           "제조업체·공급 업체 칸을 노랑으로 두었으니 마스터파일에 그 줄이 있는지 확인해 적으세요"
+                           % (sheet, len(data.api_chain), code812))
+                    log("  8.1.2 %s: %s" % (code812, why))
+                    issues.append(("8.1.2", code812, why))
+                elif code812:
+                    unlisted81.add("8.1.2")
                 continue
-            maker = _company(chain.get("manufacturer"))
-            links = [_company(x) for x in (chain.get("chain") or [])]
+            maker = official_company(_company(chain.get("manufacturer")), both81)
+            links = [official_company(_company(x), both81) for x in (chain.get("chain") or [])]
             # '제조소 납품' 은 제조소에서 바로 받는다는 뜻 — 납품 업체 칸에 제조소를 적는다
             # '제조소 납품' 은 제조소에서 바로 받는다는 뜻 — 업체 이름이 아니다
             links = [maker if x.startswith("제조소") else x for x in links]
             upd81 += _put(cells, col["maker"], maker)
             upd81 += _put(cells, col["supply"], links[0] if links else "")
             upd81 += _put(cells, col["other"], ", ".join(links[1:]))
+    for prefix in sorted(unlisted81):
+        what = ("주성분 공급망 마스터파일(8.1.2 엑셀)을 읽지 못해 제조업체·공급 업체를" if prefix == "8.1.2"
+                else "공급업체 목록(8.1.1·8.1.3 엑셀)을 읽지 못해 제조원·평가문서번호·완료일을")
+        log("%s: %s 갱신하지 못함" % (prefix, what))
+        issues.append((prefix, "", "%s 갱신하지 못했습니다 — 공통 폴더의 파일과 작성 기록의 ★ 줄을 확인하세요" % what))
     if grade_odd:
         issues.append(("8.1", ", ".join(sorted(set(grade_odd))),
                        "공급업체 평가등급이 A·B 가 아니어서 평가결과 칸을 비웠습니다 — 확인해 적으세요"))

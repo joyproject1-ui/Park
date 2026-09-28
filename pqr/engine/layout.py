@@ -301,15 +301,17 @@ def apply(document, log=None, product_title=None, edms=None, issues=None):
     # 함께 확인할 수 있어").
     odd = E.flag_empty_diag_cells(document)
     if odd:
-        names = []
-        for name, _row in odd:
+        names, rows_of = [], {}
+        for name, row in odd:
             if name not in names:
                 names.append(name)
-        log("값 없이 사선만 그어진 칸 노랑 표시: %d (%s)" % (len(odd), ", ".join(names)))
+            rows_of.setdefault(name, []).append(str(row))
+        where = ", ".join("%s(%s줄)" % (n, "·".join(rows_of[n][:8])) for n in names)
+        log("값 없이 사선만 그어진 칸 노랑 표시: %d (%s)" % (len(odd), where))
         if issues is not None:
             issues.append(("", "", "값이 비어 있는데 사선이 그어진 칸이 %d곳 있습니다(노랑) — %s. "
                                    "사선은 '해당 없음' 이라는 뜻이므로, 이 칸들은 값을 채우거나 "
-                                   "사선을 지워야 합니다." % (len(odd), ", ".join(names))))
+                                   "사선을 지워야 합니다." % (len(odd), where)))
     log("항 제목 줄맞춤: %d" % E.align_section_titles(document))
     log("9.2 소제목 번호 바로잡음: %d" % E.renumber_subheadings(document, "9.2"))
     log("‘확인 필요’ 노랑 표시: %d" % E.highlight(document, "확인 필요"))

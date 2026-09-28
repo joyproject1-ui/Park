@@ -7,7 +7,7 @@ import shutil
 import tempfile
 import unittest
 
-from pqr.engine.collect import discover
+from pqr.engine.collect import discover, is_common_path
 
 
 class DiscoverTest(unittest.TestCase):
@@ -120,3 +120,52 @@ class 변경요청서_문서번호(unittest.TestCase):
         self.assertEqual([c["doc_no"] for c in data.changes], ["CC-240723-08"])
         self.assertTrue(data.changes[0].get("unread"))
         self.assertTrue(any(i[0] == "12" and "문서번호만" in i[2] for i in data.issues))
+
+
+class 공통_폴더(unittest.TestCase):
+    """제품 폴더 옆 '공통' 폴더의 공통 항 자료도 엔진이 읽는다 (담당자 2026-09-28: 공통에 올린 8.1.1·8.1.2·8.1.3
+    목록이 보고서에 한 번도 반영되지 않았다 — "동일한 원인이야 조치해줘")."""
+
+    def setUp(self):
+        self.root = tempfile.mkdtemp(prefix="pqr-common-")
+        self.product = os.path.join(self.root, "나조린점안액")
+        self.shared = os.path.join(self.root, "공통")
+        os.makedirs(self.product)
+        os.makedirs(self.shared)
+
+    def tearDown(self):
+        shutil.rmtree(self.root, ignore_errors=True)
+
+    def touch(self, folder, name, text=""):
+        path = os.path.join(folder, name)
+        with open(path, "w", encoding="utf-8") as handle:
+            handle.write(text)
+        return path
+
+    def test_공통_항의_자료를_함께_읽는다(self):
+        self.touch(self.shared, "8.1.1 원료 공급업체 List_(Rev.26).xlsx")
+        self.touch(self.shared, "8.1.2 HLF-GR-15-25(Rev.000) 주성분 공급망 마스터파일.xlsx")
+        self.touch(self.shared, "8.1.3 자재 공급업체 List_(Rev.26).xlsx")
+        self.touch(self.product, "7. 수율현황표.xlsx")
+        got = discover(self.product)
+        self.assertEqual(sorted(got), ["7", "8.1.1", "8.1.2", "8.1.3"])
+        self.assertTrue(is_common_path(got["8.1.1"][0], self.product))
+        self.assertFalse(is_common_path(got["7"][0], self.product))
+
+    def test_공통이_아닌_항은_나눠_주지_않는다(self):
+        self.touch(self.shared, "13. 안정성 시험일지.pdf")
+        self.touch(self.shared, "8.1.1 원료 공급업체 List.xlsx")
+        self.assertEqual(sorted(discover(self.product)), ["8.1.1"])
+
+    def test_같은_파일이_제품_폴더에도_있으면_제품_폴더_것(self):
+        self.touch(self.shared, "8.1.1 원료 공급업체 List.xlsx", "같은 크기")
+        mine = self.touch(self.product, "8.1.1 원료 공급업체 List.xlsx", "같은 크기")
+        got = discover(self.product)["8.1.1"]
+        self.assertEqual(got, [mine])
+
+    def test_공통_폴더가_없어도_그대로(self):
+        shutil.rmtree(self.shared)
+        self.touch(self.product, "7. 수율현황표.xlsx")
+        self.assertEqual(sorted(discover(self.product)), ["7"])
+        self.assertEqual(sorted(discover(self.product, common=False)), ["7"])
+

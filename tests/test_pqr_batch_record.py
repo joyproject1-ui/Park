@@ -57,8 +57,23 @@ class 공기록서_읽기(unittest.TestCase):
         got = B.merge([B.read(a), B.read(b)])
         self.assertEqual(got["pack_unit"], "5g x 1Tube/Case")
         self.assertEqual(got["batch_size"], "204,000g")               # 표 밖 글줄에서도 읽는다
+        self.assertEqual(got["pack_unit_from"], "6. PK-QUIBTH 포장기록서.docx")
+        self.assertEqual(got["fallback"], ["제조단위를 제조기록서가 아니라 포장기록서(6. PK-QUIBTH 포장기록서.docx)에서 읽음"])
         self.assertEqual(got["yield_specs"], {"충전": "91.0 ± 4.0%", "포장": "98 ± 2%"})
         self.assertEqual([m["code"] for m in got["materials"]["포장자재"]], ["P17039"])
+
+    def test_제조단위는_제조기록서_포장단위는_포장기록서(self):
+        # 담당자 2026-09-28: "제조 기록서에서는 제조단위를 보고 기재하고, 포장 기록서에서는 포장단위를 보고 기록해줘"
+        a = _save(self.dir, "6. MO-NAZ 제조기록서.docx", [[["제품명", "나조린점안액", "제조단위", "300 L (60,000 병)"],
+                                                          ["포장단위", "다회용 15mL"]]])
+        b = _save(self.dir, "6. PK-NAZ 포장기록서.docx", [[["포장단위", "0.5mL x 30개/Box"]]],
+                  paras=["제조단위 : 150 L"])
+        got = B.merge([B.read(a), B.read(b)])
+        self.assertEqual(got["batch_size"], "300L")                 # 포장기록서의 '150 L' 는 쓰지 않는다
+        self.assertEqual(got["batch_size_from"], "6. MO-NAZ 제조기록서.docx")
+        self.assertEqual(got["pack_unit"], "0.5mL x 30개/Box")       # 제조기록서의 '다회용 15mL' 는 쓰지 않는다
+        self.assertEqual(got["pack_unit_from"], "6. PK-NAZ 포장기록서.docx")
+        self.assertEqual(got["fallback"], [])
 
     def test_머리행_없는_표에서는_코드_옆_글자를_이름으로(self):
         p = _save(self.dir, "6. 제조기록서.docx", [[["1", "ELL101", "유동파라핀", "20,400 g"]]])

@@ -1392,7 +1392,7 @@ const SAMPLE_STAGES = ["자료 수집","보고서 작성"];
 /* 평가항목 — PQR 보고서 항 번호(3 · 8.1.1 · 9.2.4 …) */
 const SAMPLE_ITEMS = [
   ["3","허가증","식약처 site"],
-  ["6","제조내역","ERP"],
+  ["6", "제조내역", "ERP · 제조·포장 공 기록서"],
   ["7","수율현황표","개인 작성"],
   ["8.1.1","원료 공급업체 List",""],
   ["8.1.2","주성분 공급망 마스터파일","HLF-GR-15-25"],
@@ -3054,12 +3054,21 @@ function renderSubPicker(){
   const rows = subsOf(uploadTarget.code, uploadTarget.item);
   if (!rows.length && !uploadTarget.sub){ box.hidden = true; box.innerHTML = ""; return; }
   box.hidden = false;
-  box.innerHTML = `<div class="muted" style="margin-bottom:5px">어느 공정의 자료인가요?
-      <span class="muted">— 고른 번호로 저장됩니다. 목록에 없으면 '직접 적기' 로 번호를 적으세요.</span></div>
+  // 단추는 **번호만** — 9.2.1 … 9.2.6 과 '직접 적기' (담당자 2026-09-28: "별도의 조제, 충전 설명 없이 번호만
+  // 9.2.1 / 9.2.2 / … / 9.2.6 / 직접 적기 이렇게 적자"). 공정 이름은 제형·팀마다 달라 붙이지 않는다.
+  // 기대 목록(config item_subs)에 든 번호와 1~6 을 합치고, 이미 올린 번호에는 ✓ 를 단다.
+  const okOf = {}; rows.forEach(r=>{ okOf[r.id] = !!r.ok; });
+  const ids = new Set(rows.map(r=>r.id));
+  for (let k=1; k<=6; k++) ids.add(uploadTarget.item + "." + k);
+  if (uploadTarget.sub) ids.add(uploadTarget.sub);
+  const numKey = id => id.split(".").map(x=>parseInt(x,10)||0);
+  const order = [...ids].sort((a,b)=>{ const x=numKey(a), y=numKey(b);
+    for (let i=0;i<Math.max(x.length,y.length);i++){ const d=(x[i]||0)-(y[i]||0); if (d) return d; } return 0; });
+  box.innerHTML = `<div class="muted" style="margin-bottom:5px">세부 항 번호를 고르세요
+      <span class="muted">— 고른 번호로 저장됩니다. 없는 번호는 '직접 적기' 로 적으세요.</span></div>
     <div class="subrow">`
-    + rows.map(r=>`<button class="chip${r.id===uploadTarget.sub?" on":""}" data-sub="${esc(r.id)}"
-        title="${r.ok ? "이미 올린 자료가 있습니다" : "아직 없습니다"}">${esc(r.id)}${
-          r.name ? " " + esc(r.name) : ""}${r.ok ? " ✓" : ""}</button>`).join("")
+    + order.map(id=>`<button class="chip${id===uploadTarget.sub?" on":""}" data-sub="${esc(id)}"
+        title="${okOf[id] ? "이미 올린 자료가 있습니다" : "아직 없습니다"}">${esc(id)}${okOf[id] ? " ✓" : ""}</button>`).join("")
     + `<button class="chip" data-sub-free="1">직접 적기</button></div>`;
   box.querySelectorAll("[data-sub]").forEach(n=>n.addEventListener("click", ()=>{
     uploadTarget.sub = n.dataset.sub; renderSubPicker(); updatePathHint();

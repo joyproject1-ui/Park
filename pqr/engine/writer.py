@@ -547,6 +547,10 @@ def write_report(folder, product, period, out_path, today=None, recipe=None, log
                                 % ", ".join(empty)))
     layout.apply(document, log=log_, product_title=(ctx or {}).get("cover_title"),
                  issues=data.issues)
+    # 조판까지 끝난 뒤 노랑으로 둔 칸의 까닭을 판독 대장에 더한다 (담당자 2026-09-28) — 채움 단계의 문의도 함께
+    data.issues_for_ledger = list(data.issues) + list((ctx or {}).get("issues", []))
+    if collect_module.write_ledger(folder, product.get("code", ""), data):
+        log_("자료 판독 대장에 노랑 칸의 까닭을 더했습니다")
     out_path = _writable(out_path, data, log_)
     document.save(out_path)
     polish.polish(out_path)

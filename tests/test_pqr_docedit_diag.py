@@ -64,5 +64,29 @@ class 사선판별(unittest.TestCase):
         self.assertFalse(E._has_diag(table.cell(0, 0)._tc))
 
 
+class 번호_항목은_한_줄씩(unittest.TestCase):
+    """담당자 2026-09-28 나조린 1회용 9.2 이물검사: "1) 육안으로 … 2) 이물이 … 앞으로는 항목마다 이렇게 한칸 내려서 적어줘"."""
+
+    def test_번호마다_한_줄(self):
+        self.assertEqual(E.numbered_lines("1) 육안으로 관찰할 때 맑으며, 쉽게 관찰되는 이물이 없음 2) 이물이 합격판정개수의 기준보다 적음"),
+                         ["1) 육안으로 관찰할 때 맑으며, 쉽게 관찰되는 이물이 없음", "2) 이물이 합격판정개수의 기준보다 적음"])
+        self.assertEqual(E.numbered_lines("1) 가 2) 나 3) 다"), ["1) 가", "2) 나", "3) 다"])
+
+    def test_각주_표시_하나나_번호가_아닌_글은_그대로(self):
+        self.assertEqual(E.numbered_lines("1)"), ["1)"])
+        self.assertEqual(E.numbered_lines("1) 충전 수율 일탈로 11항 참고"), ["1) 충전 수율 일탈로 11항 참고"])
+        self.assertEqual(E.numbered_lines("메틸렌블루시액의 침투 없음"), ["메틸렌블루시액의 침투 없음"])
+        self.assertEqual(E.numbered_lines("pH 6.44 (2) 재시험"), ["pH 6.44 (2) 재시험"])
+
+    def test_set_cell_도_나눈다(self):
+        document = docx.Document()
+        table = document.add_table(rows=1, cols=1)
+        cell = E.raw_cells(table.rows[0])[0]
+        E.set_cell(cell, "1) 육안으로 맑음 2) 이물이 적음")
+        self.assertEqual(E.cell_text(cell), "1) 육안으로 맑음\n2) 이물이 적음")
+        E.set_cell(cell, "1) 한 줄만")
+        self.assertEqual(E.cell_text(cell).strip(), "1) 한 줄만")   # 남는 문단은 비운다(set_cell 의 원래 버릇)
+
+
 if __name__ == "__main__":
     unittest.main()

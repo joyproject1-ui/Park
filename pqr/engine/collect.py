@@ -173,17 +173,47 @@ def _unzip(path, workdir):
     return out
 
 
-def discover(folder, workdir=None, depth=3):
+def common_folder_of(folder):
+    """제품 폴더 옆의 '공통' 폴더(입력 폴더 바로 아래, 이름은 build.COMMON_FOLDERS) — 없으면 None."""
+    parent = os.path.dirname(os.path.abspath(folder))
+    for name in build_module.COMMON_FOLDERS:
+        path = os.path.join(parent, name)
+        if os.path.isdir(path) and os.path.abspath(path) != os.path.abspath(folder):
+            return path
+    return None
+
+
+def common_items():
+    """공통 폴더에서 모든 제품에 나눠 주는 항(config 의 common_items: 6 · 8.1.1 · 8.1.2 · 8.1.3 · 10.x)."""
+    try:
+        return set(build_module.load_config().get("common_items") or ())
+    except Exception:
+        return set()
+
+
+def is_common_path(path, folder):
+    """이 파일이 제품 폴더가 아니라 '공통' 폴더에서 온 것인가."""
+    shared = common_folder_of(folder)
+    return bool(shared) and os.path.abspath(path).startswith(os.path.abspath(shared) + os.sep)
+
+
+def discover(folder, workdir=None, depth=3, common=True):
     """{항: [파일 경로]} — 폴더 아래 파일·폴더·압축을 항 번호로 나눈다.
 
     번호가 붙은 폴더(`13. 안정성 시험`) 안의 파일은 이름에 번호가 없어도 그 항으로 친다.
     번호가 없는 중간 폴더(`필요 자료`)와 번호 없는 압축(폴더째 묶은 것)은 그냥 지나쳐
     안쪽을 계속 본다 — 담당자가 자료를 한 단계 더 접어 두는 일이 흔하다.
+
+    **'공통' 폴더의 자료도 읽는다** — 공통 항(6 · 8.1.1 · 8.1.2 · 8.1.3 · 10.x)만. 대시보드는 공통 폴더에
+    올린 자료를 모든 제품에 녹색으로 세었지만 엔진은 제품 폴더만 읽어, 공통에 올린 공급업체 목록·
+    공급망 마스터파일이 보고서에 한 번도 반영되지 않았다(담당자 2026-09-28 나조린 1회용: "8.1.2 …
+    마스터파일도 정확히 내용이 업데이트 안됐어 동일한 원인이야", "8.1.3 자재 공급업체 List 도 마찬가지야").
+    같은 이름·크기의 파일이 제품 폴더에도 있으면 제품 폴더 것을 쓴다(_dedupe).
     """
     workdir = workdir or tempfile.mkdtemp(prefix="pqr-engine-")
     items = {}
 
-    def scan(root, left):
+    def scan(root, left, into):
         for name in sorted(os.listdir(root)):
             if name.startswith("~$") or name.startswith(".") or is_output_dir(name):
                 continue                          # 우리가 만든 보고서는 자료가 아니다
@@ -191,19 +221,28 @@ def discover(folder, workdir=None, depth=3):
             item = _item_of(name)
             if os.path.isdir(path):
                 if item:
-                    items.setdefault(item, []).extend(_walk(path))
+                    into.setdefault(item, []).extend(_walk(path))
                 elif left > 0:                    # 번호 없는 중간 폴더는 지나쳐 들어간다
-                    scan(path, left - 1)
+                    scan(path, left - 1, into)
                 continue
             is_zip = name.lower().endswith(".zip")
             if not item:
                 if is_zip and left > 0:           # 번호 없는 압축 = 폴더째 묶은 것
-                    scan(_unzip(path, workdir), left - 1)
+                    scan(_unzip(path, workdir), left - 1, into)
                 continue
             paths = list(_walk(_unzip(path, workdir))) if is_zip else [path]
-            items.setdefault(item, []).extend(paths)
+            into.setdefault(item, []).extend(paths)
 
-    scan(folder, depth)
+    scan(folder, depth, items)
+    shared = common_folder_of(folder) if common else None
+    if shared:
+        extra = {}
+        scan(shared, depth, extra)
+        want = common_items()
+        for item, paths in extra.items():
+            if want and item not in want:
+                continue                          # 공통으로 정한 항만 모두에게 나눠 준다
+            items.setdefault(item, []).extend(paths)
     root = os.path.abspath(folder)
     return {item: _dedupe(paths, root) for item, paths in items.items()}
 
@@ -310,9 +349,9 @@ READABLE = {
     "3":       ((".pdf",),            "허가증 PDF"),
     "6":       ((".pdf", ".docx", ".xlsx", ".xls"), "제조내역 ERP(PDF·엑셀) 또는 공 기록서 .docx"),
     "7":       ((".xlsx", ".xls"),    "수율현황표 엑셀"),
-    "8.1.1":   ((".xlsx",),           "공급업체 List 엑셀"),
+    "8.1.1":   ((".xlsx", ".xlsm"),  "공급업체 List 엑셀"),
     "8.1.2":   ((".xlsx",),           "주성분 공급망 엑셀"),
-    "8.1.3":   ((".xlsx",),           "공급업체 List 엑셀"),
+    "8.1.3":   ((".xlsx", ".xlsm"),  "공급업체 List 엑셀"),
     "8.2.1":   ((".xlsx", ".xls"),    "원료 시험 ERP 엑셀"),
     "8.2.1.1": ((".xlsx", ".xls"),    "원료 시험 ERP 엑셀"),
     "8.2.2":   ((".xlsx", ".xls"),    "자재 시험 ERP 엑셀"),
@@ -632,6 +671,10 @@ def collect(folder, product_name=None, log=None):
     data.folder = os.path.abspath(folder)
     data.files = discover(folder)
     got = data.files
+    shared_used = sorted({os.path.basename(p) for paths in got.values() for p in paths if is_common_path(p, folder)})
+    if shared_used:
+        log("  '공통' 폴더의 자료 %d개를 함께 읽음: %s" % (len(shared_used), ", ".join(shared_used[:12])
+                                                     + (" …" if len(shared_used) > 12 else "")))
 
     def note(item, path, why):
         data.issues.append((item, os.path.basename(path), why))
@@ -666,13 +709,20 @@ def collect(folder, product_name=None, log=None):
         elif p.lower().endswith(".docx"):
             # 공 기록서(제조·충전·포장) — 제조단위·포장단위·수율 기준·원/자재 코드 (담당자 2026-09-06)
             try:
-                records.append(batch_record.read(p))
+                rec = batch_record.read(p)
+                rec["path"] = p                           # 공통 폴더에서 온 것인지 가리는 데 쓴다
+                records.append(rec)
                 saw(p, "공 기록서")
             except Exception as e:                        # 서식이 달라 못 읽어도 작성은 계속
                 note("6", p, "공 기록서를 읽지 못함: %s" % e)
     # 다른 제품의 공 기록서가 섞여 오면(담당자 PC 2026-09-07: 한림포비돈점안액 폴더에 '올로원스점안액 3ml'
     # 기록서) 그 제품의 자재(PE병 5mL 등)와 포장단위가 표에 들어간다 — 이름이 다른 제품 것이면 쓰지 않고 알린다.
     wrong = [r for r in records if other_product_record(r["file"], product_name)]
+    # 공통 폴더에는 모든 제품의 공 기록서가 함께 있다 — 남의 것은 조용히 지나친다(★ 는 제품 폴더에 잘못 든 것만)
+    shared_wrong = [r for r in wrong if is_common_path(r.get("path") or "", folder)]
+    for r in shared_wrong:
+        log("  [6] %s — 공통 폴더의 다른 제품 공 기록서라 쓰지 않음" % r["file"])
+    wrong = [r for r in wrong if r not in shared_wrong]
     for r in wrong:
         note("6", r["file"], "★ 다른 제품의 공 기록서로 보여 쓰지 않았습니다 — 이 제품(%s)의 제조·충전·포장 "
                              "기록서를 올려 주세요" % (product_name or ""))
@@ -686,10 +736,14 @@ def collect(folder, product_name=None, log=None):
             if not rec:
                 continue
             mats = rec["materials"]
-            log("  [6] 공 기록서(%s) %d개 — 제조단위 %s · 포장단위 %s · 수율 기준 %s · 주원료 %d·부원료 %d·포장자재 %d"
-                % (label, len(rec["files"]), rec["batch_size"] or "못 읽음", rec["pack_unit"] or "못 읽음",
+            log("  [6] 공 기록서(%s) %d개 — 제조단위 %s(%s) · 포장단위 %s(%s) · 수율 기준 %s · 주원료 %d·부원료 %d·포장자재 %d"
+                % (label, len(rec["files"]), rec["batch_size"] or "못 읽음", rec.get("batch_size_from") or "-",
+                   rec["pack_unit"] or "못 읽음", rec.get("pack_unit_from") or "-",
                    ", ".join("%s %s" % kv for kv in rec["yield_specs"].items()) or "못 읽음",
                    len(mats["주원료"]), len(mats["부원료"]), len(mats["포장자재"])))
+            # 제조단위는 제조기록서, 포장단위는 포장기록서에서 — 다른 기록서에서 읽었으면 알린다(담당자 2026-09-28)
+            for why in rec.get("fallback") or []:
+                note("6", rec.get("batch_size_from") or rec.get("pack_unit_from") or "", "%s — 값이 맞는지 확인하세요" % why)
     # 7항 — 수율현황표. 무엇을 읽었는지 반드시 남긴다: 값이 한 칸도 안 들어간 채로 '확인 필요'
     # 만 나오면 파일이 없었는지, 열 이름이 안 맞았는지 기록만 보고는 알 수 없었다
     # (담당자 2026-09-08: "수율 작성 안 됐어").
@@ -717,18 +771,37 @@ def collect(folder, product_name=None, log=None):
         note("7", "", "★ 수율현황표에서 Lot 을 하나도 읽지 못했습니다 — 7 폴더에 그해 "
                       "수율현황표 엑셀(.xlsx/.xls)을 올려 주세요")
     # 8.x
-    for p in got.get("8.1.1", []):
-        if p.lower().endswith(".xlsx"):
-            data.suppliers_raw = suppliers.read_supplier_list(p)
-            saw(p, "공급업체 %d줄" % len(data.suppliers_raw or []))
-    for p in got.get("8.1.3", []):
-        if p.lower().endswith(".xlsx"):
-            data.suppliers_mat = suppliers.read_supplier_list(p)
-            saw(p, "공급업체 %d줄" % len(data.suppliers_mat or []))
+    # 공급업체 목록은 '실시간' 시트(없으면 가장 높은 Rev. 시트)를 읽고 **어느 시트에서 몇 줄** 읽었는지
+    # 기록에 남긴다 — 담당자 2026-09-28: "실시간 시트 또는 가장 최종 작성본으로 읽어야돼". 못 읽으면
+    # 조용히 지나치지 않고 ★ 로 알린다(8.1 완료일이 통째로 비는 까닭을 알 수 없었다).
+    for item, attr in (("8.1.1", "suppliers_raw"), ("8.1.3", "suppliers_mat")):
+        for p in got.get(item, []):
+            if not p.lower().endswith((".xlsx", ".xlsm")):
+                continue
+            try:
+                rows = suppliers.read_supplier_list(p)
+            except Exception as error:
+                note(item, p, "★ 공급업체 목록을 읽지 못했습니다 — %s" % error)
+                continue
+            setattr(data, attr, rows)
+            sheet = suppliers.sheet_of(rows)
+            saw(p, "공급업체 %d줄 ('%s' 시트)" % (len(rows), sheet))
+            log("  [%s] %s — '%s' 시트에서 %d줄 (실시간 시트가 있으면 그것, 없으면 가장 높은 Rev. 시트)"
+                % (item, os.path.basename(p), sheet, len(rows)))
+            if not rows:
+                note(item, p, "★ 공급업체 목록 '%s' 시트에서 한 줄도 읽지 못했습니다 — 머리행(No. · 공급업체명 …) 아래에 줄이 있는지 확인하세요" % sheet)
     for p in got.get("8.1.2", []):
-        if p.lower().endswith(".xlsx"):
-            data.api_chain = suppliers.read_api_chain(p)
-            saw(p, "주성분 공급망")
+        if p.lower().endswith((".xlsx", ".xlsm")):
+            try:
+                data.api_chain = suppliers.read_api_chain(p)
+            except Exception as error:
+                note("8.1.2", p, "★ 주성분 공급망 마스터파일을 읽지 못했습니다 — %s" % error)
+                continue
+            sheet = next((v.get("_sheet") for v in data.api_chain.values() if v.get("_sheet")), "")
+            saw(p, "주성분 공급망 %d줄 ('%s' 시트)" % (len(data.api_chain), sheet))
+            log("  [8.1.2] %s — '%s' 시트에서 원료코드 %d개" % (os.path.basename(p), sheet, len(data.api_chain)))
+            if not data.api_chain:
+                note("8.1.2", p, "★ 주성분 공급망 마스터파일 '%s' 시트에서 원료코드 줄을 한 줄도 읽지 못했습니다 — 머리행(No. · 원료코드 · 주성분 · 제조소 · 납품처)을 확인하세요" % sheet)
     # ERP 가 그대로 내려 준 표에는 그 원료를 쓴 모든 제품이 들어 있다 — 제품 이름으로 가려낸다.
     for p in got.get("8.2.1", []) + got.get("8.2.1.1", []):
         if p.lower().endswith((".xls", ".xlsx")):
@@ -1332,6 +1405,14 @@ def write_ledger(folder, code, data):
     for item, name, status, detail in rows:
         mark = "★ " if status in ("안 읽음", "항 없음") else "   "
         lines.append("%s[%s] %s — %s: %s" % (mark, item or "-", name, status, detail))
+    # 보고서에 노랑으로 둔 칸의 까닭도 여기에 — 담당자는 대장을 먼저 본다 (담당자 2026-09-28: "9.2.1에 노랑마크가
+    # 표시되어 있는데 메모장 PQR 자료 판독대장에 관련 내용이 없네"). 문의 목록과 같은 글이다.
+    pool = getattr(data, "issues_for_ledger", None) or getattr(data, "issues", None) or []
+    flagged = [(i, l, w) for i, l, w in pool if "노랑" in str(w)]
+    if flagged:
+        lines += ["", "노랑으로 둔 칸 — 까닭 (문의 목록에도 같은 글이 있습니다)"]
+        for item, lot, why in flagged:
+            lines.append("   [%s] %s — %s" % (item or "-", lot or "-", why))
     path = os.path.join(folder, LEDGER_NAME % code)
     try:
         with open(path, "w", encoding="utf-8") as handle:
