@@ -1342,7 +1342,7 @@ def _spans(cell):
     return int(el.get(qn("w:val"))) if el is not None else 1
 
 
-def update_qualification(table, lookup, cutoff=None):
+def update_qualification(table, lookup, cutoff=None, log=None):
     """관리번호 행마다 IQ·OQ·PQ 열의 (문서번호 행 · 완료일 행) 을 마스터 값으로 채운다.
 
     빈 서식(공양식)의 IQ·OQ 칸은 사선만 그어져 있고 비어 있다 — 마스터파일에서 읽어
@@ -1415,6 +1415,9 @@ def update_qualification(table, lookup, cutoff=None):
             E.set_cell(date_cells[col], new_date)
             E.clear_diag(doc_cells[col]); E.clear_diag(date_cells[col])
             n += 1
+            if log:                       # 무엇을 골랐는지 남긴다 (담당자 2026-09-28: "PQ 내용도 제대로 기재하지 않았어")
+                log("  %s %s ← %s (%s)%s" % (mid, kind, doc, new_date,
+                                            " · 이전 값 %s %s" % (old_doc, old_date) if old_doc or old_date else ""))
     return n
 
 
@@ -3887,7 +3890,7 @@ def fill(document, data, product, period, today=None, log=None):
             gone = drop_equipment(t, DRY_HEAT, keep=("디겐타",), name=name)
             if gone:
                 log("10.2: 이 제품에 쓰지 않는 설비 %d대를 뺌" % gone)
-            upd += update_qualification(t, eq_lookup, qual_cutoff)
+            upd += update_qualification(t, eq_lookup, qual_cutoff, log=log)
     for t in _tables(document, "10.4"):        # 제조용수는 층마다 따로다 — 우리 층(1층) 설비로
         for old_mid, new_mid in use_our_floor(t, data.support):
             log("10.4: %s(%s층 설비)를 연고 라인 %s층 설비 %s 로 바꿈"
@@ -3897,7 +3900,7 @@ def fill(document, data, product, period, today=None, log=None):
                            % (FLOOR, new_mid, data.support[new_mid].get("name") or "")))
     for prefix in ("10.3", "10.4", "10.5"):
         for t in _tables(document, prefix):
-            upd += update_qualification(t, sp_lookup, qual_cutoff)
+            upd += update_qualification(t, sp_lookup, qual_cutoff, log=log)
     log("10항 IQ·OQ·PQ 갱신: %d" % upd)
     # 검토: 마스터파일에 문서가 있는데 빈 칸이 남았으면 문의 목록 맨 앞에 ★ 로 알린다 —
     # 담당자 PC 에서 10.4·10.5 IOQ 칸이 비어 나간 일(2026-09-06)이 되풀이되지 않게.

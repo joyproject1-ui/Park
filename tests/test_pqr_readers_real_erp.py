@@ -114,6 +114,30 @@ class 적격성_마스터파일(unittest.TestCase):
         got = masters.equipment_docs(self._sheet("제조시설적격성평가현황", "완료일"))
         self.assertEqual(got["DAA5114"]["docs"], [("PQ24-2-DAA5114-R", "2025.01.06")])
 
+    def test_설비_한_대의_PQ_여러_줄을_모두_읽고_평가_기간_안의_최근_것을_고른다(self):
+        """담당자 2026-09-28 나조린 1회용 10.2: 마스터파일(생산장비 시트) DAA5091 에 PQ22~PQ26 여섯 줄((기능)·(SIP))이
+        있는데 보고서 PQ 칸이 사선이었다 — 파일이 공통 폴더에 있어 읽히지 않은 탓. 읽히면 2025.12.31 까지의
+        가장 최근 것(PQ25-5-DAA5091-R (기능) 2025.10.02)을 적는다."""
+        from pqr.engine import recipe_ointment as R
+        path = _xlsx([["( 생산장비 ) Qualification"], [], [],
+                      ["No.", "부서", "라인", "관리번호", "설비명", "보고서 문서번호", "Rev No.", "승인일자", "재적격성평가 년도"],
+                      [1, "생산2부", "BFS2", "DAA5091", "800L 여액보관탱크", "PQ22-5-DAA5091-R (기능)", 6, "2022.10.06", "N/A"],
+                      [None, None, None, None, None, "PQ23-5-DAA5091-R (SIP)", 7, "2023.03.28", "N/A"],
+                      [None, None, None, None, None, "PQ24-5-DAA5091-R (SIP)", 8, "2024.03.28", "N/A"],
+                      [None, None, None, None, None, "PQ25-5-DAA5091-R (SIP)", 9, "2025.03.28", "N/A"],
+                      [None, None, None, None, None, "PQ25-5-DAA5091-R (기능)", 10, "2025.10.02", 2028],
+                      [None, None, None, None, None, "PQ26-5-DAA5091-R (SIP)", 11, "2026.03.27", 2027],
+                      [2, "생산2부", "BFS2", "DAA5090", "800L 조제탱크 (HOMO)", "PQ22-5-DAA5090-R (기능)", 2, "2022.10.06", "N/A"],
+                      [None, None, None, None, None, "PQ25-5-DAA5090-R (기능)", 3, "2025.09.29", 2028]], sheet="생산장비")
+        got = masters.equipment_docs(path)
+        self.assertEqual(len(got["DAA5091"]["docs"]), 6)
+        self.assertEqual(got["DAA5090"]["docs"][-1], ("PQ25-5-DAA5090-R (기능)", "2025.09.29"))
+        pq = masters.latest_by_kind(got["DAA5091"]["docs"])["PQ"]
+        inside = R._within(pq, "20251231")
+        self.assertNotIn(("PQ26-5-DAA5091-R (SIP)", "2026.03.27"), inside)
+        latest = max(inside, key=lambda x: x[1].replace(".", ""))
+        self.assertEqual(latest, ("PQ25-5-DAA5091-R (기능)", "2025.10.02"))
+
     def test_제조지원설비가_제조설비_꼴로_적혀_있어도_읽는다(self):
         got = masters.support_docs(self._sheet("생산장비", "승인일자"))
         self.assertEqual(got["DAA5114"]["PQ"], [("PQ24-2-DAA5114-R", "2025.01.06")])
