@@ -1842,7 +1842,7 @@ async function openFolder(code){
     const payload = await response.json();
     if (!payload.ok) throw new Error(payload.error || "폴더를 열지 못했습니다");
     showToast(`📂 ${payload.path}${payload.hint ? "<br>" + esc(payload.hint) : ""}`);
-  } catch (error) { showToast("폴더 열기 실패: " + esc(error.message)); }
+  } catch (error) { const net = netMessage(error); showToast(net || ("폴더 열기 실패: " + esc(error.message))); if (net) showNetBanner(); }
 }
 /* 자료 수집 100% 가 되면 이 버튼이 생깁니다. 누르면 그 제품의 보고서 초안을 만듭니다.
    제출용 완성본 문서(이름에 '완성본'/'제출')가 제품 폴더에 올라오면 옆에 완성본 단추가 붙습니다. */
@@ -2235,7 +2235,7 @@ async function openProductFile(code, name){
     if (!payload.ok) throw new Error(payload.error || "파일을 열지 못했습니다");
     showToast(`📊 ${esc(payload.name)} — 파일이 열립니다`
       + (payload.hint ? "<br>" + esc(payload.hint) : ""));
-  } catch (error) { showToast("열기 실패: " + esc(error.message)); }
+  } catch (error) { const net = netMessage(error); showToast(net || ("열기 실패: " + esc(error.message))); if (net) showNetBanner(); }
 }
 async function openFinal(code){
   try {
@@ -2255,7 +2255,7 @@ async function openFinal(code){
           : `<br><span class="muted">첨부 엑셀이 없습니다 — 보고서를 재작성하면 안정성 경향 엑셀이 함께 만들어집니다.</span>`)
       + `<br><span class="muted">${esc(payload.folder || "")}</span>`
       + (payload.hint ? "<br>" + esc(payload.hint) : ""));
-  } catch (error) { showToast("완성본 열기 실패: " + esc(error.message)); }
+  } catch (error) { const net = netMessage(error); showToast(net || ("완성본 열기 실패: " + esc(error.message))); if (net) showNetBanner(); }
 }
 /* ---- 보고서 완료 → 재작성 / 취소 ----
    담당자 2026-09: "보고서 완료 버튼을 누르면 재작성 버튼이 뜨게 해서 재작성 or 취소".
@@ -3184,7 +3184,7 @@ async function deleteItemFile(name, common){
       + (payload.common ? `<br>공통 자료였으므로 모든 제품에서 사라졌습니다.` : ""));
     renderItemFiles();
     if (payload.common) renderCommonFiles();
-  } catch (error) { showToast("삭제 실패: " + esc(error.message)); }
+  } catch (error) { const net = netMessage(error); showToast(net || ("삭제 실패: " + esc(error.message))); if (net) showNetBanner(); }
 }
 
 function closeUpload(){
@@ -3300,7 +3300,7 @@ async function openReference(name){
       ? `📂 참고 문서 폴더가 열립니다<br>${esc(payload.path)}`
       : `📄 ${esc(payload.name)} — 파일이 열립니다`
       + (payload.hint ? "<br>" + esc(payload.hint) : ""));
-  } catch (error) { showToast("열기 실패: " + esc(error.message)); }
+  } catch (error) { const net = netMessage(error); showToast(net || ("열기 실패: " + esc(error.message))); if (net) showNetBanner(); }
 }
 async function uploadReference(files){
   if (!files.length) return;
@@ -3699,11 +3699,55 @@ async function syncWithFolder(){
     state.site = keep.site; state.form = keep.form;
     render();
     renderSourceNote();
+    netLost = 0; hideNetBanner();
   } catch (error) {
-    /* 서버가 잠시 안 보이면 다음 차례에 다시 묻는다 */
+    /* 서버가 잠시 안 보이면 다음 차례에 다시 묻는다 — 연달아 못 닿으면 옛 주소를 보고 있는 것이다 */
+    netLost += 1;
+    if (netLost >= 2) showNetBanner();
   } finally {
     watching = false;
   }
+}
+/* 프로그램이 다시 뜨면 주소(포트)가 바뀌어 옛 탭은 '완성본 열기 실패: Failed to fetch' 만 낸다
+   (담당자 2026-09-29). 연달아 닿지 못하면 띠를 띄우고, 옆 포트에서 살아 있는 프로그램을 찾아 그 주소로 안내한다. */
+let netLost = 0, netScanning = false;
+function hideNetBanner(){ const b = $("#net-banner"); if (b) b.remove(); }
+async function findLiveServer(){
+  const here = location.port ? parseInt(location.port, 10) : 80;
+  const ports = [];
+  for (let p = 8787; p < 8787 + 12; p++) if (p !== here) ports.push(p);
+  for (const p of ports){
+    const url = `http://${location.hostname}:${p}`;
+    try {
+      const r = await fetch(url + "/api/health", { cache: "no-store" });
+      if (r.ok){ const j = await r.json(); if (j && j.ok) return { url, version: j.version || "" }; }
+    } catch (_e) { /* 그 포트에는 없다 */ }
+  }
+  return null;
+}
+async function showNetBanner(){
+  let b = $("#net-banner");
+  if (!b){
+    b = document.createElement("div"); b.id = "net-banner";
+    b.style.cssText = "position:fixed;left:50%;top:8px;transform:translateX(-50%);z-index:9999;max-width:720px;"
+      + "background:#fff7ed;border:1px solid #f59e0b;border-radius:10px;padding:10px 14px;box-shadow:0 6px 24px rgba(0,0,0,.15);font-size:13px";
+    document.body.appendChild(b);
+  }
+  b.innerHTML = `<b style="color:#b91c1c">프로그램에 닿지 못합니다</b> — 이 화면은 <code>${esc(location.host)}</code> 를 보고 있는데 그 프로그램이 응답하지 않습니다.`
+    + `<br><span class="muted">검은 프로그램 창이 닫혔거나, 업데이트·재실행으로 새 주소에 다시 떴을 수 있습니다. 살아 있는 주소를 찾는 중…</span>`;
+  if (netScanning) return;
+  netScanning = true;
+  try {
+    const live = await findLiveServer();
+    if (live){
+      b.innerHTML = `<b style="color:#b91c1c">이 화면의 프로그램(${esc(location.host)})은 꺼졌습니다.</b> 새 주소에서 프로그램이 돌고 있습니다`
+        + (live.version ? ` <span class="muted">(버전 ${esc(live.version)})</span>` : ``)
+        + ` — <a href="${esc(live.url)}" style="font-weight:700">${esc(live.url)} 로 이동</a>`;
+    } else {
+      b.innerHTML = `<b style="color:#b91c1c">프로그램에 닿지 못합니다</b> — 이 화면은 <code>${esc(location.host)}</code> 를 보고 있는데 그 프로그램이 응답하지 않습니다.`
+        + `<br>검은 프로그램 창이 닫혔으면 <code>PQR-대시보드-실행.bat</code> 을 다시 실행하고, 새로 열리는 화면을 쓰세요. (옆 포트 8787~8798 에서도 찾지 못했습니다)`;
+    }
+  } finally { netScanning = false; }
 }
 setInterval(syncWithFolder, WATCH_EVERY_MS);
 document.addEventListener("visibilitychange", ()=>{ if (!document.hidden) syncWithFolder(); });

@@ -277,7 +277,14 @@ def open_in_file_manager(path):
     """
     try:
         if sys.platform == "win32":
-            os.startfile(path)                                  # noqa: S606 — 로컬 도구
+            try:
+                os.startfile(path)                              # noqa: S606 — 로컬 도구
+            except OSError:
+                # startfile 이 막히면 탐색기로 직접 — 폴더면 그 폴더, 파일이면 그 파일을 고른 채로
+                if os.path.isdir(path):
+                    subprocess.Popen(["explorer", path])
+                else:
+                    subprocess.Popen(["explorer", "/select,", path])
             return True
         command = ["open", path] if sys.platform == "darwin" else ["xdg-open", path]
         subprocess.Popen(command, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
@@ -966,18 +973,20 @@ class Handler(BaseHTTPRequestHandler):
 
     # ---------------- 응답 도우미 ----------------
 
-    def _send(self, code, body, content_type="application/json; charset=utf-8"):
+    def _send(self, code, body, content_type="application/json; charset=utf-8", cors=False):
         if isinstance(body, str):
             body = body.encode("utf-8")
         self.send_response(code)
         self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(len(body)))
         self.send_header("Cache-Control", "no-store")
+        if cors:                                   # 다른 포트의 옛 화면이 살아 있는 주소를 찾을 때만
+            self.send_header("Access-Control-Allow-Origin", "*")
         self.end_headers()
         self.wfile.write(body)
 
-    def _json(self, code, payload):
-        self._send(code, json.dumps(payload, ensure_ascii=False))
+    def _json(self, code, payload, cors=False):
+        self._send(code, json.dumps(payload, ensure_ascii=False), cors=cors)
 
     # ---------------- 라우팅 ----------------
 
@@ -993,7 +1002,9 @@ class Handler(BaseHTTPRequestHandler):
             self.workspace.refresh_if_changed()
             return self._json(200, self.workspace.dashboard_payload())
         if path == "/api/health":
-            return self._json(200, {"ok": True, "input_dir": self.workspace.input_dir})
+            # 화면이 옛 주소(닫힌 프로그램)를 보고 있을 때 살아 있는 주소를 찾는 데 쓴다 — 다른 포트에서도 읽게 CORS 허용
+            return self._json(200, {"ok": True, "input_dir": self.workspace.input_dir,
+                                    "version": program_version() or ""}, cors=True)
         if path == "/api/final-view":
             return self._handle_final_view()
         if path == "/api/reading-request":
