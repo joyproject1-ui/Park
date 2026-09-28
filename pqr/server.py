@@ -192,7 +192,8 @@ def write_issue_list(folder, product, issues):
     """엔진이 헷갈린 항목을 제품 폴더에 글로 남깁니다 — 담당자가 보고서 옆에서 바로 봅니다."""
     path = os.path.join(folder, ISSUE_LIST_NAME % product.get("code", ""))
     lines = ["[%s] %s — 자동 작성 중 확인이 필요한 항목" % (product.get("code", ""), product.get("name", "")),
-             "만든 때: %s" % _dt.datetime.now().strftime("%Y-%m-%d %H:%M"), ""]
+             "만든 때: %s" % _dt.datetime.now().strftime("%Y-%m-%d %H:%M"),
+             "보고서에서 노랑으로 표시한 칸의 까닭은 이 목록에 있습니다 (자료 판독 대장 끝에도 같은 글이 있습니다).", ""]
     if not issues:
         lines.append("확인이 필요한 항목이 없습니다.")
     for i, (item, where, why) in enumerate(issues, 1):
@@ -206,6 +207,14 @@ def write_issue_list(folder, product, issues):
 
 
 WORK_LOG_NAME = "PQR 작성 기록 (%s).txt"
+
+
+def review_timeout_minutes():
+    try:
+        from .engine import review as review_module
+        return int(review_module.TIMEOUT_MINUTES)
+    except Exception:
+        return 30
 
 
 def write_work_log(folder, product, lines, error=None, trace=None):
@@ -1454,6 +1463,13 @@ class Handler(BaseHTTPRequestHandler):
                     log=steps.append, vision=_vision_hook())
                 issues = engine_result.get("issues") or []
                 final = target
+                # 검토(최대 30분) 전에 문의 목록·작성 기록을 먼저 남긴다 — 검토가 끝나야만 쓰던 탓에 그동안은
+                # 지난번 파일이 그대로였다 (담당자 2026-09-28: "방금 작성했는데 PQR 문의목록은 작성이 안됐네",
+                # "PQR 작성 기록도 마찬가지로 작성이 안됐어"). 검토가 끝나면 아래에서 다시 쓴다.
+                write_issue_list(folder, product, list(issues) + [
+                    ("검토", "", "Claude Code 검토가 진행 중입니다(최대 %d분) — 끝나면 이 목록이 다시 써지고 어긋난 곳이 보태집니다"
+                     % review_timeout_minutes())])
+                write_work_log(folder, product, steps + ["", "(Claude Code 검토 진행 중 — 끝나면 이 기록과 문의 목록을 다시 씁니다)"])
                 # 만든 보고서를 PC 의 Claude Code 가 첨부와 대조해 문의 목록에 보탠다 (담당자 2026-09-08:
                 # "단추 한 번에 만들고 → Claude 가 검토해 문의 목록에 적기"). 없거나 실패하면 그냥 지나간다.
                 from .engine import review as review_module
