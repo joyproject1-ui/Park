@@ -38,6 +38,7 @@ FIELDS = {
     "제품명": ("ITEM_NAME", "itemName"),
     "업체명": ("ENTP_NAME", "entpName"),
     "허가일자": ("ITEM_PERMIT_DATE", "itemPermitDate"),
+    "변경일자": ("CHANGE_DATE", "changeDate"),     # 1회용 추가 같은 변경허가 일자 — 보고서 3항이 이 날짜를 적기도 한다
     "품목기준코드": ("ITEM_SEQ", "itemSeq"),
     "전문일반": ("ETC_OTC_CODE", "ETC_OTC_NAME", "etcOtcCode"),
     "저장방법": ("STORAGE_METHOD", "storageMethod"),
@@ -435,8 +436,14 @@ def compare(section3, info):
         if not mine or not theirs:
             continue
         if 표항목 == "허가일자":
+            # 담당자 2026-09-28 나조린점안액(1회용): 식약처 허가일자는 다회용 최초 허가(2011-11-29)이고 보고서는
+            # 1회용이 추가된 변경일(2017-03-03)을 적었다 — 변경일자와 같으면 어긋남이 아니다.
+            change = str(info.get("변경일자") or "").strip()
             if _digits(mine) and _digits(theirs) and _digits(mine) != _digits(theirs):
-                out.append((표항목, mine, theirs, "날짜가 다릅니다"))
+                if change and _digits(mine) == _digits(change):
+                    continue
+                shown = theirs if not change else "%s (변경 %s)" % (theirs, change)
+                out.append((표항목, mine, shown, "날짜가 다릅니다"))
             continue
         a, b = _flat(mine), _flat(theirs)
         if a and b and a not in b and b not in a:
@@ -459,6 +466,10 @@ def pretty_date(text):
 def mismatch_sentence(항목, 내것, 그쪽, 까닭=""):
     """어긋난 칸 한 줄 — 담당자 2026-09-28 문구 예: "식약처 site 에서는 2011년 11월 29일인데 2017년 03월
     03일로 기재되어 있어 내용 상이함." 날짜는 년월일로 풀어 적고, 글은 따옴표로 그대로 보여 준다."""
+    dates = re.findall(r"\d{4}[.\-/년 ]?\s?\d{2}[.\-/월 ]?\s?\d{2}", str(그쪽 or ""))
+    if 항목 == "허가일자" and len(dates) >= 2:
+        return ("%s: 식약처 site 에서는 최초 허가 %s, 변경 %s인데 보고서에는 %s로 기재되어 있어 내용 상이함."
+                % (항목, pretty_date(dates[0]), pretty_date(dates[1]), pretty_date(내것)))
     if 항목 == "허가일자" or (len(_digits(그쪽)) == 8 and len(_digits(내것)) == 8):
         return ("%s: 식약처 site 에서는 %s인데 보고서에는 %s로 기재되어 있어 내용 상이함."
                 % (항목, pretty_date(그쪽), pretty_date(내것)))
@@ -466,6 +477,17 @@ def mismatch_sentence(항목, 내것, 그쪽, 까닭=""):
         return "허가 상태: 식약처 site 에 취소 이력(%s)이 있어 확인 필요." % 그쪽
     return ("%s: 식약처 site 에서는 '%s' 인데 보고서에는 '%s' 로 기재되어 있어 내용 상이함."
             % (항목, 그쪽, 내것))
+
+
+def change_date_note(section3, info):
+    """보고서 허가일자가 식약처 변경일자와 같으면 그 사실을 한 줄로 — 아니면 빈 글."""
+    mine = _digits((section3 or {}).get("허가일자"))
+    change = _digits(info.get("변경일자"))
+    first = _digits(info.get("허가일자"))
+    if mine and change and mine == change and first and first != change:
+        return ("보고서 허가일자 %s는 식약처 변경일자와 같음(최초 허가 %s) — 1회용 추가 같은 변경허가로 봄"
+                % (pretty_date(mine), pretty_date(first)))
+    return ""
 
 
 def notes(info):

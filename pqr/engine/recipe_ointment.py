@@ -1545,8 +1545,12 @@ def _check_license(section3, name, folder, issues, log, cells3=None, ledger=None
             E.shade_cell(칸)
     # 무엇과 견줬고 어느 칸이 어떻게 다른지 값째로 남긴다 — 담당자 2026-09-28: "어긋난 칸 1개(허가일자)"
     # 만으로는 무엇이 다른지 알 수 없어 "자세하게 설명은 안될까?"
-    맞춘것 = "식약처 '%s'(품목기준코드 %s · 허가일자 %s)" % (
-        info.get("제품명") or "-", info.get("품목기준코드") or "-", info.get("허가일자") or "-")
+    맞춘것 = "식약처 '%s'(품목기준코드 %s · 허가일자 %s%s)" % (
+        info.get("제품명") or "-", info.get("품목기준코드") or "-", mfds.pretty_date(info.get("허가일자") or "-"),
+        (" · 변경일자 %s" % mfds.pretty_date(info.get("변경일자"))) if info.get("변경일자") else "")
+    변경메모 = mfds.change_date_note(section3, info)
+    if 변경메모:
+        log("  3항 " + 변경메모)
     상세 = " / ".join(mfds.mismatch_sentence(*one) for one in 다른것)
     if 다른것:
         log("  3항 대조: 어긋난 칸 %d개를 노랑으로 칠하고 문의에 올림 — %s" % (len(다른것), 상세))
@@ -1556,9 +1560,10 @@ def _check_license(section3, name, folder, issues, log, cells3=None, ledger=None
     else:
         log("  3항 대조: 어긋난 칸 없음")
         _ledger(ledger, LEDGER_LICENSE, "읽음",
-                "대조함 — 보고서 3항 '%s' 를 %s 와 견줌 · 견준 칸 %s · 어긋난 칸 없음"
+                "대조함 — 보고서 3항 '%s' 를 %s 와 견줌 · 견준 칸 %s · 어긋난 칸 없음%s"
                 % (section3.get("제품명") or name, 맞춘것,
-                   ", ".join(k for k, _v in mfds.MATCH if str(section3.get(k) or "").strip() and str(info.get(_v) or "").strip()) or "-"))
+                   ", ".join(k for k, _v in mfds.MATCH if str(section3.get(k) or "").strip() and str(info.get(_v) or "").strip()) or "-",
+                   (" · " + 변경메모) if 변경메모 else ""))
     return len(다른것)
 
 

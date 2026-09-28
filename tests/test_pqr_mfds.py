@@ -67,6 +67,21 @@ class 대조(unittest.TestCase):
         got = mfds.compare(표3, self._info(ITEM_PERMIT_DATE="20111129"))
         self.assertEqual([one[0] for one in got], ["허가일자"])
 
+    def test_변경일자와_같으면_어긋남이_아니다(self):
+        """나조린점안액(1회용) 2026-09-28: 식약처 허가일자는 다회용 최초 허가, 보고서는 1회용이 추가된 변경일."""
+        info = self._info(ITEM_PERMIT_DATE="20111129", CHANGE_DATE="20170303")
+        표 = dict(표3, 허가일자="2017년 03월 03일")
+        self.assertEqual(mfds.compare(표, info), [])
+        self.assertIn("변경일자와 같음", mfds.change_date_note(표, info))
+        self.assertEqual(mfds.change_date_note(표3, self._info()), "")
+
+    def test_변경일자와도_다르면_둘_다_보여_준다(self):
+        info = self._info(ITEM_PERMIT_DATE="20111129", CHANGE_DATE="20170303")
+        got = mfds.compare(dict(표3, 허가일자="2018년 01월 01일"), info)
+        self.assertEqual(got[0][0], "허가일자")
+        sentence = mfds.mismatch_sentence(*got[0])
+        self.assertIn("최초 허가 2011년 11월 29일, 변경 2017년 03월 03일인데 보고서에는 2018년 01월 01일로", sentence)
+
     def test_보관조건_글이_다르면_올린다(self):
         got = mfds.compare(표3, self._info(STORAGE_METHOD="차광기밀용기, 실온보관"))
         self.assertEqual([one[0] for one in got], ["보관조건"])
