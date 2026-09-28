@@ -60,13 +60,22 @@ def _legend_layout(values, levels):
 def _with_excel(src, dst, cells, values, levels=(), formats=None):
     try:
         from . import convert
-        convert._com_ready()                 # 갈래마다 COM 을 열어 준다 (담당자 PC 2026-09-08)
-        import win32com.client
+        import win32com.client  # noqa: F401
     except ImportError:
         return False
+    # 프린터 연결을 기다리다 멈추면 그 Excel 만 끄고 False (담당자 PC 2026-09-28: 22분)
+    return convert.with_deadline(lambda: _excel_job(src, dst, cells, values, levels, formats),
+                                 "pywin32 Excel(Cpk 파일)", image="EXCEL.EXE")
+
+
+def _excel_job(src, dst, cells, values, levels=(), formats=None):
+    from . import convert
+    convert._com_ready()                 # 갈래마다 COM 을 열어 준다 (담당자 PC 2026-09-08)
+    import win32com.client
     excel = win32com.client.DispatchEx("Excel.Application")
     excel.Visible = False
     excel.DisplayAlerts = False
+    convert.quiet_printer_excel(excel)
     try:
         wb = excel.Workbooks.Open(os.path.abspath(src))
         ws = wb.Worksheets(1)

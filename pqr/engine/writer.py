@@ -566,6 +566,9 @@ def write_report(folder, product, period, out_path, today=None, recipe=None, log
     word_ok = convert.refresh_fields(out_path)
     if word_ok:
         log_("목차 쪽수·머리글을 Word 로 다시 계산했습니다")
+    elif convert.last_error:
+        # 무엇에 막혔는지 남긴다 — 담당자 PC 2026-09-28: 프린터 연결 대기로 22분이 걸렸는데 기록에는 없었다
+        log_("Word 로 목차 쪽수를 계산하지 못했습니다 — %s" % convert.last_error[-1])
     # Word 가 없거나 계산 결과가 비어 있으면 PDF 로 쪽을 세어 직접 적는다 — 제한된 보기에서는
     # dirty 필드를 다시 계산하지 않아 빈 칸이 그대로 보였다 (담당자 2026-09).
     from . import toc as toc_module

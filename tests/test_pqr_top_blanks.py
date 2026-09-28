@@ -93,7 +93,7 @@ class 세_갈래_모두(unittest.TestCase):
         import inspect
         vbs = inspect.getsource(convert._fields_via_vbscript)
         ps = inspect.getsource(convert._fields_via_powershell)
-        win = inspect.getsource(convert._fields_via_pywin32)
+        win = inspect.getsource(convert._fields_pywin32_job)   # pywin32 길은 시간 제한 안에서 이 일감을 돌린다
         self.assertIn("TOP_BLANKS_VBS", vbs)
         self.assertIn("TOP_BLANKS_PS", ps)
         self.assertIn("_drop_top_blanks", win)

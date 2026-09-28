@@ -10,6 +10,7 @@ import os
 import shutil
 import subprocess
 import tempfile
+import threading
 import sys
 
 
@@ -18,6 +19,126 @@ class ConvertError(Exception):
 
 
 last_error = []          # 변환에 실패했을 때 마지막 오류 — 안내 문구에 붙인다
+
+# ---------- 프린터 연결 대기 막기 ----------
+# 담당자 PC 2026-09-28: 보고서 작성이 22분을 넘기고 "프린터 연결을 기다리는 중…" 창이 자꾸 떴다.
+# Word·Excel 은 문서를 열고 쪽을 나눌 때 **기본 프린터**의 용지 정보를 묻는데, 기본 프린터가
+# 꺼진 네트워크 프린터면 연결을 기다리느라 멈춘다. 보고서 하나에 Word 를 대여섯 번 여니 그때마다
+# 기다린다. 그래서 자동화로 띄운 Word·Excel 안에서만 프린터를 'Microsoft Print to PDF' 로 둔다 —
+# Windows 의 기본 프린터는 바꾸지 않는다(FilePrintSetup 의 DoNotSetAsSysDefault).
+QUIET_PRINTERS = ("Microsoft Print to PDF", "Microsoft XPS Document Writer")
+DEADLINE = 240           # pywin32 로 Word·Excel 을 돌릴 때 기다리는 최대 초 — 넘으면 그 Office 만 끄고 다음 길로
+PRINTER_HINT = ("프린터 연결을 기다리다 멈춘 것일 때가 많습니다 — Windows 설정 ▸ 프린터에서 기본 프린터를 "
+                "'Microsoft Print to PDF' 로 두거나, 꺼진 네트워크 프린터를 지우면 바로 빨라집니다")
+
+
+def _printer_port(name):
+    """레지스트리(HKCU\\…\\Devices)에서 프린터의 포트 — 'winspool,Ne02:' → 'Ne02:'. 없으면 빈 글."""
+    try:
+        import winreg
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER,
+                            r"Software\Microsoft\Windows NT\CurrentVersion\Devices") as key:
+            value, _kind = winreg.QueryValueEx(key, name)
+            return str(value).split(",")[-1].strip()
+    except Exception:
+        return ""
+
+
+def quiet_printer_word(word):
+    """이 Word 안에서만 프린터를 조용한 것으로 — 시스템 기본은 그대로. 성공한 이름, 실패면 빈 글."""
+    for name in QUIET_PRINTERS:
+        for call in (lambda: word.WordBasic.FilePrintSetup(Printer=name, DoNotSetAsSysDefault=1),
+                     lambda: word.WordBasic.FilePrintSetup(name, 1)):
+            try:
+                call()
+                return name
+            except Exception:
+                continue
+    return ""
+
+
+def quiet_printer_excel(excel):
+    """Excel 의 ActivePrinter 를 조용한 것으로 — 'Microsoft Print to PDF on Ne02:' 꼴이 필요하다."""
+    for name in QUIET_PRINTERS:
+        port = _printer_port(name)
+        for full in ([("%s on %s" % (name, port))] if port else []) + [name]:
+            try:
+                excel.ActivePrinter = full
+                return full
+            except Exception:
+                continue
+    return ""
+
+
+def excel_quiet_printer_line(assign):
+    """스크립트(PowerShell·VBScript)용 — 포트를 미리 읽어 넣는다. assign 은 '$x.ActivePrinter = %s' 꼴."""
+    lines = []
+    for name in QUIET_PRINTERS:
+        port = _printer_port(name)
+        for full in ([("%s on %s" % (name, port))] if port else []) + [name]:
+            lines.append(assign % ('"%s"' % full))
+    return lines
+
+
+WORD_QUIET_PS = ('try { $w.WordBasic.FilePrintSetup("Microsoft Print to PDF", 1) } catch { '
+                 'try { $w.WordBasic.FilePrintSetup("Microsoft XPS Document Writer", 1) } catch {} }\n')
+WORD_QUIET_VBS = ('w.WordBasic.FilePrintSetup "Microsoft Print to PDF", 1\n'
+                  'If Err.Number <> 0 Then Err.Clear : w.WordBasic.FilePrintSetup "Microsoft XPS Document Writer", 1\n'
+                  'Err.Clear\n')
+
+
+def _parse_tasklist(text):
+    """tasklist /FO CSV /NH 출력에서 PID 들."""
+    pids = set()
+    for line in str(text or "").splitlines():
+        parts = [part.strip().strip('"') for part in line.split('","')]
+        if len(parts) >= 2 and parts[1].isdigit():
+            pids.add(int(parts[1]))
+    return pids
+
+
+def _office_pids(image):
+    if sys.platform != "win32":
+        return set()
+    try:
+        run = subprocess.run(["tasklist", "/FI", "IMAGENAME eq %s" % image, "/FO", "CSV", "/NH"],
+                             stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, timeout=20)
+    except Exception:
+        return set()
+    return _parse_tasklist((run.stdout or b"").decode("cp949", "replace"))
+
+
+def with_deadline(fn, why, seconds=None, image="WINWORD.EXE"):
+    """pywin32 COM 일감을 딴 갈래에서 돌리고, 시간이 넘으면 그때 새로 뜬 Office 만 끄고 False.
+
+    프린터 연결 대기 창은 사람이 '취소' 를 누르기 전에는 끝나지 않는다 — 화면 없는 자동화에서는
+    영영 기다린다(담당자 PC 2026-09-28: 22분). 남은 길(PowerShell·VBScript)은 저마다 5분 제한이 있다.
+    """
+    seconds = DEADLINE if seconds is None else seconds
+    before = _office_pids(image)
+    box = {}
+
+    def run():
+        try:
+            box["ok"] = fn()
+        except Exception as error:               # 갈래 안 오류는 부르는 쪽으로 그대로 넘긴다
+            box["error"] = error
+
+    worker = threading.Thread(target=run, daemon=True)
+    worker.start()
+    worker.join(seconds)
+    if worker.is_alive():
+        last_error.append("%s: %d초가 지나도 끝나지 않아 멈췄습니다. %s" % (why, seconds, PRINTER_HINT))
+        for pid in _office_pids(image) - before:
+            try:
+                subprocess.run(["taskkill", "/PID", str(pid), "/F"],
+                               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=20)
+            except Exception:
+                pass
+        return False
+    if "error" in box:
+        raise box["error"]
+    return bool(box.get("ok"))
 
 
 def _run(cmd, why):
@@ -81,6 +202,7 @@ def _word_via_vbscript(src, dst, fmt=16):
         'If Err.Number <> 0 Then WScript.StdErr.WriteLine "Word 를 열지 못함: " & Err.Description : WScript.Quit 1\n'
         'w.Visible = False\n'
         'w.DisplayAlerts = 0\n'
+        + WORD_QUIET_VBS +
         'Set d = w.Documents.Open(%s, False, True)\n'
         'If Err.Number <> 0 Then WScript.StdErr.WriteLine "문서를 열지 못함: " & Err.Description : w.Quit : WScript.Quit 1\n'
         'd.SaveAs %s, %d\n'
@@ -101,6 +223,7 @@ def _word_via_powershell(src, dst, fmt=16):
         "$w = New-Object -ComObject Word.Application\n"
         "$w.Visible = $false\n"
         "$w.DisplayAlerts = 0\n"
+        + WORD_QUIET_PS +
         "try {\n"
         "  $d = $w.Documents.Open(%s, $false, $true)\n"
         "  $d.SaveAs(%s, %d)\n"
@@ -136,10 +259,12 @@ def _with_word(src, dst):
         import win32com.client  # pywin32
     except ImportError:
         return _word_convert(src, dst, 16)
-    try:
+    def job():
+        _com_ready()
         word = win32com.client.DispatchEx("Word.Application")
         word.Visible = False
         word.DisplayAlerts = 0                             # wdAlertsNone — 대화상자를 띄우지 않는다
+        quiet_printer_word(word)                           # 꺼진 네트워크 프린터를 기다리지 않게
         try:
             # (파일, ConfirmConversions=False, ReadOnly=True, AddToRecentFiles=False)
             # 자리로 넘긴다 — 이름으로 넘기는 것보다 확실하고, 되는 것이 확인된 VBScript 길과 같다.
@@ -154,9 +279,12 @@ def _with_word(src, dst):
                 word.Quit()
             except Exception:                              # Quit 이 터져도 원래 오류를 가리지 않는다
                 pass
-        if os.path.isfile(dst):
+        return os.path.isfile(dst)
+    try:
+        if with_deadline(job, "pywin32 Word(.doc→.docx)"):
             return True
-        last_error.append("pywin32: Word 가 저장한 파일이 없습니다")
+        if not last_error or "끝나지 않아" not in last_error[-1]:
+            last_error.append("pywin32: Word 가 저장한 파일이 없습니다")
     except Exception as error:
         last_error.append("pywin32: %s" % error)
     return _word_convert(src, dst, 16)                     # PowerShell → VBScript 로 다시 해 본다
@@ -236,6 +364,7 @@ def _excel_convert(src, dst):
     ps = ("$ErrorActionPreference='Stop'\n"
           "$x = New-Object -ComObject Excel.Application\n"
           "$x.Visible = $false\n$x.DisplayAlerts = $false\n"
+          + "".join("try { %s } catch {}\n" % line for line in excel_quiet_printer_line("$x.ActivePrinter = %s")) +
           "try { $b = $x.Workbooks.Open(%s, 0, $true); $b.SaveAs(%s, 51); $b.Close($false) } "
           "finally { $x.Quit() }\n" % (_ps_path(src), _ps_path(dst)))
     if _powershell(ps) and os.path.isfile(dst):
@@ -244,6 +373,7 @@ def _excel_convert(src, dst):
            'Set x = CreateObject("Excel.Application")\n'
            'If Err.Number <> 0 Then WScript.Quit 1\n'
            'x.Visible = False\nx.DisplayAlerts = False\n'
+           + "".join("%s\nErr.Clear\n" % line for line in excel_quiet_printer_line("x.ActivePrinter = %s")) +
            'Set b = x.Workbooks.Open(%s, 0, True)\n'
            'If Err.Number <> 0 Then x.Quit : WScript.Quit 1\n'
            'b.SaveAs %s, 51\n'
@@ -259,10 +389,12 @@ def _xls_with_excel(src, dst):
         import win32com.client
     except ImportError:
         return _excel_convert(src, dst)
-    try:
+    def job():
+        _com_ready()
         excel = win32com.client.DispatchEx("Excel.Application")
         excel.Visible = False
         excel.DisplayAlerts = False
+        quiet_printer_excel(excel)
         try:
             wb = excel.Workbooks.Open(os.path.abspath(src), UpdateLinks=0, ReadOnly=True)
             wb.SaveAs(os.path.abspath(dst), FileFormat=51)     # xlOpenXMLWorkbook
@@ -272,9 +404,12 @@ def _xls_with_excel(src, dst):
                 excel.Quit()
             except Exception:
                 pass
-        if os.path.isfile(dst):
+        return os.path.isfile(dst)
+    try:
+        if with_deadline(job, "pywin32 Excel(.xls→.xlsx)", image="EXCEL.EXE"):
             return True
-        last_error.append("pywin32(Excel): 저장한 파일이 없습니다")
+        if not last_error or "끝나지 않아" not in last_error[-1]:
+            last_error.append("pywin32(Excel): 저장한 파일이 없습니다")
     except Exception as error:
         last_error.append("pywin32(Excel): %s" % error)
     return _excel_convert(src, dst)
@@ -310,18 +445,22 @@ def _pdf_with_word(src, dst):
     예전에는 pywin32 가 없으면 곧장 LibreOffice 로 떨어졌다 — 그러면 목차 쪽 번호를 LibreOffice 의 쪽 나눔으로
     세어 적어 Word 에서 보는 쪽(머리글 Page n / 전체)과 어긋났다 (담당자 2026-09-11 올로원스: 목차 25쪽, 머리글 23쪽).
     """
-    try:
+    def job():
         _com_ready()
         import win32com.client
         word = win32com.client.DispatchEx("Word.Application")
         word.Visible = False
+        word.DisplayAlerts = 0
+        quiet_printer_word(word)
         try:
             doc = word.Documents.Open(os.path.abspath(src), ReadOnly=True)
             doc.SaveAs2(os.path.abspath(dst), FileFormat=17)      # wdFormatPDF
             doc.Close(False)
         finally:
             word.Quit()
-        if os.path.isfile(dst):
+        return os.path.isfile(dst)
+    try:
+        if with_deadline(job, "pywin32 Word(PDF)"):
             return True
     except Exception as error:
         last_error.append("pywin32 PDF: %s" % error)
@@ -414,13 +553,16 @@ def _drop_top_blanks(doc):
 
 # ---------- 목차 쪽수 등 필드 다시 계산 ----------
 def _fields_via_vbscript(path):
+    # 예전에는 문자열 끝의 `% 경로` 가 마지막 조각에만 붙어 TypeError 로 터졌다 — pywin32 가 안 될 때
+    # 이 길과 PowerShell 길이 한 번도 돌지 못했다(2026-09-28 발견). 경로는 따로 넣는다.
     return _vbscript(
         'On Error Resume Next\n'
         'Set w = CreateObject("Word.Application")\n'
         'If Err.Number <> 0 Then WScript.Quit 1\n'
         'w.Visible = False\n'
         'w.DisplayAlerts = 0\n'
-        'Set d = w.Documents.Open(%s, False, False, False)\n'
+        + WORD_QUIET_VBS +
+        'Set d = w.Documents.Open(' + _vbs_path(path) + ', False, False, False)\n'
         'If Err.Number <> 0 Then w.Quit : WScript.Quit 1\n'
         'w.Options.Pagination = True\n'
         'd.ActiveWindow.View.Type = 3\n'
@@ -443,7 +585,7 @@ def _fields_via_vbscript(path):
         'If Err.Number <> 0 Then d.Close 0 : w.Quit : WScript.Quit 1\n'
         'd.Close 0\n'
         'w.Quit\n'
-        'WScript.Quit 0\n' % _vbs_path(path))
+        'WScript.Quit 0\n')
 
 
 def _fields_via_powershell(path):
@@ -452,8 +594,9 @@ def _fields_via_powershell(path):
         "$w = New-Object -ComObject Word.Application\n"
         "$w.Visible = $false\n"
         "$w.DisplayAlerts = 0\n"
+        + WORD_QUIET_PS +
         "try {\n"
-        "  $d = $w.Documents.Open(%s, $false, $false, $false)\n"
+        "  $d = $w.Documents.Open(" + _ps_path(path) + ", $false, $false, $false)\n"
         "  try { $w.Options.Pagination = $true; $d.ActiveWindow.View.Type = 3 } catch {}\n"
         "  for ($i = 0; $i -lt 2; $i++) {\n"
         "    $d.Repaginate()\n"
@@ -467,7 +610,7 @@ def _fields_via_powershell(path):
         "  foreach ($s in $d.StoryRanges) { $s.Fields.Update() | Out-Null }\n"
         "  $d.Save()\n"
         "  $d.Close(0)\n"
-        "} finally { $w.Quit() }\n" % _ps_path(path))
+        "} finally { $w.Quit() }\n")
 
 
 def _com_ready():
@@ -485,11 +628,16 @@ def _com_ready():
 
 
 def _fields_via_pywin32(path):
+    return with_deadline(lambda: _fields_pywin32_job(path), "pywin32 Word(목차 쪽수 계산)")
+
+
+def _fields_pywin32_job(path):
     _com_ready()
     import win32com.client
     word = win32com.client.DispatchEx("Word.Application")
     word.Visible = False
     word.DisplayAlerts = 0
+    quiet_printer_word(word)                            # 쪽 나눔은 프린터 정보를 묻는다 — 꺼진 프린터를 기다리지 않게
     try:
         doc = word.Documents.Open(os.path.abspath(path), False, False, False)
         try:
