@@ -1442,6 +1442,7 @@ class Handler(BaseHTTPRequestHandler):
         based_on = None
         engine_result = None
         issues = []
+        opened_early = False                       # 작성본 폴더를 검토 전에 열었는가
         if previous or form:
             period = self.workspace.data.get("period") or {}
             year = None
@@ -1470,6 +1471,11 @@ class Handler(BaseHTTPRequestHandler):
                     ("검토", "", "Claude Code 검토가 진행 중입니다(최대 %d분) — 끝나면 이 목록이 다시 써지고 어긋난 곳이 보태집니다"
                      % review_timeout_minutes())])
                 write_work_log(folder, product, steps + ["", "(Claude Code 검토 진행 중 — 끝나면 이 기록과 문의 목록을 다시 씁니다)"])
+                # 작성본 폴더도 지금 연다 — 검토(최대 30분)가 끝나야만 열던 탓에 "자동으로 열렸는데 열리지 않네"
+                # (담당자 2026-09-29). 검토가 끝나면 다시 열지 않는다.
+                opened_early = open_in_file_manager(os.path.dirname(os.path.abspath(target)))
+                if opened_early:
+                    steps.append("작성본 폴더를 열었습니다 — 검토는 이어서 진행합니다")
                 # 만든 보고서를 PC 의 Claude Code 가 첨부와 대조해 문의 목록에 보탠다 (담당자 2026-09-08:
                 # "단추 한 번에 만들고 → Claude 가 검토해 문의 목록에 적기"). 없거나 실패하면 그냥 지나간다.
                 from .engine import review as review_module
@@ -1568,7 +1574,7 @@ class Handler(BaseHTTPRequestHandler):
             write_issue_list(folder, product, issues)
         self.workspace.rebuild()
         # '어디 있지?' 를 없앱니다 — 만든 보고서가 있는 폴더를 바로 열어 줍니다.
-        opened = open_in_file_manager(os.path.dirname(os.path.abspath(final)))
+        opened = opened_early or open_in_file_manager(os.path.dirname(os.path.abspath(final)))
         # 만든 첨부 엑셀(안정성 경향 분석 · Cpk 계산)을 화면에 알려 준다 — 담당자가 무엇이
         # 나왔는지 바로 보게(담당자 2026-09: "워드 보고서와 안정성 경향표 엑셀 2개가 작성").
         made = [name for name, _ in ((engine_result or {}).get("attachments") or [])]
