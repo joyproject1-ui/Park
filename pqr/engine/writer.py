@@ -370,6 +370,14 @@ def write_report(folder, product, period, out_path, today=None, recipe=None, log
     # 서식은 언제나 EDMS 결재본 서식(E-HLF-32): 채운 본문을 서식 껍데기에 옮겨 담는다(rehouse).
     # 전년도 결재본이 없는 첫해 제품은 서식을 바탕으로 직접 채운다(표 구조는 서식 그대로).
     from . import edms, rehouse
+    # 7항 수율현황표가 없고 기록서 스캔 이름에 수율 쪽이 적혀 있으면 먼저 읽어 초안을 만든다 —
+    # 담당자 2026-09-28: "스캔파일명에 수율 페이지 번호를 기재하면 자동으로 수율 엑셀 시트를 만들어서
+    # PQR 자동 작성할 때 바로 사용할 수 있도록". 못 만들면 까닭만 남기고 보고서는 계속 만든다.
+    try:
+        from . import yield_read
+        yield_read.ensure_sheet(folder, (product or {}).get("code", ""), log_)
+    except Exception as error:
+        log_("7항 수율 판독을 건너뜁니다 — %s" % error)
     work = tempfile.mkdtemp(prefix="pqr-report-")
     previous = None if ignore_previous else find_previous(folder, work)
     form = edms.find_form(folder)

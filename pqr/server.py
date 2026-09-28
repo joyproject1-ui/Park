@@ -1309,6 +1309,8 @@ class Handler(BaseHTTPRequestHandler):
             # 있거나(표·스캔·판독) 이미 프로필을 배정해 둔 제품만 보여 준다.
             if not (mine or read or scans or prof):
                 continue
+            # 스캔마다 읽을 쪽 — 파일 이름·지난 메모·프로필 가운데 무엇으로 정해지는지 함께 보낸다
+            plan = [(os.path.basename(p),) + yield_read.pages_for(p, prof, "", folder) for p in scans]
             rows.append({
                 "code": code, "name": product["name"],
                 "form": product.get("form_group") or product.get("form") or "",
@@ -1316,6 +1318,9 @@ class Handler(BaseHTTPRequestHandler):
                 "profile": (prof or {}).get("id", ""),
                 "pages": profile_mod.page_list(prof) if prof else [],
                 "scans": [os.path.basename(p) for p in scans],
+                "scan_pages": [{"name": n, "pages": ps, "source": src} for n, ps, src in plan],
+                "pages_note": yield_read.load_pages_note(folder),
+                "ready": any(ps for _n, ps, _s in plan),
                 "read_at": (read or {}).get("read_at", ""),
                 "read_lots": len((read or {}).get("lots") or []),
                 "notes": len((read or {}).get("notes") or []),
@@ -1371,7 +1376,8 @@ class Handler(BaseHTTPRequestHandler):
             # 6항 제조내역의 제조번호와 대조하려면 Lot 목록이 필요하다 — 화면 payload 의
             # 'lots' 는 개수라서 쓸 수 없다. 대조는 자료를 읽는 쪽에서 따로 붙인다.
             got = yield_read.make_reading(self.workspace.input_dir, folder, code,
-                                          log=steps.append)
+                                          log=steps.append,
+                                          pages=str(body.get("pages") or "").strip())
         except Exception as error:
             steps.append("판독 실패: %s" % error)
             got = {"ok": False, "why": str(error)}

@@ -89,10 +89,13 @@ def _column_names(rows, value_cols, first_data):
     """
     # 표 제목('중요공정 별 수율 현황(%)')은 모든 값 열에 같은 글로 퍼져 있다 — 이름이 아니다
     title_rows = set()
-    for i in range(0, first_data):
-        texts = {str(rows[i][c] or "").strip() for c in value_cols}
-        if len(texts) == 1 and texts != {""}:
-            title_rows.add(i)
+    # 값 열이 하나뿐인 표(공정이 하나인 제품·판독 초안)에서는 어느 머리 줄이든 '같은 글' 이 되어
+    # 공정 이름까지 제목으로 버려졌다 — 열이 둘 이상일 때만 제목 줄을 가른다 (2026-09-28).
+    if len(value_cols) >= 2:
+        for i in range(0, first_data):
+            texts = {str(rows[i][c] or "").strip() for c in value_cols}
+            if len(texts) == 1 and texts != {""}:
+                title_rows.add(i)
     names = {}
     for c in value_cols:
         parts = []

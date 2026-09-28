@@ -189,3 +189,20 @@ def page_list(profile):
             if p not in seen:
                 seen.append(p)
     return sorted(seen)
+
+
+# 파일 이름에 적은 쪽 번호 — '… 기록서 (수율 6페이지).pdf' · '수율 6, 8쪽' · '수율 6-7 p' · 'yield p6'.
+# 담당자 2026-09-28: "제조기록서 스캔 파일 이름명 - 수율 페이지를 기재하면 알아서 수율 엑셀파일로
+# 만들어주는게 좋겠어" · "해당 파일을 끌어오면 그런식으로 엑셀파일로 만들어주는거지".
+NAME_PAGES = re.compile(
+    r"(?:수율|yield)\s*[:：]?\s*(?:p\.?\s*|page\s*)?([0-9](?:[0-9,\s\-~]*[0-9])?)\s*(?:페이지|쪽|p\b|page|pages)?",
+    re.I)
+
+
+def pages_from_name(name):
+    """파일 이름에서 수율 쪽 번호를 뽑는다 — 없으면 빈 목록."""
+    stem = os.path.splitext(os.path.basename(str(name or "")))[0]
+    found = NAME_PAGES.search(stem)
+    if not found:
+        return []
+    return page_list({"pages": parse_pages(found.group(1))})

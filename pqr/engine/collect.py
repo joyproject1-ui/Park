@@ -693,8 +693,16 @@ def collect(folder, product_name=None, log=None):
     # 7항 — 수율현황표. 무엇을 읽었는지 반드시 남긴다: 값이 한 칸도 안 들어간 채로 '확인 필요'
     # 만 나오면 파일이 없었는지, 열 이름이 안 맞았는지 기록만 보고는 알 수 없었다
     # (담당자 2026-09-08: "수율 작성 안 됐어").
-    for p in got.get("7", []):
-        if p.lower().endswith((".xlsx", ".xls")):
+    # 판독본('7. 수율현황표 - 판독.xlsx')과 담당자가 만든 표가 같이 있으면 담당자 표만 읽는다 —
+    # 사람이 만든 표가 언제나 이긴다(담당자 2026-09-27). 판독본만 있으면 그것을 쓴다.
+    sheets7 = [p for p in got.get("7", []) if p.lower().endswith((".xlsx", ".xls"))]
+    if any("판독" not in os.path.basename(p) for p in sheets7):
+        skipped = [p for p in sheets7 if "판독" in os.path.basename(p)]
+        sheets7 = [p for p in sheets7 if "판독" not in os.path.basename(p)]
+        for p in skipped:
+            saw(p, "담당자가 만든 수율현황표가 있어 판독본은 쓰지 않음")
+    for p in sheets7:
+        if True:
             got_lots = yield_sheet.read_yields(p)
             for lot, vals in got_lots:
                 data.yields[lot] = vals

@@ -1006,8 +1006,8 @@ button.link:hover{text-decoration:underline}
            보고서는 늘 그것을 쓰고, 없을 때만 판독본을 쓴다. 쪽수는 제품마다가 아니라
            수탁사 × 기록서 서식 × 판(Rev.) 프로필로 한 번만 적는다. -->
       <section class="view" id="v-yield" hidden>
-        <div class="card">
-          <div class="card-head"><h2>기록서 서식 프로필</h2>
+        <div class="card" id="yp-card" hidden>
+          <div class="card-head"><h2>기록서 서식 프로필 <span class="muted" style="font-weight:400">(선택)</span></h2>
             <span class="pill">수탁사 × 기록서 × 판(Rev.)</span>
             <span class="spacer"></span>
             <button class="link" id="yp-new" title="수율이 적힌 쪽수를 서식마다 한 번만 적어 둡니다">서식 프로필 만들기 +</button>
@@ -1023,11 +1023,15 @@ button.link:hover{text-decoration:underline}
         </div>
         <div class="card">
           <div class="card-head"><h2>제품별 수율 자료</h2><span class="pill">7. 수율현황표</span>
-            <span class="spacer"></span><span class="muted" id="yield-hint"></span></div>
+            <span class="spacer"></span><span class="muted" id="yield-hint"></span>
+            <button class="link" id="yp-toggle" title="같은 서식의 제품이 많을 때만 — 쪽을 서식마다 한 번 적어 두는 길">서식 프로필 (선택) ▾</button></div>
+          <div class="muted" style="padding:8px 16px 0">기록서 스캔 파일 이름에 <b>(수율 6페이지)</b> 처럼 쪽을 적어 7항에 올리면
+            그 쪽을 읽어 <b>7. 수율현황표 - 판독.xlsx</b> 를 만들고, 보고서 작성 때 바로 씁니다. 쪽 번호는 PDF 뷰어에 보이는 쪽입니다.
+            보고서 작성 단추를 눌렀는데 수율현황표가 없으면 그때도 스캔에서 먼저 읽습니다.</div>
           <div class="tablewrap">
             <table class="compact">
               <thead><tr><th>코드</th><th>제품명</th><th>제형</th><th>담당자가 만든 표</th>
-                <th>기록서 스캔</th><th>서식 프로필</th><th>판독</th></tr></thead>
+                <th>기록서 스캔</th><th>수율 쪽</th><th>서식 프로필</th><th>판독</th></tr></thead>
               <tbody id="yield-body"></tbody>
             </table>
           </div>
@@ -2729,13 +2733,20 @@ async function assignYieldProfile(code, profileId){
   } catch (error) { showToast(`<b style="color:#b91c1c">${esc(error.message)}</b>`); }
 }
 
-async function readYield(code, button){
-  const original = button.textContent;
-  button.textContent = "판독 중…"; button.disabled = true;
-  const watcher = watchProgress(code, button, "수율 판독");
+/* 파일 이름에 적은 수율 쪽 — '(수율 6페이지)' · '수율 6-7쪽' · 'yield p6'. 서버(yield_profile.pages_from_name)와 같은 규칙.
+   담당자 2026-09-28: "제조기록서 스캔 파일 이름명 - 수율 페이지를 기재하면 알아서 수율 엑셀파일로 만들어주는게 좋겠어" */
+function yieldPagesInName(name){
+  const m = /(?:수율|yield)\s*[:：]?\s*(?:p\.?\s*|page\s*)?([0-9](?:[0-9,\s\-~]*[0-9])?)/i.exec(String(name||"").replace(/\.[^.]+$/, ""));
+  return m ? m[1].trim() : "";
+}
+async function readYield(code, button, pages){
+  const original = button ? button.textContent : "";
+  if (button){ button.textContent = "판독 중…"; button.disabled = true; }
+  const ghost = button || document.createElement("button");
+  const watcher = watchProgress(code, ghost, "수율 판독");
   try {
     const response = await fetch("api/read-yield", { method:"POST",
-      headers:{ "Content-Type":"application/json" }, body: JSON.stringify({ product: code }) });
+      headers:{ "Content-Type":"application/json" }, body: JSON.stringify({ product: code, pages: pages || "" }) });
     clearInterval(watcher);
     const payload = await response.json();
     if (payload.ok){
@@ -2759,8 +2770,23 @@ async function readYield(code, button){
     clearInterval(watcher);
     showToast(`<b style="color:#b91c1c">수율을 읽지 못했습니다</b><br>${esc(error.message)}`);
   } finally {
-    button.textContent = original; button.disabled = false;
+    if (button){ button.textContent = original; button.disabled = false; }
   }
+}
+
+/* 수율 쪽 칸 — 스캔마다 어느 쪽을 읽을지(파일 이름 · 지난 메모 · 프로필)와, 없을 때 적는 입력칸. */
+function yieldPagesCell(r){
+  const plan = r.scan_pages || [];
+  const known = plan.filter(p=>(p.pages||[]).length);
+  const lines = known.map(p=>`<div class="muted" title="${esc(p.name)}">쪽 ${p.pages.join(", ")} <span style="opacity:.7">· ${esc(p.source)}</span></div>`).join("");
+  if (!uploadEnabled()) return lines || `<span class="muted">—</span>`;
+  const missing = plan.length - known.length;
+  const value = r.pages_note || "";
+  return lines
+    + `<input data-ypages="${esc(r.code)}" value="${esc(value)}" placeholder="${known.length ? "다른 쪽으로 읽으려면 적기" : "예: 6 · 6-7 · 조제 7, 충전 12"}"
+         title="PDF 뷰어에 보이는 쪽 번호. 파일 이름에 '(수율 6페이지)' 를 붙여 올리면 적지 않아도 됩니다"
+         style="width:150px;margin-top:3px;border:1px solid var(--line-2);border-radius:7px;padding:3px 7px;font-size:12px;background:var(--surface);color:var(--ink)">`
+    + (missing && known.length ? `<div class="muted" style="font-size:11px">스캔 ${missing}개는 쪽을 몰라 건너뜁니다</div>` : ``);
 }
 
 function renderYield(){
@@ -2773,7 +2799,7 @@ function renderYield(){
   if (!body) return;
   const hint = $("#yield-hint");
   if (hint) hint.textContent = uploadEnabled()
-    ? "담당자가 만든 표가 있으면 보고서는 늘 그것을 씁니다"
+    ? "스캔 파일 이름에 '(수율 6페이지)' 를 붙여 올리면 그 쪽을 바로 읽어 엑셀을 만듭니다 · 담당자가 만든 표가 있으면 보고서는 늘 그것을 씁니다"
     : "python -m pqr serve 로 실행하면 이 자리에서 판독할 수 있습니다";
   const rows = (YIELD.rows || []).filter(r=>{
     if (state.q){
@@ -2796,6 +2822,7 @@ function renderYield(){
               ? `${(r.scans||[]).length}개<br><span class="muted">${esc((r.scans||[])[0])}</span>`
               : `<span class="muted">없음</span>`}
           ${uploadEnabled() ? `<br><button class="btn ghost sm" data-yupload="${esc(r.code)}">스캔 올리기</button>` : ``}</td>
+      <td>${yieldPagesCell(r)}</td>
       <td>${uploadEnabled()
             ? `<select data-yprofile="${esc(r.code)}">
                  <option value="">— 고르세요 —</option>`
@@ -2809,13 +2836,25 @@ function renderYield(){
               : `<span class="muted">아직</span>`}
           ${uploadEnabled() ? `<br><button class="btn sm" data-yread="${esc(r.code)}"${(r.scans||[]).length?"":" disabled title='기록서 스캔을 먼저 올리세요'"}>수율 판독 🔍</button>` : ``}</td>
     </tr>`).join("")
-    : `<tr><td colspan="7" class="muted">수율 자료(기록서 스캔 또는 수율현황표)가 있는 제품이 없습니다.</td></tr>`;
+    : `<tr><td colspan="8" class="muted">수율 자료(기록서 스캔 또는 수율현황표)가 있는 제품이 없습니다.</td></tr>`;
   body.querySelectorAll("[data-yread]").forEach(n=>
-    n.addEventListener("click", ()=>readYield(n.dataset.yread, n)));
+    n.addEventListener("click", ()=>{
+      const box = body.querySelector(`[data-ypages="${n.dataset.yread}"]`);
+      readYield(n.dataset.yread, n, box ? box.value.trim() : "");
+    }));
   body.querySelectorAll("[data-yupload]").forEach(n=>
     n.addEventListener("click", ()=>openUpload(n.dataset.yupload, "7")));
   body.querySelectorAll("[data-yprofile]").forEach(n=>
     n.addEventListener("change", ()=>assignYieldProfile(n.dataset.yprofile, n.value)));
+  const toggle = $("#yp-toggle"), card = $("#yp-card");
+  if (toggle && card && !toggle.dataset.bound){
+    toggle.dataset.bound = "1";
+    toggle.addEventListener("click", ()=>{
+      card.hidden = !card.hidden;
+      toggle.textContent = card.hidden ? "서식 프로필 (선택) ▾" : "서식 프로필 접기 ▴";
+      if (!card.hidden) card.scrollIntoView({ behavior:"smooth", block:"start" });
+    });
+  }
 }
 
 /* ---- 품질 이슈 경향 ---- */
@@ -3199,6 +3238,15 @@ async function submitUpload(){
   button.textContent = "올리기"; button.disabled = true;
   renderSubPicker();
   renderItemFiles();
+  // 기록서 스캔 이름에 수율 쪽이 적혀 있으면 올린 김에 바로 읽어 수율현황표 초안을 만든다
+  // (담당자 2026-09-28: "해당 파일을 끌어오면 그런식으로 엑셀파일로 만들어주는거지").
+  if (uploadTarget && ["7", "6"].includes(uploadTarget.item)
+      && done.some(p=>/\.pdf$/i.test(p.name || p.saved || "") && yieldPagesInName(p.name || p.saved))){
+    const code = uploadTarget.code;
+    showToast(`🔍 <b>수율 쪽이 적힌 기록서 스캔</b>을 올렸습니다 — 그 쪽을 읽어 수율현황표 초안을 만듭니다.`);
+    YIELD.loaded = false;
+    readYield(code, null, "");
+  }
 }
 
 /* ---- 자료 업로드 화면 ---- */

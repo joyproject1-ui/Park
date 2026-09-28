@@ -28,6 +28,7 @@ READING_NAME = "PQR 수율 판독.json"
 SHEET_NAME = "7. 수율현황표 - 판독.xlsx"
 OWN_SHEET = re.compile(r"^7[.\s].*수율현황표(?!.*판독)", re.I)
 LOG_NAME = "PQR 수율 판독 기록.txt"
+PAGES_NAME = "PQR 수율 쪽.txt"          # 화면에서 적은 쪽 번호 — 다음 판독 때 다시 쓴다
 DPI = 200
 
 
@@ -234,6 +235,66 @@ def save_log(folder, lines, result=None):
     return path
 
 
+def load_pages_note(folder):
+    """화면에서 적어 둔 쪽 번호(제품 폴더의 'PQR 수율 쪽.txt') — 없으면 빈 글."""
+    try:
+        with open(os.path.join(folder, PAGES_NAME), encoding="utf-8-sig") as handle:
+            return handle.read().strip()
+    except OSError:
+        return ""
+
+
+def save_pages_note(folder, text):
+    text = str(text or "").strip()
+    path = os.path.join(folder, PAGES_NAME)
+    try:
+        if text:
+            with open(path, "w", encoding="utf-8") as handle:
+                handle.write(text + "\n")
+        elif os.path.isfile(path):
+            os.remove(path)
+    except OSError:
+        pass
+
+
+def pages_for(path, prof=None, given="", folder=None):
+    """이 스캔에서 읽을 쪽과 그 출처 — (쪽 목록, 출처).
+
+    차례: ① 화면에서 적은 쪽(given) ② 파일 이름의 '(수율 6페이지)' ③ 제품 폴더에 남긴 쪽 메모
+    ④ 서식 프로필. 담당자 2026-09-28: 파일 이름에 쪽을 적어 끌어오면 그대로 읽히기를 바람 —
+    프로필은 같은 서식이 여럿일 때 한 번만 적는 길로 남겨 둔다.
+    """
+    given_pages = profile_mod.page_list({"pages": profile_mod.parse_pages(given)}) if given else []
+    if given_pages:
+        return given_pages, "화면에서 적은 쪽"
+    named = profile_mod.pages_from_name(path)
+    if named:
+        return named, "파일 이름의 쪽"
+    if folder:
+        note = load_pages_note(folder)
+        noted = profile_mod.page_list({"pages": profile_mod.parse_pages(note)}) if note else []
+        if noted:
+            return noted, "지난번에 적은 쪽"
+    if prof:
+        listed = profile_mod.page_list(prof)
+        if listed:
+            return listed, "서식 프로필 '%s'" % prof.get("id", "")
+    return [], ""
+
+
+def _merge_reading(into, got):
+    """스캔 여러 개(제조번호마다 한 파일)를 읽은 결과를 하나로 — 같은 제조번호는 먼저 읽은 것이 남는다."""
+    seen = {str(one.get("lot") or "").upper() for one in into.get("lots") or []}
+    for one in got.get("lots") or []:
+        if str(one.get("lot") or "").upper() not in seen:
+            into.setdefault("lots", []).append(one)
+            seen.add(str(one.get("lot") or "").upper())
+    specs = into.setdefault("specs", {})
+    for name, value in (got.get("specs") or {}).items():
+        specs.setdefault(name, value)
+    return into
+
+
 def _page_images(path, pages, work, log=None):
     """지정한 쪽만 그림으로 뽑는다 — 이름 끝에 쪽 번호를 남겨 판독기가 쪽을 알 수 있게."""
     from . import handwriting
@@ -251,7 +312,7 @@ def _page_images(path, pages, work, log=None):
     return made
 
 
-def make_reading(input_dir, folder, code="", log=None, known_lots=(), allow_pc=False):
+def make_reading(input_dir, folder, code="", log=None, known_lots=(), allow_pc=False, pages=""):
     """제품 폴더의 기록서 스캔에서 수율을 읽어 판독 파일과 수율현황표 초안을 만든다.
 
     돌려주는 값: {"ok", "how", "lots", "sheet", "reading", "notes"} 또는
@@ -269,41 +330,57 @@ def make_reading(input_dir, folder, code="", log=None, known_lots=(), allow_pc=F
             "판독본은 참고용으로만 만듭니다." % os.path.basename(mine))
     data = profile_mod.load(input_dir)
     prof = profile_mod.for_product(data, code)
-    if not prof:
-        return {"ok": False, "need": "profile",
-                "why": "이 제품에 기록서 서식 프로필이 배정되어 있지 않습니다 — '수율현황표 분석' "
-                       "화면에서 수탁사·기록서 서식을 고르거나 새로 만들어 쪽수를 한 번 적어 주세요."}
-    pages = profile_mod.page_list(prof)
-    if not pages:
-        return {"ok": False, "need": "profile",
-                "why": "프로필 '%s' 에 쪽수가 없습니다 — 수율이 적힌 쪽 번호를 적어 주세요."
-                       % prof.get("id", "")}
     paths = scans(folder)
     if not paths:
         return {"ok": False, "why": "7항(또는 6항)에 기록서 스캔 PDF 가 없습니다 — 먼저 올려 주세요."}
+    # 스캔마다 읽을 쪽을 정한다 — 화면에서 적은 쪽 > 파일 이름 > 지난번 메모 > 프로필
+    plan = []
+    for path in paths:
+        page_nos, source = pages_for(path, prof, pages, folder)
+        if page_nos:
+            plan.append((path, page_nos, source))
+        else:
+            say("  %s — 읽을 쪽을 모릅니다(건너뜀)" % os.path.basename(path))
+    if not plan:
+        return {"ok": False, "need": "pages",
+                "why": "수율이 적힌 쪽을 모릅니다 — 파일 이름에 '(수율 6페이지)' 처럼 붙여 올리거나, "
+                       "'수율현황표 분석' 의 수율 쪽 칸에 쪽 번호(PDF 뷰어의 쪽 번호)를 적어 주세요. "
+                       "같은 서식의 제품이 많으면 서식 프로필에 한 번만 적어도 됩니다."}
+    if pages:
+        save_pages_note(folder, pages)          # 다음 판독 때 다시 적지 않아도 되게
     kind, label = stability_read.how(folder)
     if kind not in ("api", "cli"):
         return {"ok": False, "need": "reader",
                 "why": "이 PC 에서 쓸 수 있는 판독기가 없습니다 — Claude Code 를 깔거나 "
                        "ANTHROPIC_API_KEY 를 두세요. (이 PC 판독기는 표 판독에 쓰지 않습니다.)"}
-    rules = prof.get("rules") or {}
+    rules = (prof or {}).get("rules") or {}
     rule_text = str(rules.get("note") or "")
-    say("7항 수율 판독: %s · 쪽 %s · %s"
-        % (os.path.basename(paths[0]), ", ".join(str(p) for p in pages), label))
-    if kind == "api":
-        from . import vision_claude
-        got = vision_claude.read_yield(paths[0], pages, rule_text, say)
-    else:
-        from . import claude_cli
-        work = tempfile.mkdtemp(prefix="pqr-yield-")
-        try:
-            images = _page_images(paths[0], pages, work, say)
-            if not images:
-                return {"ok": False, "why": "지정한 쪽을 그림으로 뽑지 못했습니다 — 쪽 번호가 "
-                                            "이 PDF 의 쪽수를 넘지 않는지 확인하세요."}
-            got = claude_cli.read_yield(images, rule_text, folder, say)
-        finally:
-            shutil.rmtree(work, ignore_errors=True)
+    got = {"lots": [], "specs": {}}
+    pages_used = {}
+    for path, page_nos, source in plan:
+        say("7항 수율 판독: %s · 쪽 %s (%s) · %s"
+            % (os.path.basename(path), ", ".join(str(p) for p in page_nos), source, label))
+        pages_used[os.path.basename(path)] = page_nos
+        if kind == "api":
+            from . import vision_claude
+            part = vision_claude.read_yield(path, page_nos, rule_text, say)
+        else:
+            from . import claude_cli
+            work = tempfile.mkdtemp(prefix="pqr-yield-")
+            try:
+                images = _page_images(path, page_nos, work, say)
+                if not images:
+                    say("  %s — 지정한 쪽을 그림으로 뽑지 못했습니다(쪽 번호가 PDF 쪽수를 넘는지 확인)"
+                        % os.path.basename(path))
+                    continue
+                part = claude_cli.read_yield(images, rule_text, folder, say)
+            finally:
+                shutil.rmtree(work, ignore_errors=True)
+        got = _merge_reading(got, part or {})
+    if not pages_used:
+        return {"ok": False, "why": "지정한 쪽을 그림으로 뽑지 못했습니다 — 쪽 번호가 "
+                                    "이 PDF 의 쪽수를 넘지 않는지 확인하세요."}
+    pages = sorted({p for nos in pages_used.values() for p in nos})
     for one in got.get("lots") or []:
         one["values"] = apply_names(one.get("values"), rules)
         one["production"] = apply_names(one.get("production"), rules)
@@ -314,9 +391,46 @@ def make_reading(input_dir, folder, code="", log=None, known_lots=(), allow_pc=F
         say("  확인 필요: " + note)
     sheet = write_sheet(folder, got, notes)
     reading = save_reading(folder, got, notes,
-                           {"profile": prof.get("id", ""), "pages": pages,
-                            "source": os.path.basename(paths[0]), "how": label})
+                           {"profile": (prof or {}).get("id", ""), "pages": pages,
+                            "pages_by_file": pages_used,
+                            "source": ", ".join(pages_used.keys()), "how": label})
     say("7항 수율 판독 끝: %d Lot → %s" % (len(got.get("lots") or []), os.path.basename(sheet)))
     return {"ok": True, "how": label, "lots": len(got.get("lots") or []),
             "sheet": sheet, "reading": reading, "notes": notes,
             "own_sheet": os.path.basename(mine) if mine else ""}
+
+
+def reading_sheet(folder):
+    """판독으로 만든 '7. 수율현황표 - 판독.xlsx' — 있으면 경로."""
+    path = os.path.join(folder, SHEET_NAME)
+    return path if os.path.isfile(path) else None
+
+
+def ensure_sheet(folder, code="", log=None):
+    """보고서를 만들기 전에 수율현황표가 없으면 스캔에서 읽어 둔다.
+
+    담당자 2026-09-28: "스캔파일명에 수율 페이지 번호를 기재하면 자동으로 수율 엑셀 시트를 만들어서
+    PQR 자동 작성할 때 바로 사용할 수 있도록". 담당자가 만든 표가 있으면 아무것도 하지 않고, 이미
+    판독본이 있으면 그것을 쓴다. 쪽을 모르거나 판독기가 없으면 까닭만 남기고 넘어간다 — 보고서
+    작성을 막지 않는다.
+    """
+    say = log or (lambda *a: None)
+    folder = os.path.abspath(folder)
+    if own_sheet(folder):
+        return None
+    if reading_sheet(folder):
+        return reading_sheet(folder)
+    if not scans(folder):
+        return None
+    input_dir = os.path.dirname(folder)
+    try:
+        got = make_reading(input_dir, folder, code, log=say)
+    except Exception as error:
+        say("7항 수율 판독을 건너뜁니다 — %s" % error)
+        return None
+    if got.get("ok"):
+        say("7항 수율현황표 초안을 스캔에서 만들었습니다: %s (%s Lot)"
+            % (os.path.basename(str(got.get("sheet") or "")), got.get("lots")))
+        return got.get("sheet")
+    say("7항 수율 판독을 건너뜁니다 — %s" % got.get("why", ""))
+    return None
