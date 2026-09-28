@@ -39,7 +39,7 @@ PROMPT = """다음 안정성 시험일지(손글씨 스캔 PDF)를 모두 읽고
     "expiry": "2027.01.09",
     "source": "읽은 파일 이름.pdf",
     "points": [
-      {"period": "12M", "done": "2025.03.10", "assays": {"pH": 6.4, "오플록사신": 101.2, "보존제": 93.2}, "unsure": []}
+      {"period": "12M", "done": "2025.03.10", "test_date": "2025.03.04", "assays": {"pH": 6.4, "오플록사신": 101.2, "보존제": 93.2}, "unsure": []}
     ]
   }
 ]}
@@ -51,7 +51,9 @@ PROMPT = """다음 안정성 시험일지(손글씨 스캔 PDF)를 모두 읽고
   "시판후", 그것도 없으면 시점이 3M·6M·9M 이면 "장기", 12M·24M·36M 만 있으면 "시판후".
 · market: 제품명이나 파일 이름에 '수출' 이 있으면 "수출", 아니면 "내수".
 · period: Initial(초기)·3M·6M·9M·12M·18M·24M·36M. 시험하지 않은(사선·빈) 시점은 넣지 않습니다.
-· done: 그 시점의 결재(확인자·팀장) 일자. 없으면 시험일자. 형식 YYYY.MM.DD.
+· done: 그 시점의 결재(확인자·팀장) 일자. 없으면 시험일자. 형식 YYYY.MM.DD. **시점마다 다른 일자**입니다 —
+  맨 아래 결재 줄 하나를 모든 시점에 적지 마세요. test_date: 시험일자 행에서 그 시점 열의 일자(초기 열은 인쇄된
+  날짜, 나머지는 손글씨). 시점마다 반드시 담습니다.
 · assays: **숫자로 적힌 시험항목 모두** — 함량(성분이 둘이면 성분마다), 보존제, pH, 삼투압, 비중, 제제균일성 등.
   이름은 표의 시험항목 이름 그대로("pH", "보존제", 성분 이름). 성분 이름을 모르면 "함량".
   pH 는 반드시 넣습니다 — 13.3 경향표의 첫 열이 pH 입니다. 고쳐 쓴 값(두 줄로 적힌 값)은 나중 값을 씁니다.
@@ -319,7 +321,8 @@ def _clean(logs, paths, specs=None):
             if not assays and not done:
                 continue
             points.append({"period": period, "done": done, "assays": assays,
-                           "unsure": sorted(set(unsure))})
+                           "unsure": sorted(set(unsure)), "_test": vision_claude._date(p.get("test_date"))})
+        vision_claude.settle_dates(points)                # 같은 결재 일자가 여러 시점에 들어오면 시험일자로
         if not points:
             continue
         points.sort(key=lambda p: handwriting.period_order(p["period"]))

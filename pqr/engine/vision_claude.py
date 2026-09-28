@@ -158,6 +158,35 @@ def _part(name, specs):
     return got or "함량"
 
 
+def settle_dates(points):
+    """시점마다 **다른** 완료 일자 — 여러 시점에 같은 결재 일자가 들어오면(맨 아래 결재 줄 하나를 시점마다 적은 것)
+    그 시점의 시험일자로 바꾸고 'done' 을 애매로 남긴다. 시험일자마저 없으면 빈 값(→ '확인 필요').
+
+    담당자 2026-09-28 나조린 1회용 13.2 LKW301: Initial·12M·24M 완료 일자가 모두 2025.05.15 로 적혔는데
+    시험일지의 시험일자 행은 초기 2023.04.14 · 12M 2024.04 · 24M 2025.05 였다 — "완료일자 초기 일자가 없어".
+    points 의 '_test' 는 그 시점의 시험일자(있으면). 여기서 지운다.
+    """
+    seen = {}
+    for p in points:
+        if p.get("done"):
+            seen.setdefault(p["done"], []).append(p)
+    for same in seen.values():
+        if len(same) < 2:
+            continue
+        for p in same:
+            test = p.get("_test") or ""
+            if test and test != p["done"]:
+                p["done"] = test
+            elif not test:
+                p["done"] = ""
+            if "done" not in p["unsure"]:
+                p["unsure"].append("done")
+            p["unsure"] = sorted(set(p["unsure"]))
+    for p in points:
+        p.pop("_test", None)
+    return points
+
+
 def to_log(rec, source, specs=None):
     """read_page 결과 하나 → 판독 파일(handwriting) 꼴의 기록 하나. 읽은 시점이 없으면 None."""
     lot = re.sub(r"\s+", "", str(rec.get("lot") or "")).upper()
@@ -192,7 +221,9 @@ def to_log(rec, source, specs=None):
             unsure.append("done")
         if not assays and not done:
             continue
-        points.append({"period": period, "done": done, "assays": assays, "unsure": sorted(set(unsure))})
+        points.append({"period": period, "done": done, "assays": assays, "unsure": sorted(set(unsure)),
+                       "_test": _date(p.get("test_date"))})
+    settle_dates(points)
     if not points:
         return None
     from . import handwriting

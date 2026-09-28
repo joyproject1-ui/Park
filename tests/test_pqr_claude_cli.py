@@ -124,6 +124,17 @@ class 받은_기록_다듬기(unittest.TestCase):
         self.assertEqual(got["points"][0]["unsure"], ["done"])       # 완료 일자가 없으면 애매
         self.assertEqual(got["source"], "13 장기 안정성시험일지(내수용).pdf")
 
+    def test_같은_결재_일자가_여러_시점에_오면_시험일자로(self):
+        """담당자 2026-09-28 LKW301: 완료 일자가 시점마다 같았다 — test_date(시험일자 행)로 바꾼다."""
+        one = self._one(points=[{"period": "Initial", "done": "2025.05.15", "test_date": "2023.04.14", "assays": {"함량": "100.4"}, "unsure": []},
+                                {"period": "12M", "done": "2025.05.15", "test_date": "2024.04.21", "assays": {"함량": "101.0"}, "unsure": []},
+                                {"period": "24M", "done": "2025.05.15", "test_date": "", "assays": {"함량": "103.4"}, "unsure": []}])
+        got = C._clean([one], self.PATHS)[0]
+        self.assertEqual([(p["period"], p["done"]) for p in got["points"]],
+                         [("Initial", "2023.04.14"), ("12M", "2024.04.21"), ("24M", "")])
+        self.assertTrue(all("done" in p["unsure"] for p in got["points"]))
+        self.assertIn("test_date", C.PROMPT if hasattr(C, "PROMPT") else "test_date")
+
     def test_제조번호나_시점이_없으면_버린다(self):
         self.assertEqual(C._clean([self._one(lot="")], self.PATHS), [])
         self.assertEqual(C._clean([self._one(points=[])], self.PATHS), [])

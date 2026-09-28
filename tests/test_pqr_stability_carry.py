@@ -168,6 +168,39 @@ class 이어진_표(unittest.TestCase):
         self.assertEqual(E.grid_width(t), 3)
 
 
+class 포장_형태_통일과_같은_완료_일자(unittest.TestCase):
+    """담당자 2026-09-28 나조린 1회용 13.2: "안정성 포장형태가 동일하지 않아" / "완료일자 초기 일자가 없어"."""
+
+    def test_숫자가_같고_글자만_다른_포장_형태는_흔한_표기로(self):
+        from pqr.engine import recipe_ointment as R
+        logs = [{"lot": "LKY401", "pack": "0.5mL/관x10관/갑"}, {"lot": "LKY402", "pack": "0.5mL/관x10관/갑"},
+                {"lot": "LKW301", "pack": "0.5mL*10관/GAB"}, {"lot": "LKX201", "pack": "5mL x 1병/갑"}]
+        issues = []
+        changed = R.unify_packs(logs, "0.5mL/관x10관/갑", issues)
+        self.assertEqual(changed, [("LKW301", "0.5mL*10관/GAB", "0.5mL/관x10관/갑")])
+        self.assertEqual(logs[2]["pack"], "0.5mL/관x10관/갑")
+        self.assertEqual(logs[3]["pack"], "5mL x 1병/갑")                 # 숫자가 다르면 다른 포장
+        self.assertEqual(len(issues), 1)
+        self.assertIn("LKW301", issues[0][1])
+
+    def test_시점이_둘_이상인데_완료_일자가_모두_같으면_노랑_문의(self):
+        import docx as _docx
+        from docx.oxml.ns import qn
+        from pqr.engine import docedit as E, recipe_ointment as R
+        d = _docx.Document()
+        t = d.add_table(rows=3, cols=8)
+        for j, h in enumerate(["연번", "해당 연도", "시험 기간", "제조 번호", "포장 형태", "보관 조건", "완료 일자", "비고"]):
+            E.set_cell(t.rows[0].cells[j], h)
+        one = {"lot": "LKW301", "year": "2023", "pack": "0.5mL/관x10관/갑", "store": "25±2℃", "mfg": "2023.03.20", "expiry": "2025.03.19"}
+        taken = [{"period": "Initial", "done": "2025.05.15", "unsure": []}, {"period": "12M", "done": "2025.05.15", "unsure": []},
+                 {"period": "24M", "done": "2025.05.15", "unsure": []}]
+        issues = []
+        R._fill_131_table(t, [(one, taken)], {}, issues, post=True)
+        self.assertTrue(any("완료 일자가 3개 시점" in w for _, _, w in issues))
+        runs = list(E.raw_cells(t.rows[1])[6]._tc.iter(qn("w:r")))
+        self.assertTrue(runs and all(r.find(qn("w:rPr")).find(qn("w:highlight")) is not None for r in runs))
+
+
 if __name__ == "__main__":
     unittest.main()
 

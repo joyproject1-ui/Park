@@ -4427,6 +4427,37 @@ def _post_completed(one, taken):
     return max(months) >= 36
 
 
+def pack_signature(text):
+    """포장 형태의 숫자 열쇠 — '0.5mL/관x10관/갑' 과 '0.5mL*10관/GAB' 은 둘 다 ['0.5', '10']."""
+    return re.findall(r"\d+(?:\.\d+)?", str(text or ""))
+
+
+def unify_packs(logs, common, issues=None, log=None):
+    """같은 제품·같은 시장의 포장 형태는 **한 표기**로 — 숫자가 같은데 글자만 다른 것(OCR·전년도 표기 차이)은
+    가장 흔한 표기(common)로 바꾼다 → 바꾼 [(lot, 전, 후)].
+
+    담당자 2026-09-28 나조린 1회용 13.2: LKW301 '0.5mL*10관/GAB' 가 다른 줄의 '0.5mL/관x10관/갑' 과
+    "동일하지 않아". 숫자가 다르면(5g 과 10g) 다른 포장이라 그대로 둔다.
+    """
+    changed = []
+    if not common:
+        return changed
+    sig = pack_signature(common)
+    for one in logs:
+        text = one.get("pack") or ""
+        if not text or text == common or pack_signature(text) != sig:
+            continue
+        one["pack"] = common
+        changed.append((one.get("lot") or "", text, common))
+    if changed and log:
+        log("13항: 포장 형태 표기를 '%s' 로 통일 — %s" % (common, ", ".join("%s('%s')" % (l, t) for l, t, _ in changed)))
+    if changed and issues is not None:
+        issues.append(("13", ", ".join(l for l, _, _ in changed),
+                       "포장 형태 표기가 줄마다 달라 '%s' 로 통일했습니다(%s) — 시험일지와 대조하세요"
+                       % (common, ", ".join("'%s'" % t for _, t, _ in changed))))
+    return changed
+
+
 def _fill_131_table(table, rows, why_of, issues, post=False):
     """13.1(장기)·13.2(시판 후) 실시 내역 — Lot 하나가 한 줄, 시험 기간·완료 일자는 줄바꿈으로 잇는다.
     마지막 열은 장기면 '실시 사유', 시판 후면 '비고'(완료/진행중)."""
@@ -4451,6 +4482,14 @@ def _fill_131_table(table, rows, why_of, issues, post=False):
         # 손글씨 판독이 애매한 완료 일자는 노랑 (담당자 2026-09: "애매한 것만 노랑마크로")
         if any("done" in (p.get("unsure") or []) for p in taken) and len(cells) > 6:
             E.highlight_cell(cells[6])                      # 시점마다 한 줄('확인 필요' 도 줄마다) — 시험 기간 줄과 맞춘다
+        # 시점이 둘 이상인데 완료 일자가 모두 같으면 잘못 읽은 것 — 노랑 + 문의 (담당자 2026-09-28 LKW301:
+        # Initial·12M·24M 이 모두 2025.05.15 — "완료일자 초기 일자가 없어")
+        real = [d for d in dones if d and d != "확인 필요"]
+        if len(real) >= 2 and len(set(real)) == 1 and len(cells) > 6:
+            E.highlight_cell(cells[6])
+            issues.append(("13.2" if post else "13.1", one["lot"],
+                           "완료 일자가 %d개 시점(%s) 모두 %s 로 같습니다(노랑) — 시험일지의 시험일자 행을 보고 "
+                           "시점마다 그 날짜를 적으세요" % (len(real), "·".join(periods), real[0])))
         if carried:
             for k in (2, 6, 7):
                 if k < len(cells):
@@ -5045,6 +5084,7 @@ def _fill_stability26(document, logs, period, spec, log, issues, why_of=None, pr
                     issues.append(("13", one["lot"], "포장 형태를 '%s' 로 읽었는데 용량이 없어 "
                                                      "'%s' 로 적었습니다 — 시험일지와 대조하세요" % (text, 흔한)))
                 one["pack"] = 흔한
+        unify_packs(mlogs, 흔한, issues, log)          # 숫자가 같고 글자만 다른 표기는 하나로 (담당자 2026-09-28)
         long_logs = [one for one in mlogs if (one.get("kind") or "장기") != "시판후"]
         post_logs = [one for one in mlogs if (one.get("kind") or "장기") == "시판후"]
         rows_l, trend_l = split(long_logs)

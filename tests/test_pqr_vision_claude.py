@@ -100,6 +100,35 @@ class 여러쪽_합치기(unittest.TestCase):
         self.assertEqual([p["period"] for p in logs[0]["points"]], ["Initial", "12M"])
 
 
+class 시점마다_다른_완료_일자(unittest.TestCase):
+    """담당자 2026-09-28 나조린 1회용 13.2 LKW301: Initial·12M·24M 완료 일자가 모두 2025.05.15 — "완료일자 초기 일자가 없어"."""
+
+    def test_같은_결재_일자가_여러_시점에_오면_시험일자로(self):
+        pts = [{"period": "Initial", "done": "2025.05.15", "assays": {}, "unsure": [], "_test": "2023.04.14"},
+               {"period": "12M", "done": "2025.05.15", "assays": {}, "unsure": [], "_test": "2024.04.21"},
+               {"period": "24M", "done": "2025.05.15", "assays": {}, "unsure": [], "_test": ""}]
+        V.settle_dates(pts)
+        self.assertEqual([p["done"] for p in pts], ["2023.04.14", "2024.04.21", ""])
+        self.assertTrue(all("done" in p["unsure"] for p in pts))
+        self.assertTrue(all("_test" not in p for p in pts))
+
+    def test_시점마다_다르면_그대로(self):
+        pts = [{"period": "Initial", "done": "2025.05.26", "assays": {}, "unsure": [], "_test": "2025.05.20"},
+               {"period": "3M", "done": "2025.08.22", "assays": {}, "unsure": [], "_test": ""}]
+        V.settle_dates(pts)
+        self.assertEqual([p["done"] for p in pts], ["2025.05.26", "2025.08.22"])
+        self.assertEqual([p["unsure"] for p in pts], [[], []])
+
+    def test_to_log_도_같은_규칙(self):
+        rec = _rec(points=[
+            {"label": "초기", "test_date": "2023.04.14", "reviewer_date": "2025.05.15", "tested": True,
+             "date_confidence": 0.9, "assays": [{"name": "함량", "value": "100.4", "confidence": 0.9}]},
+            {"label": "24M", "test_date": "2025.05.07", "reviewer_date": "2025.05.15", "tested": True,
+             "date_confidence": 0.9, "assays": [{"name": "함량", "value": "103.4", "confidence": 0.9}]}])
+        got = V.to_log(rec, "/x/[OG-23-2]나조린점안액(1회용)_시판후 안정성 결과표_LKW301_24M.pdf")
+        self.assertEqual([p["done"] for p in got["points"]], ["2023.04.14", "2025.05.07"])
+
+
 if __name__ == "__main__":
     unittest.main()
 
