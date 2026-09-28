@@ -1918,6 +1918,22 @@ def fill(document, data, product, period, today=None, log=None):
                     issues.append(("6", "제조단위" if k == 3 else "포장단위",
                                    "올해 공 기록서가 없어 전년도 결재본 값(%s)을 옮겼습니다(노랑) — "
                                    "이 제품의 제조·충전·포장 기록서를 6항에 올리면 올해 값으로 채웁니다" % keep[k]))
+        # 그래도 빈 칸(제조단위·포장단위)은 노랑으로 두고 왜 비었는지 문의에 적는다 (담당자 2026-09-28: "포장 단위는
+        # 포장기록서 보고 기재하라고 했는데 기재가 안됐어" — 사선만 남아 까닭을 알 수 없었다)
+        empty_cols = set()
+        for k, key, 이름 in ((3, "batch_size", "제조단위"), (4, "pack_unit", "포장단위")):
+            if k < len(keep) and not keep[k].strip():
+                empty_cols.add(k)
+                files = [str(x) for x in (batch.get("files") or [])]
+                if files:
+                    why = ("%s 을 채우지 못했습니다(노랑) — 6항 공 기록서 %d개(%s)를 읽었지만 '%s :' 글을 찾지 못함. "
+                           "%s기록서에 적힌 %s 표기를 알려 주시면 읽도록 고칩니다"
+                           % (이름, len(files), ", ".join(files[:4]), 이름, "포장" if k == 4 else "제조", 이름))
+                else:
+                    why = ("%s 을 채우지 못했습니다(노랑) — 6항에 이 제품의 %s기록서(공 기록서)가 없고 전년도 결재본 값도 없음. "
+                           "6항(또는 공통 폴더)에 %s기록서를 올리면 채웁니다" % (이름, "포장" if k == 4 else "제조", "포장" if k == 4 else "제조"))
+                log("6항: %s" % why)
+                issues.append(("6", 이름, why))
         f, l = E.fit_rows(table, 1, len(table.rows) - 1, max(1, len(lots)))
         for i, lot in enumerate(lots):
             c = E.raw_cells(table.rows[f + i])
@@ -1926,6 +1942,8 @@ def fill(document, data, product, period, today=None, log=None):
                 E.set_cell(c[k], keep[k] if k < len(keep) else "")
                 if k in carried:
                     E.highlight_cell(c[k])
+                if k in empty_cols:
+                    E.shade_cell(c[k])
             if len(c) > 5:
                 E.set_cell(c[5], "■ 적합 □ 부적합")
             if len(c) > 6:

@@ -93,6 +93,50 @@ class 허용기준에서_결과_문구(unittest.TestCase):
                          "인쇄상태가 양호하며 압인상태가 명확히 식별 가능함")
 
 
+class 요약_줄_찾기(unittest.TestCase):
+    """나조린 1회용 2026-09-28 9.2.3 포장 완료 후: 요약 줄이 자료 줄로 밀려 Lot 수만큼 복제됐다 —
+    "포장완료후는 연번과 Lot no를 추가했어야지"."""
+
+    def _table(self, first_label="최댓값", tail=None):
+        rows = [[("연번", 1), ("Lot No.", 1), ("성상", 1), ("확인(HPLC)", 1)],
+                [("1", 1), ("LKY201", 1), ("무색", 1), ("동일", 1)],
+                [(first_label, 2), ("", 1), ("", 1)],
+                [("최솟값", 2), ("", 1), ("", 1)],
+                [("평균", 2), ("", 1), ("", 1)],
+                [("공정능력지수 (Cpk)", 2), ("", 1), ("", 1)],
+                [("Cpk 판정 결과", 2), ("", 1), ("", 1)]]
+        if tail:
+            rows.append([(tail, 4)])
+        return _table(docx.Document(), rows)
+
+    def test_최대값_으로_적혀_있어도_요약_줄이다(self):
+        first, last, summary = D.data_range(self._table("최대값"))
+        self.assertEqual((first, last), (1, 1))
+        self.assertEqual(summary, [2, 3, 4, 5, 6])
+
+    def test_맨_아래에_다른_줄이_있어도_요약_줄을_찾는다(self):
+        first, last, summary = D.data_range(self._table(tail="특이사항 (Comment)"))
+        self.assertEqual((first, last), (1, 1))
+        self.assertEqual(summary, [2, 3, 4, 5, 6])
+
+    def test_Lot_수만큼_늘려도_연번과_Lot_이_줄마다_적힌다(self):
+        table = self._table("최대값")
+        lots = ["LKY201", "LKY401", "LKY402", "LKY403"]
+        D.fill(table, lots, lambda label, lot, i: "무색" if "성상" in label else "동일")
+        rows = [[c.text for c in row.cells] for row in table.rows]
+        self.assertEqual([r[0] for r in rows[1:5]], ["1", "2", "3", "4"])
+        self.assertEqual([r[1] for r in rows[1:5]], lots)
+        self.assertTrue(rows[5][0].startswith("최대값"))                     # 요약 줄은 그대로 남는다
+
+    def test_복제_원본의_첫_칸이_두_열을_덮어도_Lot_을_적는다(self):
+        table = _table(docx.Document(), [[("연번", 1), ("Lot No.", 1), ("성상", 1)],
+                                         [("1", 2), ("무색", 1)]])          # 첫 자료 줄부터 연번 칸이 Lot 열을 덮은 표
+        D.fill(table, ["LKY201", "LKY401"], lambda label, lot, i: "무색")
+        rows = [[c.text for c in row.cells] for row in table.rows]
+        self.assertEqual(rows[1][:3], ["1", "LKY201", "무색"])
+        self.assertEqual(rows[2][:3], ["2", "LKY401", "무색"])
+
+
 if __name__ == "__main__":
     unittest.main()
 

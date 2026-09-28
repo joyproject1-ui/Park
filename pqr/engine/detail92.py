@@ -15,7 +15,7 @@ from docx.oxml.ns import qn
 
 from . import docedit as E
 
-SUMMARY = ("최댓값", "최솟값", "평균", "공정능력지수", "Cpk")
+SUMMARY = ("최댓값", "최솟값", "최대값", "최소값", "평균", "공정능력지수", "Cpk")   # 표마다 '최대값' 으로도 적혀 있다
 HEAD_FIRST = ("연번", "no.", "번호")
 
 
@@ -91,19 +91,35 @@ def drop_blank_head(table):
     return 지움
 
 
+def _is_summary_row(tr):
+    """첫 칸 글이 최댓값·최솟값·평균·공정능력지수·Cpk 로 시작하는 줄."""
+    text = squeeze("".join(t.text or "" for t in tr.findall(qn("w:tc"))[0].iter(qn("w:t"))))
+    return bool(text) and any(text.startswith(squeeze(w)) or squeeze(w) in text[:8] for w in SUMMARY)
+
+
 def data_range(table):
-    """(첫 자료 행, 마지막 자료 행, [요약 행 …]) — 요약은 최댓값·최솟값·평균·Cpk 줄."""
+    """(첫 자료 행, 마지막 자료 행, [요약 행 …]) — 요약은 최댓값·최솟값·평균·Cpk 줄.
+
+    자료 줄은 머리행 다음부터 **첫 요약 줄 앞까지**다. 예전에는 표 맨 아래부터 거슬러 올라가며 요약 줄을 세어,
+    요약 줄 하나라도 글이 달랐거나('최대값') 맨 아래에 다른 줄이 있으면 요약 줄이 자료 줄로 밀려 그 줄이
+    Lot 수만큼 복제됐다 — 나조린 1회용 2026-09-28 9.2.3 포장 완료 후: 4~15번 줄이 '최댓값' 줄의 복제라
+    연번 칸이 Lot 열까지 덮어 Lot No. 가 비었다("포장완료후는 연번과 Lot no를 추가했어야지").
+    """
     trs = table._tbl.findall(qn("w:tr"))
     first = head_rows(table)
-    summary = []
-    for i in range(len(trs) - 1, first - 1, -1):
-        text = squeeze("".join(t.text or "" for t in trs[i].findall(qn("w:tc"))[0].iter(qn("w:t"))))
-        if any(squeeze(w) in text for w in SUMMARY):
-            summary.insert(0, i)
-        else:
-            break
-    last = (summary[0] - 1) if summary else (len(trs) - 1)
-    return first, last, summary
+    start = next((i for i in range(first, len(trs)) if _is_summary_row(trs[i])), None)
+    if start is None or start <= first:
+        # 요약 줄이 없거나 자료 줄이 하나도 없는 표 — 예전 규칙(맨 아래부터)대로
+        summary = []
+        for i in range(len(trs) - 1, first - 1, -1):
+            if _is_summary_row(trs[i]):
+                summary.insert(0, i)
+            else:
+                break
+        last = (summary[0] - 1) if summary else (len(trs) - 1)
+        return first, last, summary
+    summary = [i for i in range(start, len(trs)) if _is_summary_row(trs[i])]
+    return first, start - 1, summary
 
 
 # ---------- 허용기준 → 결과 문구 ----------
@@ -275,8 +291,15 @@ def fill(table, lots, value, cpk=None, miss=None):
     f, l = E.fit_rows(table, first, last, max(1, len(lots)))
     summary = [ri + (l - last) for ri in summary]    # 자료 줄이 늘거나 줄면 요약 줄도 밀린다
     got, where, 자리 = {}, {}, set()
+    lot_k = next((k for k, lab in enumerate(labs) if lab.lower().startswith("lotno") or lab.lower() == "no."), None)
     for i, lot in enumerate(lots):
         cells = _grid_cells(table.rows[f + i], len(labs))
+        if lot_k is not None and cells.get(lot_k) is None:
+            # 연번 칸이 Lot 열까지 덮은 자료 줄(복제 원본이 요약 줄 꼴) — 칸을 나눠 Lot No. 를 적을 자리를 만든다
+            wide = next((cells[k] for k in range(lot_k - 1, -1, -1) if cells.get(k) is not None), None)
+            if wide is not None:
+                E.split_span(wide)
+                cells = _grid_cells(table.rows[f + i], len(labs))
         for k, lab in enumerate(labs):
             cell = cells.get(k)
             if cell is None:
