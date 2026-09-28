@@ -3751,6 +3751,11 @@ def fill(document, data, product, period, today=None, log=None):
             return 0
         # 가장 최근 것 하나만 싣는다 (담당자 지시 2026-09) — 마스터파일에는 해묵은 PV 가 함께 있다.
         rows = [max(rows, key=lambda e: (e.get("report_date") or "", e.get("report") or ""))]
+        # 무엇을 어디서 읽어 적었는지 남긴다 — 담당자 2026-09-28: "10.1항 PV 내용은 이 내용 참고해서 적었는지
+        # 변경 사유가 동일하지 않아" (마스터파일이 공통 폴더에 있어 읽히지 않았을 때 전년도 글이 남아 있었다)
+        log("10.1: %s 에서 %s (%s) — 사유 '%s' · Lot %s"
+            % (os.path.basename(pv_path), rows[0].get("report") or "?", rows[0].get("report_date") or "?",
+               (rows[0].get("reason") or "").strip(), ", ".join(str(l) for _, l, _ in rows[0].get("lots") or [])))
         # 열은 머리행 이름으로 짚는다 — 전년도 양식은 'No.' 열이 있고 2026 결재본은 없다.
         # 자리로 쓰면 사유 체크박스가 No. 칸에 들어가는 등 한 칸씩 밀린다.
         head = [re.sub(r"\s+", "", E.cell_text(h)) for h in E.raw_cells(table.rows[0])]

@@ -47,6 +47,40 @@ class 라인별_시트(unittest.TestCase):
         self.assertEqual(masters.pv_by_code(self.path, "ZZZZ9"), [])
 
 
+class 담당자_마스터파일_모양(unittest.TestCase):
+    """2026-09-28 나조린 1회용 10.1: 마스터파일(BFS 2호 33번 줄)의 사유는 '주성분 제조원 추가 (나파졸린염산염, RSN103),
+    냉각 공정 파라미터 변경' 인데 보고서 비고는 전년도 글이었다 — 마스터파일이 공통 폴더에 있어 읽히지 않은 탓.
+    판독기 자체는 이 모양(줄바꿈 든 칸, Rev·날짜가 붙은 번호, 1st·2nd·3rd 줄)을 읽어야 한다."""
+
+    def setUp(self):
+        from openpyxl import Workbook
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "BFS 2호"
+        ws.append(["No.", "제품명", "PV 계획서 번호\n(승인일)", "변경 사유", "종류", "Lot No.", "제조번호", "제조일자",
+                   "PV 보고서 번호\n(승인일)", "차기 밸리데이션", "비고"])
+        ws.append([33, "나조린점안액", "PV25-5-NJSE2_2-P (Rev1)\n(2025.04.04)",
+                   "주성분 제조원 추가\n(나파졸린염산염, RSN103),\n냉각 공정 파라미터 변경", "예측적",
+                   "1st", "LKY401", "2025.04.07", "PV25-5-NJSE2_2-R (Rev.1)\n(2025.05.12)", 2030, None])
+        ws.append([None, None, None, None, None, "2nd", "LKY402", "2025.04.08", None, None, None])
+        ws.append([None, None, None, None, None, "3rd", "LKY403", "2025.04.09", None, None, None])
+        ws.append([34, "올로파타딘점안액0.7%", "PV22-5-OLPE5_2-P (Rev.1)\n(2022.06.09)", "공란조건 변경", "동시적",
+                   "1st", "MKV601", "2022.06.10", "PV23-5-OLPE5_2-FR (Rev.1)\n(2023.08.22)", 2028, None])
+        self.path = os.path.join(tempfile.mkdtemp(prefix="pqr-pv-"), "10.1 PV Validation Master File(Rev.034).xlsx")
+        wb.save(self.path)
+
+    def test_사유_보고서_날짜_Lot_을_그대로_읽는다(self):
+        got = masters.pv_by_code(self.path, "NJSE2_2")
+        self.assertEqual(len(got), 1)
+        e = got[0]
+        self.assertEqual(e["reason"], "주성분 제조원 추가 (나파졸린염산염, RSN103), 냉각 공정 파라미터 변경")
+        self.assertEqual(e["kind"], "예측적")
+        self.assertEqual(e["report"], "PV25-5-NJSE2_2-R (Rev.1)")
+        self.assertEqual(e["report_date"], "2025.05.12")
+        self.assertEqual([lot for _, lot, _ in e["lots"]], ["LKY401", "LKY402", "LKY403"])
+        self.assertEqual(e["revalidation"], "2030")
+
+
 class 문서_코드_뽑기(unittest.TestCase):
     """PV 번호에 밑줄이 든다 — 밑줄을 빼면 한 건도 못 찾는다."""
 
