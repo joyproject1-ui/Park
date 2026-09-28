@@ -4939,16 +4939,23 @@ def _fill_stability26(document, logs, period, spec, log, issues, why_of=None, pr
 
     _flag_outliers(logs, issues, log, spec)
 
-    def split(some):
+    def split(some, post=False):
+        """[(lot, 실시 내역에 실을 시점들)], [(lot, 경향에 쓸 시점들)].
+
+        13.1 장기: 평가 연도에 끝난 시점. 13.2 시판 후: **초기부터 평가 연도까지의 시점 모두** — 그 Lot 의 이력이
+        한 줄이다(담당자 2026-09-28 나조린 1회용 LKX201: "Initial 완료일자에 기재되지 않음"). 완료 일자를 못 읽은
+        시점은 버리지 않고 '확인 필요'(노랑)로 싣는다 — 버리면 초기 시점이 소리 없이 사라진다.
+        """
         rows, trend = [], []
+        shown = upto if post else during
         for one in some:
             for p in one.get("points", []):
                 shaky = list(p.get("unsure") or [])
-                # 문의 목록에는 보고서에 실제로 실리는 것만: 완료 일자는 평가 연도 시점(13.1)일 때,
+                # 문의 목록에는 보고서에 실제로 실리는 것만: 완료 일자는 실시 내역에 실리는 시점일 때,
                 # 함량은 평가 연도까지의 시점(13.3·경향 엑셀)일 때
-                if "done" in shaky and not during(p):
+                if "done" in shaky and p.get("done") and not shown(p):
                     shaky.remove("done")
-                if not upto(p):
+                if p.get("done") and not upto(p):
                     shaky = []
                 if shaky:
                     # 예전에는 시험항목을 무엇이든 '함량(…)' 으로 적었다 — 이제 pH·삼투압·유연물질도
@@ -4956,8 +4963,17 @@ def _fill_stability26(document, logs, period, spec, log, issues, why_of=None, pr
                     what = ", ".join("완료 일자" if u == "done" else str(u) for u in shaky)
                     issues.append(("13", one.get("lot", ""), "%s 시점 손글씨 판독이 애매함 — %s (노랑/주황 표시) 시험일지와 대조하세요"
                                    % (p.get("period"), what)))
-            taken = [p for p in one.get("points", []) if during(p)]
-            seen = [p for p in one.get("points", []) if upto(p)]
+            points = one.get("points", [])
+            dated = [p for p in points if p.get("done") and shown(p)]
+            undated = [p for p in points if not p.get("done")]
+            taken = [p for p in points if p in dated or (dated and p in undated)]
+            if post and taken and not any(p.get("period") == "Initial" for p in taken):
+                # 시판 후 이력에 초기 시점이 없을 수는 없다 — 판독에서 빠졌으면 '확인 필요' 줄을 세우고 알린다
+                taken.insert(0, {"period": "Initial", "done": "", "assays": {}, "unsure": ["done"]})
+                issues.append(("13.2", one.get("lot", ""),
+                               "초기(Initial) 시점을 시험일지 판독에서 얻지 못해 '확인 필요'(노랑)로 두었습니다 — "
+                               "시험일지의 초기 열(인쇄된 값)과 시험일자를 확인해 적으세요"))
+            seen = [p for p in points if p.get("done") and upto(p)]
             if taken:
                 rows.append((one, taken))
             if seen:
@@ -5088,7 +5104,7 @@ def _fill_stability26(document, logs, period, spec, log, issues, why_of=None, pr
         long_logs = [one for one in mlogs if (one.get("kind") or "장기") != "시판후"]
         post_logs = [one for one in mlogs if (one.get("kind") or "장기") == "시판후"]
         rows_l, trend_l = split(long_logs)
-        rows_p, trend_p = split(post_logs)
+        rows_p, trend_p = split(post_logs, post=True)
         for one in mcarry:
             target = (rows_l, trend_l) if one["kind"] == "장기" else (rows_p, trend_p)
             target[0].append((one, [])); target[1].append((one, []))

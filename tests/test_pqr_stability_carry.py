@@ -97,6 +97,30 @@ class 옮겨_채우기(unittest.TestCase):
                           log.append, issues, {}, carry.stability_packs(_prev()), prev, "PQR25.docx")
         return d, issues
 
+    def test_시판_후는_초기부터_평가_연도까지의_시점을_모두_싣는다(self):
+        """담당자 2026-09-28 나조린 1회용 LKX201(2024): 13.2 에 12M 만 있고 "Initial 완료일자에 기재되지 않음"."""
+        logs = [{"lot": "LKX201", "year": "2024", "kind": "시판후", "market": "내수", "market_hint": True,
+                 "pack": "0.5mL/관x10관/갑", "store": STORE, "mfg": "2024.02.20", "expiry": "2026.02.19",
+                 "points": [{"period": "Initial", "done": "2024.02.26", "assays": {"오플록사신": 100.4}},
+                            {"period": "12M", "done": "2025.02.11", "assays": {"오플록사신": 103.4}}]}]
+        d, issues = self._run(logs)
+        post = _tables(d, "13.2.1")[0]
+        row = [E.cell_text(c) for c in E.raw_cells(post.rows[1])]
+        self.assertEqual(row[3], "LKX201")
+        self.assertEqual(row[2], "Initial\n12M")
+        self.assertEqual(row[6], "2024.02.26\n2025.02.11")
+
+    def test_시판_후_판독에_초기가_없으면_확인_필요_줄을_세운다(self):
+        logs = [{"lot": "LKX201", "year": "2024", "kind": "시판후", "market": "내수", "market_hint": True,
+                 "pack": "0.5mL/관x10관/갑", "store": STORE, "mfg": "2024.02.20", "expiry": "2026.02.19",
+                 "points": [{"period": "12M", "done": "2025.02.11", "assays": {"오플록사신": 103.4}}]}]
+        d, issues = self._run(logs)
+        post = _tables(d, "13.2.1")[0]
+        row = [E.cell_text(c) for c in E.raw_cells(post.rows[1])]
+        self.assertEqual(row[2], "Initial\n12M")
+        self.assertEqual(row[6], "확인 필요\n2025.02.11")
+        self.assertTrue(any("초기(Initial) 시점" in w for _, _, w in issues))
+
     def test_시험일지가_없는_장기_lot_은_각주에서만_세우고_전년도_값은_옮기지_않는다(self):
         """담당자 2026-09-09: "안정성을 이전 PQR 에서 가져오지 말고 첨부된 자료로만 빈칸 기재해줘".
         서식 13.3 각주에 적힌 Lot 은 줄을 세우되(올해 서식이 스스로 말한 것), 전년도 결재본의 실시 사유·
