@@ -62,6 +62,25 @@ class 대장(unittest.TestCase):
         self.assertIn("요약:", text)
         self.assertNotIn("노랑으로 둔 칸", text)
 
+    def test_파일이_아예_없는_항은_자료_없음_으로_대장에_적는다(self):
+        """담당자 2026-09-28: "메모장에 설명도 없고" — 파일이 없으면 대장에 줄이 없어 왜 비었는지 알 수 없었다."""
+        data = C.ProductData()
+        got = {"7": [self.yield_x]}
+        rows = C.missing_sources(data, got)
+        items = [i for i, _ in rows]
+        self.assertIn("10.2", items)
+        self.assertIn("8.1.1", items)
+        self.assertNotIn("7", items)                       # 파일이 있는 항은 여기서 다루지 않는다
+        self.assertNotIn("11", items)                      # 일탈·변경관리는 없는 것이 정상
+        self.assertTrue(all("노랑" in why for _, why in rows))
+        data.ledger = [("7", "7. 수율현황표.xlsx", "읽음", "수율 Lot 3개"),
+                       ("10.2", "(파일 없음)", "자료 없음", "제품 폴더·공통 폴더 어디에도 이 항의 파일이 없음 — 그 항의 빈 칸은 노랑")]
+        path = C.write_ledger(self.folder, "QC1-0001", data)
+        with open(path, encoding="utf-8") as h:
+            text = h.read()
+        self.assertIn("★ [10.2] (파일 없음) — 자료 없음", text)
+        self.assertIn("자료 없음 1", text)
+
     def test_노랑으로_둔_칸의_까닭도_대장_끝에(self):
         """담당자 2026-09-28: "9.2.1에 노랑마크가 표시되어 있는데 메모장 PQR 자료 판독대장에 관련 내용이 없네"."""
         data = C.ProductData()

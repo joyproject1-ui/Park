@@ -1260,6 +1260,10 @@ def collect(folder, product_name=None, log=None):
     for item, why in empty_after_read(data, got, log):
         data.issues.insert(0, (item, "", why))
     data.ledger = build_ledger(folder, got, data.read)
+    for item, why in missing_sources(data, got):
+        data.issues.insert(0, (item, "", why))
+        data.ledger.append((item, "(파일 없음)", "자료 없음",
+                            "제품 폴더·공통 폴더 어디에도 이 항의 파일이 없음 — 그 항의 빈 칸은 노랑"))
     for item, name, status, detail in data.ledger:
         if status == "안 읽음":
             data.issues.insert(0, (item, name, "★ 읽을 수 있는 형식인데 읽지 못했습니다 — %s. 이 알림과 파일을 제작자에게 보내 주세요" % detail))
@@ -1400,10 +1404,11 @@ def write_ledger(folder, code, data):
              "요약: " + " · ".join("%s %d" % kv for kv in sorted(counts.items())),
              "",
              "상태 뜻 — 읽음: 값을 읽어 보고서에 씀 / 안 읽음: 읽을 수 있는 형식인데 값을 못 얻음(제작자에게) /"
-             " 못 읽음: 그 항이 읽지 않는 형식 / 항 없음: 이름이 항 번호로 시작하지 않아 쓰지 않음 / 우리 파일: 프로그램이 남긴 것",
+             " 못 읽음: 그 항이 읽지 않는 형식 / 항 없음: 이름이 항 번호로 시작하지 않아 쓰지 않음 / 우리 파일: 프로그램이 남긴 것"
+             " / 자료 없음: 제품 폴더·공통 폴더 어디에도 그 항의 파일이 없음(그 항의 빈 칸은 노랑)",
              ""]
     for item, name, status, detail in rows:
-        mark = "★ " if status in ("안 읽음", "항 없음") else "   "
+        mark = "★ " if status in ("안 읽음", "항 없음", "자료 없음") else "   "
         lines.append("%s[%s] %s — %s: %s" % (mark, item or "-", name, status, detail))
     # 보고서에 노랑으로 둔 칸의 까닭도 여기에 — 담당자는 대장을 먼저 본다 (담당자 2026-09-28: "9.2.1에 노랑마크가
     # 표시되어 있는데 메모장 PQR 자료 판독대장에 관련 내용이 없네"). 문의 목록과 같은 글이다.
@@ -1442,6 +1447,36 @@ FILLED_BY = (
     ("12",      lambda d: [c for c in d.changes if not c.get("unread")], "변경관리"),
     ("13",      lambda d: d.stability_logs or d.stability_files, "안정성 시험일지"),
 )
+
+
+# 파일이 없으면 그 항이 비는 항 — 11(일탈)·12(변경관리)는 '없음' 이 정상이라 뺀다
+MISSING_ALERT = ("6", "7", "8.1.1", "8.1.3", "8.2.1", "8.2.2", "9.2.1", "9.2.2", "9.2.3", "9.2.4",
+                 "10.1", "10.2", "10.3-5", "13")
+
+
+def missing_sources(data, got):
+    """제품 폴더·공통 폴더 어디에도 파일이 없어 값이 비는 항 — [(항, 알림 글)].
+
+    담당자 2026-09-28: "못읽었으면 노랑색으로 마크해야지 마크도 안되어 있어 … 메모장에 설명도 없고".
+    파일이 아예 없으면 판독 대장에 줄이 하나도 없어 왜 비었는지 알 수 없었다.
+    """
+    rows = []
+    for item, 채워졌나, 무엇 in FILLED_BY:
+        if item not in MISSING_ALERT:
+            continue
+        paths = [p for p in got.get(item, [])
+                 if not os.path.basename(p).startswith(("~$", ".", "PQR "))
+                 and not os.path.basename(p).lower().endswith(".txt")]
+        if paths:
+            continue
+        try:
+            if 채워졌나(data):
+                continue
+        except Exception:
+            continue
+        rows.append((item, "★ %s항 자료(%s)가 제품 폴더·공통 폴더 어디에도 없습니다 — 그 항의 칸을 채우지 못해 "
+                           "노랑으로 두었습니다. 파일을 올리고 다시 만드세요" % (item, 무엇)))
+    return rows
 
 
 def empty_after_read(data, got, log=None):

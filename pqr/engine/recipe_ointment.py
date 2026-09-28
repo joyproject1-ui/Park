@@ -1421,6 +1421,42 @@ def update_qualification(table, lookup, cutoff=None, log=None):
     return n
 
 
+def mark_unqualified(table, lookup):
+    """마스터파일에서 채우지 못한 IQ·OQ·PQ 칸(문서번호·완료일이 빈 칸)을 노랑으로 → [(관리번호, 종류)].
+
+    담당자 2026-09-28: "못읽었으면 노랑색으로 마크해야지 마크도 안되어 있어" — 마스터파일을 못 읽었거나
+    그 설비·그 종류가 마스터파일에 없어 사선으로 남는 칸은 담당자가 봐야 할 자리다.
+    """
+    rows = table.rows
+    width = E.grid_width(table)
+    kind_col = {}
+    for row in rows[:4]:
+        for ci, cell in E.grid_cells(row, width).items():
+            head = E.cell_text(cell).strip().upper()
+            if head in ("IQ", "OQ", "PQ"):
+                kind_col[head] = ci
+        if kind_col:
+            break
+    out = []
+    for ri, row in enumerate(rows):
+        cells = E.raw_cells(row)
+        mid = E.cell_text(cells[1]).strip() if len(cells) > 1 else ""
+        if not re.match(r"^[A-Z]{3}\d{4}", mid) or ri + 1 >= len(rows):
+            continue
+        doc_grid, date_grid = E.grid_cells(rows[ri], width), E.grid_cells(rows[ri + 1], width)
+        for kind, col in kind_col.items():
+            doc_cell, date_cell = doc_grid.get(col), date_grid.get(col)
+            if doc_cell is None or E.cell_text(doc_cell).strip():
+                continue
+            if mid in lookup and (lookup[mid] or {}).get(kind):
+                continue                         # 마스터에 있는데 비었으면 다른 검토(★)가 잡는다
+            E.shade_cell(doc_cell)
+            if date_cell is not None and not E.cell_text(date_cell).strip():
+                E.shade_cell(date_cell)
+            out.append((mid, kind))
+    return out
+
+
 LINE = "연고"          # 이 조리법은 연고·안연고 라인 전용이다
 FLOOR = "1"            # 연고 라인은 1층에 있다 (담당자 2026-09-07: "내가 검토한 결과 연고라인은 1층에 위치해 있어")
 
@@ -2246,6 +2282,14 @@ def fill(document, data, product, period, today=None, log=None):
                         log("  %s %s: %s" % (prefix, take("code"), why))
                         issues.append((prefix, take("code"), why))
                     elif not both81 and take("code"):
+                        # 목록을 아예 못 읽었다 — 제조원·문서번호·완료일 칸을 노랑으로 (담당자 2026-09-28)
+                        for k in ("maker", "doc", "day"):
+                            c = col.get(k)
+                            if c is not None and c < len(cells):
+                                if E.cell_text(cells[c]).strip():
+                                    E.highlight_cell(cells[c])
+                                else:
+                                    E.shade_cell(cells[c])
                         unlisted81.add(prefix)
                     continue
                 grade = str(got.get("평가등급") or "").strip().upper()
@@ -2342,6 +2386,13 @@ def fill(document, data, product, period, today=None, log=None):
                     log("  8.1.2 %s: %s" % (code812, why))
                     issues.append(("8.1.2", code812, why))
                 elif code812:
+                    for k in ("maker", "supply", "other"):
+                        c = col.get(k)
+                        if c is not None and c < len(cells):
+                            if E.cell_text(cells[c]).strip():
+                                E.highlight_cell(cells[c])
+                            else:
+                                E.shade_cell(cells[c])
                     unlisted81.add("8.1.2")
                 continue
             maker = official_company(_company(chain.get("manufacturer")), both81)
@@ -2356,7 +2407,7 @@ def fill(document, data, product, period, today=None, log=None):
         what = ("주성분 공급망 마스터파일(8.1.2 엑셀)을 읽지 못해 제조업체·공급 업체를" if prefix == "8.1.2"
                 else "공급업체 목록(8.1.1·8.1.3 엑셀)을 읽지 못해 제조원·평가문서번호·완료일을")
         log("%s: %s 갱신하지 못함" % (prefix, what))
-        issues.append((prefix, "", "%s 갱신하지 못했습니다 — 공통 폴더의 파일과 작성 기록의 ★ 줄을 확인하세요" % what))
+        issues.append((prefix, "", "%s 갱신하지 못해 그 칸을 노랑으로 두었습니다 — 공통 폴더의 파일과 자료 판독 대장의 ★ 줄을 확인하세요" % what))
     if grade_odd:
         issues.append(("8.1", ", ".join(sorted(set(grade_odd))),
                        "공급업체 평가등급이 A·B 가 아니어서 평가결과 칸을 비웠습니다 — 확인해 적으세요"))
@@ -3880,6 +3931,7 @@ def fill(document, data, product, period, today=None, log=None):
     # (담당자 2026-09-15 확정: 2026년도 PQR = 2025.12.31 까지, 2027년 PQR = 2026.12.31 까지).
     # 연도를 박지 않고 평가 기간 끝에서 가져오므로 해마다 저절로 옮겨 간다
     qual_cutoff = re.sub(r"\D", "", str((period or {}).get("to") or ""))[:8] or None
+    노랑10 = []                                  # [(항, 관리번호, 종류)] 마스터파일로 채우지 못해 노랑으로 둔 칸
     for prefix in ("10.2", "10.3", "10.4", "10.5"):
         for t in _tables(document, prefix):
             if seeds.get(prefix) and not _has_equipment(t):
@@ -3891,6 +3943,7 @@ def fill(document, data, product, period, today=None, log=None):
             if gone:
                 log("10.2: 이 제품에 쓰지 않는 설비 %d대를 뺌" % gone)
             upd += update_qualification(t, eq_lookup, qual_cutoff, log=log)
+            노랑10 += [("10.2", m, k) for m, k in mark_unqualified(t, eq_lookup)]
     for t in _tables(document, "10.4"):        # 제조용수는 층마다 따로다 — 우리 층(1층) 설비로
         for old_mid, new_mid in use_our_floor(t, data.support):
             log("10.4: %s(%s층 설비)를 연고 라인 %s층 설비 %s 로 바꿈"
@@ -3901,7 +3954,20 @@ def fill(document, data, product, period, today=None, log=None):
     for prefix in ("10.3", "10.4", "10.5"):
         for t in _tables(document, prefix):
             upd += update_qualification(t, sp_lookup, qual_cutoff, log=log)
+            노랑10 += [(prefix, m, k) for m, k in mark_unqualified(t, sp_lookup)]
     log("10항 IQ·OQ·PQ 갱신: %d" % upd)
+    # 마스터파일로 채우지 못한 칸은 노랑 + 문의 (담당자 2026-09-28: "못읽었으면 노랑색으로 마크해야지")
+    for prefix in sorted({p_ for p_, _, _ in 노랑10}):
+        mine = [(m, k) for p_, m, k in 노랑10 if p_ == prefix]
+        lk = eq_lookup if prefix == "10.2" else sp_lookup
+        무엇 = ", ".join("%s %s" % x for x in mine[:12]) + (" 외 %d" % (len(mine) - 12) if len(mine) > 12 else "")
+        if not lk:
+            why = ("마스터파일을 읽지 못해 IQ·OQ·PQ 를 채우지 못했습니다(노랑 %d칸: %s) — 공통 폴더의 %s 마스터파일과 "
+                   "자료 판독 대장을 확인하세요" % (len(mine), 무엇, "10.2" if prefix == "10.2" else "10.3~10.5"))
+        else:
+            why = "마스터파일에 없어 비워 둔 칸을 노랑으로 두었습니다(%d칸: %s) — 마스터파일을 보완하거나 확인하세요" % (len(mine), 무엇)
+        log("%s: %s" % (prefix, why))
+        issues.append((prefix, "", why))
     # 검토: 마스터파일에 문서가 있는데 빈 칸이 남았으면 문의 목록 맨 앞에 ★ 로 알린다 —
     # 담당자 PC 에서 10.4·10.5 IOQ 칸이 비어 나간 일(2026-09-06)이 되풀이되지 않게.
     빈칸 = []
@@ -3922,7 +3988,17 @@ def fill(document, data, product, period, today=None, log=None):
             issues.append(("10.2", mid, "마스터파일에 %s 가 없어 비워 둠 — 확인 필요"
                            % "·".join(빈)))
     if not pv_n:
-        issues.append(("10.1", "", "평가 년도의 PV 보고서를 마스터파일에서 찾지 못해 결재본 값을 유지함 — 확인 필요"))
+        marked = 0
+        for tb in t101:                          # 채우지 못한 표는 자료 칸을 노랑으로 (담당자 2026-09-28)
+            for row in tb.rows[1:]:
+                for cell in E.raw_cells(row)[1:]:
+                    marked += 1
+                    if E.cell_text(cell).strip():
+                        E.highlight_cell(cell)
+                    else:
+                        E.shade_cell(cell)
+        issues.append(("10.1", "", "평가 년도의 PV 보고서를 마스터파일에서 찾지 못해 결재본 값을 유지하고 노랑으로 두었습니다 — "
+                                   "공통 폴더의 10.1 PV 마스터파일과 자료 판독 대장을 확인하세요"))
 
     # ---------- 11항 ----------
     devs = [d for d in data.deviations if (d.get("lot") in dom + exp) or (name and name[:4] in (d.get("title") or ""))]

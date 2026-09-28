@@ -17,7 +17,7 @@ from docx.oxml.ns import qn
 
 from pqr.engine import collect, docedit as E
 from pqr.engine.readers import masters
-from pqr.engine.recipe_ointment import update_qualification
+from pqr.engine.recipe_ointment import update_qualification, mark_unqualified
 
 
 def _master(path, rows):
@@ -91,6 +91,37 @@ def _표(합침=False):
 LOOKUP = {"DAA5114": {"IQ": [("IQ18-2-DAA5114-R", "2018.10.16")],
                       "OQ": [("OQ18-2-DAA5114-R", "2018.10.26")],
                       "PQ": [("PQ26-2-DAA5114-R", "2026.05.14")]}}
+
+
+def _fill(cell):
+    pr = cell._tc.find(qn("w:tcPr"))
+    shd = pr.find(qn("w:shd")) if pr is not None else None
+    return shd.get(qn("w:fill")) if shd is not None else None
+
+
+class 못_채운_칸은_노랑(unittest.TestCase):
+    """담당자 2026-09-28: "못읽었으면 노랑색으로 마크해야지 마크도 안되어 있어"."""
+
+    def test_마스터파일을_못_읽으면_IQ_OQ_PQ_모두_노랑(self):
+        t = _표()
+        self.assertEqual(mark_unqualified(t, {}), [("DAA5114", "IQ"), ("DAA5114", "OQ"), ("DAA5114", "PQ")])
+        for j in (3, 4, 5):
+            self.assertEqual(_fill(E.raw_cells(t.rows[4])[j]), "FFFF00")
+            self.assertEqual(_fill(E.raw_cells(t.rows[5])[j]), "FFFF00")
+        self.assertIsNone(_fill(E.raw_cells(t.rows[4])[2]))            # 설비명은 그대로
+
+    def test_마스터에_없는_종류만_노랑(self):
+        t = _표()
+        lookup = {"DAA5114": {"IQ": LOOKUP["DAA5114"]["IQ"], "OQ": LOOKUP["DAA5114"]["OQ"], "PQ": []}}
+        update_qualification(t, lookup)
+        self.assertEqual(mark_unqualified(t, lookup), [("DAA5114", "PQ")])
+        self.assertIsNone(_fill(E.raw_cells(t.rows[4])[3]))
+        self.assertEqual(_fill(E.raw_cells(t.rows[4])[5]), "FFFF00")
+
+    def test_채워진_칸은_건드리지_않는다(self):
+        t = _표()
+        update_qualification(t, LOOKUP)
+        self.assertEqual(mark_unqualified(t, LOOKUP), [])
 
 
 class 표_채우기(unittest.TestCase):
