@@ -67,11 +67,17 @@ class 대조(unittest.TestCase):
         got = mfds.compare(표3, self._info(ITEM_PERMIT_DATE="20111129"))
         self.assertEqual([one[0] for one in got], ["허가일자"])
 
-    def test_변경일자와_같으면_어긋남이_아니다(self):
-        """나조린점안액(1회용) 2026-09-28: 식약처 허가일자는 다회용 최초 허가, 보고서는 1회용이 추가된 변경일."""
+    def test_변경일자와_같아도_어긋남으로_잡되_까닭을_적는다(self):
+        """나조린점안액(1회용) 2026-09-28: 식약처 허가일자는 다회용 최초 허가, 보고서는 1회용이 추가된 변경일.
+        담당자 정정: "기존처럼 노랑마크하고 어긋남으로 잡아줘 작성자가 실수할 수 있어"."""
         info = self._info(ITEM_PERMIT_DATE="20111129", CHANGE_DATE="20170303")
         표 = dict(표3, 허가일자="2017년 03월 03일")
-        self.assertEqual(mfds.compare(표, info), [])
+        got = mfds.compare(표, info)
+        self.assertEqual(len(got), 1)
+        self.assertEqual(got[0][3], "보고서 날짜는 식약처 변경일자와 같음")
+        sentence = mfds.mismatch_sentence(*got[0])
+        self.assertIn("최초 허가 2011년 11월 29일, 변경 2017년 03월 03일인데 보고서에는 2017년 03월 03일로", sentence)
+        self.assertIn("변경허가일을 적은 것이면 그대로 두고", sentence)
         self.assertIn("변경일자와 같음", mfds.change_date_note(표, info))
         self.assertEqual(mfds.change_date_note(표3, self._info()), "")
 
@@ -388,9 +394,10 @@ class 행정처분_노랑표시(unittest.TestCase):
             E.set_cell(cells[2], 값)
         return doc, t
 
-    def _돌린다(self, items):
+    def _돌린다(self, items, produced=None):
         from pqr.engine import recipe_ointment as R, docedit as E
         doc, t = self._표()
+        self.칸3 = None
         칸3 = {}
         for row in t.rows[1:]:
             cells = E.raw_cells(row)
@@ -406,9 +413,10 @@ class 행정처분_노랑표시(unittest.TestCase):
         issues = []
         try:
             n = R._check_penalty("올로원스점안액(올로파타딘염산염)", "한림제약(주)", "",
-                                 issues, lambda *a: None, 칸3)
+                                 issues, lambda *a: None, 칸3, produced=produced)
         finally:
             mfds.api_key, mfds.fetch_penalties, mfds.penalty_base = old
+        self.칸3 = {이름: E.cell_text(칸) for 이름, 칸 in 칸3.items()}
         칠한칸 = {이름 for 이름, 칸 in 칸3.items() if "highlight" in 칸._tc.xml}
         return n, issues, 칠한칸
 
@@ -421,7 +429,24 @@ class 행정처분_노랑표시(unittest.TestCase):
         self.assertEqual(칠한칸, {"허가 및 시판 후 준수 사항의 이행 여부 검토"})
 
     def test_이력이_없으면_아무것도_하지_않는다(self):
+        """생산 여부를 모르면(produced=None) 칸은 그대로 — 기록만."""
         self.assertEqual(self._돌린다([]), (0, [], set()))
+        self.assertEqual(self.칸3["허가 및 시판 후 준수 사항의 이행 여부 검토"], "1. 허가상 제조방법 준수하여 생산함을 확인함.")
+
+    def test_이력_없음_확인_생산_있으면_두_줄(self):
+        """담당자 2026-09-28: 생산이력이 있으면 '1. 허가상 제조방법 준수 … / 2. 시판 후 준수사항 … 이력 없음'."""
+        self.assertEqual(self._돌린다([], produced=True), (0, [], set()))
+        self.assertEqual(self.칸3["허가 및 시판 후 준수 사항의 이행 여부 검토"],
+                         "1. 허가상 제조방법 준수하여 생산함을 확인함\n2. 시판 후 준수사항 이행하여 행정 처분 이력 없음을 확인함")
+
+    def test_이력_없음_확인_생산_없으면_한_줄(self):
+        self.assertEqual(self._돌린다([], produced=False), (0, [], set()))
+        self.assertEqual(self.칸3["허가 및 시판 후 준수 사항의 이행 여부 검토"],
+                         "1. 시판 후 준수사항 이행하여 행정 처분 이력 없음을 확인함")
+
+    def test_이력이_있으면_문구를_쓰지_않는다(self):
+        self._돌린다([처분], produced=True)
+        self.assertEqual(self.칸3["허가 및 시판 후 준수 사항의 이행 여부 검토"], "1. 허가상 제조방법 준수하여 생산함을 확인함.")
 
 
 class 열쇠찾기(unittest.TestCase):

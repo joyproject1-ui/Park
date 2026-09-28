@@ -1579,12 +1579,25 @@ def _penalty_cell(cells3):
     return None
 
 
-def _check_penalty(name, entp, folder, issues, log, cells3=None, ledger=None):
+# 3항 6번 문구 — 담당자 2026-09-28: "생산이력이 없을 경우 '1. 시판 후 준수사항 이행하여 행정 처분 이력 없음을
+# 확인함' 이렇게 기재하고 생산이력이 있을 경우 '1. 허가상 제조방법 준수하여 생산함을 확인함 / 2. 시판 후
+# 준수사항 이행하여 행정 처분 이력 없음을 확인함'". 식약처에서 이력 없음을 **확인했을 때만** 쓴다.
+PENALTY_TEXT_PRODUCED = ("1. 허가상 제조방법 준수하여 생산함을 확인함",
+                         "2. 시판 후 준수사항 이행하여 행정 처분 이력 없음을 확인함")
+PENALTY_TEXT_NOT_PRODUCED = ("1. 시판 후 준수사항 이행하여 행정 처분 이력 없음을 확인함",)
+
+
+def penalty_text(produced):
+    return PENALTY_TEXT_PRODUCED if produced else PENALTY_TEXT_NOT_PRODUCED
+
+
+def _check_penalty(name, entp, folder, issues, log, cells3=None, ledger=None, produced=None):
     """3항 6번 '행정 처분 이력 없음' 을 식약처 행정처분 정보로 확인한다.
 
     담당자 2026-09-14: "행정처분 정보 API 도 … 같이 넣어줘". 이력이 나오면 문의로 올리고
     그 칸을 노랑으로 칠한다 — 값을 고치지는 않는다(무엇이라 쓸지는 담당자가 판단한다).
-    이력이 없으면 확인했다는 사실만 작성 기록에 남긴다.
+    이력이 없음을 확인하면 6번 칸을 정한 문구로 쓴다(produced: 그해 생산 Lot 이 있었는지 — None 이면
+    칸은 손대지 않고 기록만 남긴다).
     """
     from .readers import mfds
     key = mfds.api_key(folder)
@@ -1618,7 +1631,16 @@ def _check_penalty(name, entp, folder, issues, log, cells3=None, ledger=None):
     mine = mfds.penalties_for(rows, name, entp)
     if not mine:
         log("3항 6번: 행정처분 이력 없음을 확인 (받은 건수 %d · %s)" % (len(rows), base))
-        _ledger(ledger, LEDGER_PENALTY, "읽음", "확인함 — 이 제품 · 업체의 행정처분 이력 없음 (받은 건수 %d)" % len(rows))
+        칸 = _penalty_cell(cells3)
+        written = ""
+        if 칸 is not None and produced is not None:
+            lines = penalty_text(produced)
+            E.set_cell(칸, *lines)
+            written = " / ".join(lines)
+            log("3항 6번 문구: %s (%s)" % (written, "그해 생산 있음" if produced else "그해 생산 없음"))
+        _ledger(ledger, LEDGER_PENALTY, "읽음",
+                "확인함 — 이 제품 · 업체의 행정처분 이력 없음 (받은 건수 %d)%s"
+                % (len(rows), (" · 6번 칸에 씀: " + written) if written else ""))
         return 0
     for one in mine:
         issues.append(("3", "허가 및 시판 후 준수 사항",
@@ -1711,7 +1733,7 @@ def fill(document, data, product, period, today=None, log=None):
         장부 = getattr(data, "ledger", None)
         _check_license(표3, full_name or name, getattr(data, "folder", ""), issues, log, 칸3, ledger=장부)
         _check_penalty(full_name or name, 표3.get("업체명") or "", getattr(data, "folder", ""),
-                       issues, log, 칸3, ledger=장부)
+                       issues, log, 칸3, ledger=장부, produced=bool(dom or exp))
 
     # ---------- 5항 책임과 권한 ----------
     # 담당자 지시(2026-09): "품질보증 1팀은 AQA 팀으로 변경해줘." 옛 이름(품질보증n팀)은
