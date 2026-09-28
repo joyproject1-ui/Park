@@ -448,6 +448,26 @@ def compare(section3, info):
     return out
 
 
+def pretty_date(text):
+    """'20111129' → '2011년 11월 29일'. 날짜가 아니면 그대로."""
+    digits = _digits(text)
+    if len(digits) == 8:
+        return "%s년 %s월 %s일" % (digits[:4], digits[4:6], digits[6:])
+    return str(text or "").strip()
+
+
+def mismatch_sentence(항목, 내것, 그쪽, 까닭=""):
+    """어긋난 칸 한 줄 — 담당자 2026-09-28 문구 예: "식약처 site 에서는 2011년 11월 29일인데 2017년 03월
+    03일로 기재되어 있어 내용 상이함." 날짜는 년월일로 풀어 적고, 글은 따옴표로 그대로 보여 준다."""
+    if 항목 == "허가일자" or (len(_digits(그쪽)) == 8 and len(_digits(내것)) == 8):
+        return ("%s: 식약처 site 에서는 %s인데 보고서에는 %s로 기재되어 있어 내용 상이함."
+                % (항목, pretty_date(그쪽), pretty_date(내것)))
+    if 항목 == "허가 상태":
+        return "허가 상태: 식약처 site 에 취소 이력(%s)이 있어 확인 필요." % 그쪽
+    return ("%s: 식약처 site 에서는 '%s' 인데 보고서에는 '%s' 로 기재되어 있어 내용 상이함."
+            % (항목, 그쪽, 내것))
+
+
 def notes(info):
     """대조 결과와 함께 적어 둘 것 — 재심사·RMP 는 값이 없으면 '해당 없음' 으로 읽는다."""
     out = []
@@ -555,9 +575,16 @@ def penalty_base(folder=None, notes=None):
             return penalty_with_operation(url)
         if got.strip() in AUTO_WORDS:          # '자동' 이라고 적으면 후보를 두드린다
             notes.append("주소 파일 %s 에 '자동' → 아는 후보를 두드림" % path)
-            return list(PENALTY_BASES)
-        if got:                                # 주소 자리에 열쇠를 넣은 것 — 못 쓴다
+            return auto_bases()
+        if got:
+            # 주소 자리에 열쇠를 넣은 것 — 담당자 PC 2026-09-28: 파일에 '44fc898b…' 열쇠만 있었다.
+            # 넣어 둔 뜻은 '확인해 달라' 이므로 건너뛰지 않고 아는 주소 후보를 두드린다.
             first = " ".join(raw_text.strip().splitlines()[0].split())[:40]
+            if looks_like_key(got):
+                notes.append("주소 파일 %s 에 주소가 아니라 열쇠가 적혀 있음(첫 줄: %s…) → 아는 주소 후보를 두드림. "
+                             "포털의 End Point(https://apis.data.go.kr/1471000/MdcinExaathrService04 처럼)를 "
+                             "이 파일에 넣으면 그것을 씀" % (path, first))
+                return auto_bases()
             notes.append("주소 파일 %s 을 읽었지만 주소로 보이는 줄이 없음 (첫 줄: %s…)" % (path, first))
             return []
         notes.append("주소 파일 %s 이 비어 있음" % path)
@@ -568,6 +595,26 @@ def penalty_base(folder=None, notes=None):
             looked.append(os.path.join(root, sub, PENALTY_URL_FILE) if sub else os.path.join(root, PENALTY_URL_FILE))
     notes.append("주소 파일이 없음 — 찾아본 곳: " + " · ".join(looked))
     return []                                      # 주소 파일이 없으면 건너뛴다
+
+
+# 담당자 계정이 승인받은 서비스(2026-09-16 캡처)를 후보 맨 앞에 — '자동' 이거나 주소 파일에 열쇠만 있을 때
+AUTO_ENDPOINT = "https://apis.data.go.kr/1471000/MdcinExaathrService04"
+
+
+def looks_like_key(text):
+    """빈칸 없는 32자 이상 16진수/영숫자 한 덩어리면 인증키로 본다."""
+    got = str(text or "").strip().splitlines()
+    got = got[0].strip() if got else ""
+    return bool(re.match(r"^[0-9A-Za-z%+/=_-]{32,}$", got))
+
+
+def auto_bases():
+    """'자동' 일 때 두드릴 주소들 — 승인 서비스의 조회 이름 후보 + 예전부터 알던 후보."""
+    out = []
+    for base in list(penalty_with_operation(AUTO_ENDPOINT)) + list(PENALTY_BASES):
+        if base not in out:
+            out.append(base)
+    return out
 
 
 def _penalty_value(item, name):

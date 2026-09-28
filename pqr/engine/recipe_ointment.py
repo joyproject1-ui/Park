@@ -1535,23 +1535,30 @@ def _check_license(section3, name, folder, issues, log, cells3=None, ledger=None
         # 담당자 2026-09-16: "식약처 허가정보가 어긋나면 … 보고서에 노랑으로 표시해주고 문의목록에
         # 내용을 기재해줘" — 보고서 칸은 글자 형광펜 + 칸 바탕(글자가 없어도 보이게), 문의에는
         # 어느 칸이 보고서 값 · 식약처 값 각각 무엇인지 그대로 적는다. 값은 고치지 않는다.
+        # 담당자 2026-09-28 문구 예: "식약처 site 에서는 몇년몇월몇일인데 2017년 03월 03일로 기재되어 있어 내용 상이함."
         issues.append(("3", "3항 %s" % 항목,
-                       "식약처 허가정보와 다릅니다 — 보고서 '%s' ↔ 식약처 '%s' (%s). 보고서 3항의 그 칸을 "
-                       "노랑으로 표시했습니다. 식약처가 맞으면 보고서를 고치고, 보고서가 맞으면 허가정보 "
-                       "갱신 여부를 확인하세요" % (내것, 그쪽, 까닭)))
+                       "%s 보고서 3항의 그 칸을 노랑으로 표시했습니다. 식약처가 맞으면 보고서를 고치고, "
+                       "보고서가 맞으면 허가정보 갱신 여부를 확인하세요" % mfds.mismatch_sentence(항목, 내것, 그쪽, 까닭)))
         칸 = (cells3 or {}).get(항목)
         if 칸 is not None:
             E.highlight_cell(칸)
             E.shade_cell(칸)
+    # 무엇과 견줬고 어느 칸이 어떻게 다른지 값째로 남긴다 — 담당자 2026-09-28: "어긋난 칸 1개(허가일자)"
+    # 만으로는 무엇이 다른지 알 수 없어 "자세하게 설명은 안될까?"
+    맞춘것 = "식약처 '%s'(품목기준코드 %s · 허가일자 %s)" % (
+        info.get("제품명") or "-", info.get("품목기준코드") or "-", info.get("허가일자") or "-")
+    상세 = " / ".join(mfds.mismatch_sentence(*one) for one in 다른것)
     if 다른것:
-        log("  3항 대조: 어긋난 칸 %d개를 노랑으로 칠하고 문의에 올림 — %s"
-            % (len(다른것), ", ".join(one[0] for one in 다른것)))
-        _ledger(ledger, LEDGER_LICENSE, "읽음", "대조함 — %s · 어긋난 칸 %d개(%s)를 노랑으로 칠하고 문의에 올림"
-                % (info.get("제품명"), len(다른것), ", ".join(one[0] for one in 다른것)))
+        log("  3항 대조: 어긋난 칸 %d개를 노랑으로 칠하고 문의에 올림 — %s" % (len(다른것), 상세))
+        _ledger(ledger, LEDGER_LICENSE, "읽음",
+                "대조함 — 보고서 3항 '%s' 를 %s 와 견줌 · 어긋난 칸 %d개를 노랑으로 칠하고 문의에 올림 — %s"
+                % (section3.get("제품명") or name, 맞춘것, len(다른것), 상세))
     else:
         log("  3항 대조: 어긋난 칸 없음")
-        _ledger(ledger, LEDGER_LICENSE, "읽음", "대조함 — %s (허가일자 %s) · 어긋난 칸 없음"
-                % (info.get("제품명"), info.get("허가일자") or "-"))
+        _ledger(ledger, LEDGER_LICENSE, "읽음",
+                "대조함 — 보고서 3항 '%s' 를 %s 와 견줌 · 견준 칸 %s · 어긋난 칸 없음"
+                % (section3.get("제품명") or name, 맞춘것,
+                   ", ".join(k for k, _v in mfds.MATCH if str(section3.get(k) or "").strip() and str(info.get(_v) or "").strip()) or "-"))
     return len(다른것)
 
 

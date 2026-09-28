@@ -235,11 +235,27 @@ class 설정_파일_찾기(unittest.TestCase):
 
     def test_주소_아닌_글이면_첫_줄을_적는다(self):
         with open(os.path.join(self.root, "공통", mfds.PENALTY_URL_FILE), "w", encoding="utf-8") as h:
-            h.write("44fc1234abcd\n")
+            h.write("여기에 주소\n")
         notes = []
         self.assertEqual(mfds.penalty_base(self.product, notes=notes), [])
         self.assertIn("주소로 보이는 줄이 없음", notes[0])
-        self.assertIn("44fc1234abcd", notes[0])
+        self.assertIn("여기에 주소", notes[0])
+
+    def test_열쇠만_들어_있으면_아는_후보를_두드린다(self):
+        """담당자 PC 2026-09-28: 주소 파일에 '44fc898b…' 열쇠만 있었다 — 건너뛰지 않는다."""
+        with open(os.path.join(self.root, "공통", mfds.PENALTY_URL_FILE), "w", encoding="utf-8") as h:
+            h.write("44fc898b467e5c2c4002db03c23a7a5836d31328abcdef0123456789abcdef01\n")
+        notes = []
+        bases = mfds.penalty_base(self.product, notes=notes)
+        self.assertTrue(bases)
+        self.assertIn("MdcinExaathrService04", bases[0])
+        self.assertIn("열쇠가 적혀 있음", notes[0])
+        self.assertIn("End Point", notes[0])
+
+    def test_열쇠_모양_가리기(self):
+        self.assertTrue(mfds.looks_like_key("44fc898b467e5c2c4002db03c23a7a5836d31328abcdef01"))
+        self.assertFalse(mfds.looks_like_key("자동"))
+        self.assertFalse(mfds.looks_like_key("https://apis.data.go.kr/x"))
 
 
 class 주소와_열쇠_가리기(unittest.TestCase):
@@ -306,7 +322,7 @@ class 부르는_횟수(unittest.TestCase):
         self.assertEqual(mfds.penalty_base(self._folder()), [])
 
     def test_자동이라고_적으면_후보를_두드린다(self):
-        self.assertEqual(mfds.penalty_base(self._folder("자동")), list(mfds.PENALTY_BASES))
+        self.assertEqual(mfds.penalty_base(self._folder("자동")), mfds.auto_bases())   # 승인 서비스 후보가 앞
 
     def test_한_번_통한_주소는_다음_제품부터_한_번만_부른다(self):
         불린것 = []
@@ -525,6 +541,37 @@ class 판독_대장에_남김(unittest.TestCase):
         self.assertEqual((item, status), ("3", "읽음"))
         self.assertIn("식약처 허가정보", name)
         self.assertIn("어긋난 칸 없음", detail)
+        self.assertIn("올로원스점안액", detail)           # 무엇과 견줬는지
+
+    def test_어긋난_칸은_값째로_남는다(self):
+        """담당자 2026-09-28: "어긋난 칸 1개(허가일자)" 만으로는 무엇이 다른지 몰라 "자세하게 설명은 안될까?"."""
+        from pqr.engine import recipe_ointment as R
+        from pqr.engine.readers import mfds
+        saved = (mfds.api_key, mfds.fetch, mfds.pick, mfds.compare)
+        mfds.api_key = lambda folder: "열쇠"
+        mfds.fetch = lambda name, k, **kw: [{"제품명": "나조린점안액", "허가일자": "20111129", "품목기준코드": "200900001"}]
+        mfds.pick = lambda rows, name: rows[0]
+        mfds.compare = lambda s3, info: [("허가일자", "2011년 11월 30일", "20111129", "날짜가 다릅니다")]
+        ledger, lines = [], []
+        try:
+            R._check_license({"제품명": "나조린점안액", "허가일자": "2011년 11월 30일"}, "나조린점안액", "",
+                             [], lines.append, {}, ledger=ledger)
+        finally:
+            mfds.api_key, mfds.fetch, mfds.pick, mfds.compare = saved
+        detail = ledger[0][3]
+        self.assertIn("허가일자: 식약처 site 에서는 2011년 11월 29일인데 보고서에는 2011년 11월 30일로 기재되어 있어 내용 상이함", detail)
+        self.assertIn("품목기준코드 200900001", detail)
+        self.assertTrue(any("2011년 11월 29일인데" in line for line in lines))
+
+    def test_어긋남_문장(self):
+        from pqr.engine.readers import mfds
+        self.assertEqual(mfds.pretty_date("20170303"), "2017년 03월 03일")
+        self.assertEqual(mfds.pretty_date("2011.11.30"), "2011년 11월 30일")
+        self.assertEqual(mfds.pretty_date("기밀용기"), "기밀용기")
+        got = mfds.mismatch_sentence("허가일자", "2017년 03월 03일", "20111129", "날짜가 다릅니다")
+        self.assertEqual(got, "허가일자: 식약처 site 에서는 2011년 11월 29일인데 보고서에는 2017년 03월 03일로 기재되어 있어 내용 상이함.")
+        got = mfds.mismatch_sentence("보관조건", "실온보관", "기밀용기, 2~25℃보관", "글이 다릅니다")
+        self.assertIn("식약처 site 에서는 '기밀용기, 2~25℃보관' 인데 보고서에는 '실온보관' 로", got)
 
     def test_열쇠가_없으면_못_읽음(self):
         got = self._run("")
