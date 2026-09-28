@@ -474,6 +474,18 @@ class ItemFileListTest(ItemUploadTest):
         names = [row["name"] for row in listing["files"]]
         self.assertTrue(all(name.startswith("13") for name in names), names)
 
+    def test_0항_당해_년도_서식도_목록에_나오고_지울_수_있다(self):
+        """담당자 2026-09-28: "기존 첨부 파일을 여기서 삭제할 수 있도록 해줘" — 0항 창에서 목록이 비어 보였다."""
+        saved = self.upload_item("HP-110", "0", "당해 년도 PQR26 결재본 word (공양식).docx")
+        name = os.path.basename(saved["saved"])
+        listing = self.call("/api/item-files", {"product": "HP-110", "item": "0"})
+        self.assertTrue(listing["ok"], listing.get("error"))
+        self.assertIn(name, [row["name"] for row in listing["files"]])
+        result = self.call("/api/item-delete", {"product": "HP-110", "item": "0", "name": name})
+        self.assertTrue(result.get("ok"), result.get("error"))
+        after = self.call("/api/item-files", {"product": "HP-110", "item": "0"})
+        self.assertNotIn(name, [row["name"] for row in after["files"]])
+
     def test_delete_removes_the_file_and_updates_the_screen(self):
         saved = self.upload_item("HP-110", "13", "안정성 결과표.xlsx")
         name = os.path.basename(saved["saved"])

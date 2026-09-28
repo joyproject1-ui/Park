@@ -3155,7 +3155,15 @@ async function renderItemFiles(){
                      data-common="${f.common ? "1" : ""}">삭제</button>
            </div>`).join("")
       : `<div class="muted">아직 이 항목에 올린 파일이 없습니다.</div>`;
-  } catch (error) { box.innerHTML = `<div class="muted">${esc(error.message)}</div>`; }
+  } catch (error) {
+    // 'Failed to fetch' 만 보여 주면 첨부를 지울 길이 없어 보인다 (담당자 2026-09-28: "기존 첨부 파일을 여기서
+    // 삭제할 수 있도록 해줘" — 0항 창에 목록 대신 Failed to fetch). 왜 그런지와 다시 불러오는 단추를 준다.
+    box.innerHTML = (netMessage(error) || `<div class="muted">첨부 목록을 불러오지 못했습니다 — ${esc(error.message)}</div>`)
+      + `<div style="margin-top:6px"><button class="mini" id="up-files-retry">첨부 목록 다시 불러오기</button>
+         <span class="muted">불러와야 아래에서 지울 수 있습니다. 화면 주소가 지금 실행 중인 프로그램(검은 창에 적힌 주소)과 같은지 보세요.</span></div>`;
+    const retry = $("#up-files-retry");
+    if (retry) retry.addEventListener("click", renderItemFiles);
+  }
 }
 async function deleteItemFile(name, common){
   if (!uploadTarget) return;
