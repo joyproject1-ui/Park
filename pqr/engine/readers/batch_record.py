@@ -7,7 +7,11 @@
 기록서는 제품마다 서식이 조금씩 달라, 표 안의 낱말(제조단위·포장단위·수율)과 코드 꼴(R…·E…·P…)로
 찾는다. 값을 지어내지 않는다 — 못 찾은 것은 비워 두고 다른 자료(수율현황표·전년도 결재본)가 채운다.
 
-read(path) → {"kind": "조제"|"충전"|"포장", "batch_size": "82,000 g", "pack_unit": "5g x 1Tube/Case",
+read(path)     → 워드(.docx) 공 기록서
+read_pdf(path) → 글자가 있는 PDF 공 기록서 (담당자 2026-09-30: 포장기록서가 PDF 로 올라와 6항 포장단위가
+                 사선으로 남았다). 표 선이 아니라 pdftotext -layout 꼴의 '칸 사이 두 칸 공백' 으로 칸을
+                 가른다. 원/자재 목록은 읽지 않는다 — 글자만으로는 코드·이름·규격 열을 믿을 수 없어서다.
+둘 다 → {"kind": "조제"|"충전"|"포장", "batch_size": "82,000 g", "pack_unit": "5g x 1Tube/Case",
               "yield_spec": "95.0% 이상", "materials": [{"code", "name", "spec", "group"}], "file": 이름}
 merge(records) → {"batch_size", "pack_unit", "yield_specs": {공정: 기준}, "materials": {"주원료": […], "부원료": […], "포장자재": […]}}
 """
@@ -38,6 +42,17 @@ def kind_of(name):
     if "포장" in n or re.search(r"\bPK-", name):
         return "포장"
     return "조제"
+
+
+# 6항에 올라오는 PDF 가 공 기록서(제조·충전·포장 지시 및 기록서)인가, ERP 제조내역인가.
+# 이름에 '기록서'·'지시' 가 있으면 기록서다 — '6 제조내역 - … [포장 지시].pdf' 처럼 앞머리가
+# '제조내역' 이어도 속은 Master Batch Record 다 (나조린 2026-09-30).
+RECORD_WORDS = ("기록서", "지시서", "제조지시", "포장지시", "충전지시", "batchrecord", "masterbatchrecord", "mbr")
+
+
+def looks_like_record(name):
+    flat = re.sub(r"[\s_·\[\]()]+", "", os.path.basename(str(name or ""))).lower()
+    return any(w in flat for w in RECORD_WORDS)
 
 
 def _cell_texts(row):
@@ -153,6 +168,49 @@ def read(path):
             if not out["pack_unit"] and any(w in k for w in PACK_WORDS) and ":" in t:
                 out["pack_unit"] = t.split(":", 1)[1].strip()
     return out
+
+
+def _scan_cells(rows, out):
+    """[[칸, 칸, …], …] 에서 제조단위·포장단위·수율 기준을 집는다 (워드 표와 같은 규칙)."""
+    for cells in rows:
+        keys = [squeeze(c).lower() for c in cells]
+        for i, k in enumerate(keys):
+            if not k:
+                continue
+            if not out["batch_size"] and any(w in k for w in SIZE_WORDS) and "포장" not in k:
+                m = AMOUNT.search(_value_after(cells, i))
+                if m:
+                    out["batch_size"] = re.sub(r"\s+", "", m.group(0))
+            if not out["pack_unit"] and any(w in k for w in PACK_WORDS):
+                v = _value_after(cells, i)
+                if v and re.search(r"\d", v):
+                    out["pack_unit"] = v.split("\n")[0].strip()
+            if not out["yield_spec"] and "수율" in k:
+                m = SPEC.search(" ".join(cells[i:i + 4]))
+                if m:
+                    out["yield_spec"] = re.sub(r"\s+", " ", m.group(1)).strip()
+    return out
+
+
+def read_pdf(path):
+    """글자가 있는 PDF 공 기록서 — 제조단위·포장단위·수율 기준만 읽는다.
+
+    담당자 2026-09-30: "포장기록서에 포장단위가 표시되어있는데 본문 포장단위가 사선처리되어 있어".
+    PDF 라서 읽지 않고 지나쳤던 것을 읽는다. 값은 **기록서에 적힌 그대로** 옮긴다
+    (예: '0.5mL X 10Strip/Case' — 띄어쓰기·대소문자를 고치지 않는다).
+    """
+    from ..pdftext import read_layout
+
+    name = os.path.basename(path)
+    out = {"kind": kind_of(name), "batch_size": "", "pack_unit": "", "yield_spec": "", "materials": [], "file": name}
+    rows = []
+    for page in read_layout(path):
+        for line in page.split("\n"):
+            if not line.strip():
+                continue
+            # layout 꼴은 칸 사이를 두 칸 이상 벌려 놓는다 — 그 자리가 표의 칸 경계다
+            rows.append([c.strip() for c in re.split(r"\s{2,}", line)])
+    return _scan_cells(rows, out)
 
 
 def merge(records):

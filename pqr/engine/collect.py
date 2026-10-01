@@ -347,7 +347,7 @@ def handwriting_cache_name():
 # ("도대체 왜 작성이 안 되는 거야?", "뭐가 문제인지 정확히 나한테 요구해").
 READABLE = {
     "3":       ((".pdf",),            "허가증 PDF"),
-    "6":       ((".pdf", ".docx", ".xlsx", ".xls"), "제조내역 ERP(PDF·엑셀) 또는 공 기록서 .docx"),
+    "6":       ((".pdf", ".docx", ".xlsx", ".xls"), "제조내역 ERP(PDF·엑셀) 또는 공 기록서(.docx · 글자 있는 PDF)"),
     "7":       ((".xlsx", ".xls"),    "수율현황표 엑셀"),
     "8.1.1":   ((".xlsx", ".xlsm"),  "공급업체 List 엑셀"),
     "8.1.2":   ((".xlsx",),           "주성분 공급망 엑셀"),
@@ -688,10 +688,24 @@ def collect(folder, product_name=None, log=None):
     # 6. 제조내역 (수출용 ERP)  · 7. 수율
     records = []
     for p in got.get("6", []):
-        if p.lower().endswith(".pdf") and re.search(r"기록서", os.path.basename(p)):
-            # 스캔한 공 기록서(PDF)는 제조내역이 아니다 — 읽지 않고 대장에만 남긴다 (퀴노비드 2026-09-10:
-            # '6. 퀴노비드점안액(이라크) 포장기록서 rev0.pdf' 가 "제조내역 0줄" ★ 로 올라왔다)
-            saw(p, "공 기록서(PDF) — 제조·충전·포장 기록서는 .docx 만 읽습니다")
+        if p.lower().endswith(".pdf") and batch_record.looks_like_record(os.path.basename(p)):
+            # 공 기록서(제조·충전·포장 지시 및 기록서) PDF 는 제조내역(ERP)이 아니다.
+            # 글자가 있으면 읽어 제조단위·포장단위·수율 기준을 얻고, 스캔본이면 대장에만 남긴다
+            # (담당자 2026-09-30: "포장기록서에 포장단위가 표시되어있는데 본문 포장단위가 사선처리되어 있어";
+            #  퀴노비드 2026-09-10: '…포장기록서 rev0.pdf' 가 "제조내역 0줄" ★ 로 올라왔다).
+            try:
+                if is_scanned(p):
+                    saw(p, "공 기록서(PDF) — 글자 없는 스캔본이라 읽지 못합니다. .docx 로 올리면 읽습니다")
+                    continue
+                rec = batch_record.read_pdf(p)
+                rec["path"] = p
+                records.append(rec)
+                saw(p, "공 기록서(PDF) — 제조단위 %s · 포장단위 %s"
+                    % (rec["batch_size"] or "못 읽음", rec["pack_unit"] or "못 읽음"))
+            except PdfTextError as e:
+                note("6", p, "공 기록서(PDF)를 읽지 못했습니다: %s" % e)
+            except Exception as e:
+                note("6", p, "공 기록서(PDF)를 읽지 못했습니다: %s" % e)
             continue
         if p.lower().endswith((".pdf", ".xlsx", ".xls")):
             # ERP 제조내역은 PDF 로도 엑셀로도 내려온다 — 둘 다 같은 네 칸이다
